@@ -1,20 +1,35 @@
 #ifndef __UTIL_H__
 #define __UTIL_H__
 
-#include <stdint.h>
-#include <stdlib.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 
 // general purpose macros
 #define ARR_LEN(a) (sizeof(a) / sizeof(a[0]))
 #define STR_LIT(s) (s), (sizeof(s) - 1)
 #define containerof(ptr, type, member) ((type *)((char *)(ptr) - offsetof(type, member)))
+#define make_ptr(ptr, offset) ((void *) (ptr + offset))
 #define ALIGN_UP(n, a) (((n) + (a) - 1) & ~((a) - 1))
 
 // Stringification macros
 #define XSTR(a) #a
 #define STR(a) XSTR(a)
+
+// decoders
+static inline uint32_t decode_u32(const unsigned char *buf)
+{
+    uint32_t value;
+
+    value = buf[0] << 24;
+    value |= buf[1] << 16;
+    value |= buf[2] << 8;
+    value |= buf[3];
+
+    return value;
+}
 
 // logger
 void log_info(const char *fmt, ...);
