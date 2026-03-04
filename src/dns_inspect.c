@@ -15,6 +15,7 @@
 
 #include <sys/types.h> 
 #include <sys/socket.h>
+#include <net/if.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <netdb.h> 
@@ -24,6 +25,7 @@
 
 #include "util.h"
 
+#define MODE_CAPTURE 1
 
 struct dns_sniff {
     // config
@@ -31,6 +33,8 @@ struct dns_sniff {
     char *host;
 	char *port;
 	//  state
+    int mode;
+    char dev_name[IFNAMSIZ]; 
 };
 
 // signal handling
@@ -82,25 +86,56 @@ int sniff_run(struct dns_sniff *sniff)
     return 0;
 }
 
+static int sniff_usage(struct dns_sniff *sniff, const char *cmd)
+{
+	const char *base = strrchr(cmd, '/');
+	const char *prog_name = (base) ? base + 1 : cmd;
+    FILE *out = stderr;
+	int w= 10;
+
+    fprintf(out,"Usage: %s [MODE] [OPTIONS]\n\n" , prog_name);
+
+    fprintf(out, "MODE:\n");
+	fprintf(out, "  %-*s %s\n", w, "--help", "Show this help");
+	fprintf(out, "  %-*s %s\n", w, "capture", "--interface name");
+
+    fprintf(out, "\nExample:\n");
+    fprintf(out, "  %s capture --interface eth0\n", prog_name);
+
+    return -1;
+}
+
+// dns-inspect capture --interface eth0
 int sniff_parse_argv(struct dns_sniff *sniff, int argc, char *argv[])
 {
-    // listenr address:port 
-    if (argc > 1 && argv[1]) {
-        // parse
-		struct str_slice host = slice_make(argv[1], strlen(argv[1]));
-        struct str_slice port = slice_split(&host, ':');
-        if (host.len && host.ptr[0] == '[') {
-            host.ptr++; host.len--;
-            if (host.ptr[host.len] == ']') host.len--;
+    if (argc < 2) {
+        return sniff_usage(sniff, argv[0]);
+    }
+
+    // mode
+	struct str_slice mode = slice_make_cstr(argv[1]);
+    if (slice_cmp_cstr(mode, STR_LIT("capture"))) {
+        sniff->mode = MODE_CAPTURE;
+        int nargs = argc - 2;
+        if (nargs != 2) {
+           return log_error("capture require an --interface name");
         }
-		// store
-		if (host.len && (sniff->host = strndup(host.ptr, host.len)) == NULL) {
-            return log_errno("strdup-hostname");
+        // --interface option
+		struct str_slice opt = slice_make_cstr(argv[2]);
+		struct str_slice val = slice_make_cstr(argv[3]);
+        if (!slice_cmp_cstr(opt, STR_LIT("--interface"))) {
+           return log_error("capture unknown option %s", opt.ptr);
         }
-		if (port.len && (sniff->port = strndup(port.ptr, port.len)) == NULL) { 
-            return log_errno("strdup-portno");
+        if (opt.len >= sizeof(sniff->dev_name)) {
+           return log_errno("dev-name too big - cant be bigger than", sizeof(sniff->dev_name) - 1);
         }
-	}
+        memcpy(sniff->dev_name, val.ptr, val.len);
+        sniff->dev_name[val.len] = '\0';
+    }
+    else {
+        log_error("Unsupported mode %s", mode.ptr);
+        return sniff_usage(sniff, argv[0]);
+    }
 
     return 0;
 }
@@ -136,8 +171,8 @@ int main(int argc, char *argv[])
 
     if (!(sniff = sniff_create())) { ec = 1; goto done; }
     if (sniff_init(sniff) != 0)    { ec = 3; goto done; }
-    if (sniff_signals(sniff) != 0)  { ec = 2 ;goto done; }
     if (sniff_parse_argv(sniff, argc, argv) != 0) { ec = 4;  goto done; }
+    if (sniff_signals(sniff) != 0)  { ec = 2 ;goto done; }
     if (sniff_run(sniff) != 0) { ec = 7; goto done; }
 
     if (caught_signo) {
