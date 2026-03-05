@@ -9,6 +9,7 @@
 
 // general purpose macros
 #define ARR_LEN(a) (sizeof(a) / sizeof(a[0]))
+#define ARRAY(a) (a), ARR_LEN(a)
 #define STR_LIT(s) (s), (sizeof(s) - 1)
 #define containerof(ptr, type, member) ((type *)((char *)(ptr) - offsetof(type, member)))
 #define make_ptr(ptr, offset) ((void *) (ptr + offset))
@@ -112,6 +113,8 @@ static inline char *rwbuf_wres(struct rwbuf *buf, int len)
 
     return wptr;
 }
+
+char *itoa(char *buf, int len, int val);
 
 // logger
 void log_msg(const char *msg);
