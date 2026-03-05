@@ -55,6 +55,7 @@ struct dns_sniff {
     int epoll_fd;
     // packet counters
     uint64_t num_recv_pkts;
+    uint64_t num_dns_pkts;
     uint64_t num_dns_okay;
     uint64_t num_dns_fail;
     // read buffer
@@ -122,14 +123,14 @@ static int sniff_pkt_process(struct dns_sniff *sniff, int pkt_len)
 	offset += sizeof(*udp);
 
     // call into api
-    int rc = validate_dns_packet(ptr + offset, pkt_len - offset, dns_errbuf);
-    if (rc == 0) {
+    sniff->num_dns_pkts++;
+    if (validate_dns_packet(ptr + offset, pkt_len - offset, dns_errbuf) == 0) {
         sniff->num_dns_okay++;
     }
     else {
         sniff->num_dns_fail++;
     }
-    log_info(dns_errbuf);
+    log_msg(dns_errbuf);
 
     // all done
     return 0;

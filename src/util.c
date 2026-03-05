@@ -7,6 +7,12 @@
 #include <stdarg.h>
 #include "util.h"
 
+void log_msg(const char *msg)
+{
+    fputs(msg, stdout);
+    fflush(stdout);
+}
+
 void log_info(const char *fmt, ...)
 {
     va_list args;  

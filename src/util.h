@@ -12,11 +12,23 @@
 #define STR_LIT(s) (s), (sizeof(s) - 1)
 #define containerof(ptr, type, member) ((type *)((char *)(ptr) - offsetof(type, member)))
 #define make_ptr(ptr, offset) ((void *) (ptr + offset))
+#define make_cptr(ptr, offset) ((char *) (ptr + offset))
 #define ALIGN_UP(n, a) (((n) + (a) - 1) & ~((a) - 1))
 
 // Stringification macros
 #define XSTR(a) #a
 #define STR(a) XSTR(a)
+
+static inline const char *ec_tostr(const char *estr[], int len, int ec, const char *def)
+{
+    const char *str;
+
+    str = ec >= 0 && ec < len
+        ? estr[ec] 
+        : NULL;
+
+    return str ?: def;
+}
 
 // decoders
 static inline uint32_t decode_u32(const unsigned char *buf)
@@ -41,7 +53,68 @@ static inline uint16_t decode_u16(const unsigned char *buf)
     return value;
 }
 
+// buffer code
+struct rwbuf {
+    char *data;
+    int cap; // fixed size 
+    int widx;  // start of bytes to read
+    int ridx;
+};
+
+static inline void rwbuf_init(struct rwbuf *buf, char *data, int len)
+{
+    buf->data = data;
+    buf->cap = len;
+    buf->widx = 0;
+    buf->ridx = 0;
+}
+#define RWBUF_INIT(_buf, _len) { .data = (_buf), .cap = (_len), .widx = 0, .ridx = 0 }
+
+
+static inline char *rwbuf_wpos(struct rwbuf *buf)
+{
+    return buf->data + buf->widx;
+}
+
+static inline int rwbuf_wrem(struct rwbuf *buf)
+{
+    return buf->cap - buf->widx;
+}
+
+// bytes writen to buffer available to read
+static inline int rwbuf_avail(struct rwbuf *buf)
+{
+    return buf->widx - buf->ridx;
+}
+
+static inline char *rwbuf_rpos(struct rwbuf *buf)
+{
+    return buf->data + buf->ridx;
+}
+
+static inline int rwbuf_rrem(struct rwbuf *buf)
+{
+    return buf->widx - buf->ridx;
+}
+
+// resever len bytes in buf or error
+static inline char *rwbuf_wres(struct rwbuf *buf, int len)
+{
+    int wrem = buf->cap - buf->widx;
+
+    if (wrem < len) {
+        // not enough space
+        return  NULL;
+    }
+
+    char *wptr = buf->data + buf->widx;
+    buf->widx += len;
+
+    return wptr;
+}
+
 // logger
+void log_msg(const char *msg);
 void log_info(const char *fmt, ...);
 int _log_error(const char *file, int line, const char *func, int ec, const char *fmt, ...);
 void _fatal_error(const char *file, int line, const char *func, int ec, const char *fmt, ...);
