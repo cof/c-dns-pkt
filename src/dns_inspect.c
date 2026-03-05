@@ -42,31 +42,6 @@
 #define PKT_MIN_LEN (14 + 20 + 8 + 12)
 #define make_ptr(ptr, offset) ((void *) (ptr + offset))
 
-
-// tcpdump -i any udp port 53 -dd
-static struct sock_filter dns_filter[] = {
-    { 0x28, 0, 0, 0x00000000 },
-    { 0x15, 0, 6, 0x000086dd },
-    { 0x30, 0, 0, 0x0000001a },
-    { 0x15, 0, 15, 0x00000011 },
-    { 0x28, 0, 0, 0x0000003c },
-    { 0x15, 12, 0, 0x00000035 },
-    { 0x28, 0, 0, 0x0000003e },
-    { 0x15, 10, 11, 0x00000035 },
-    { 0x15, 0, 10, 0x00000800 },
-    { 0x30, 0, 0, 0x0000001d },
-    { 0x15, 0, 8, 0x00000011 },
-    { 0x28, 0, 0, 0x0000001a },
-    { 0x45, 6, 0, 0x00001fff },
-    { 0xb1, 0, 0, 0x00000014 },
-    { 0x48, 0, 0, 0x00000014 },
-    { 0x15, 2, 0, 0x00000035 },
-    { 0x48, 0, 0, 0x00000016 },
-    { 0x15, 0, 1, 0x00000035 },
-    { 0x6, 0, 0, 0x00040000 },
-    { 0x6, 0, 0, 0x00000000 },
-};
-
 struct dns_sniff {
     // config
     pid_t pid;
@@ -154,6 +129,7 @@ static int sniff_pkt_process(struct dns_sniff *sniff, int pkt_len)
     else {
         sniff->num_dns_fail++;
     }
+    log_info(dns_errbuf);
 
     // all done
     return 0;
@@ -283,7 +259,7 @@ int sniff_poll(struct dns_sniff *sniff)
     return 0;
 }
 
-int sniff_run(struct dns_sniff *sniff)
+int sniff_start(struct dns_sniff *sniff)
 {
     while (keep_running) {
         if (sniff_poll(sniff) != 0) return -1;
@@ -292,23 +268,57 @@ int sniff_run(struct dns_sniff *sniff)
     return 0;
 }
 
+// tcpdump -i any udp port 53 -dd
+static struct sock_filter dns_filter[] = {
+    { 0x28, 0, 0, 0x0000000c },
+    { 0x15, 0, 6, 0x000086dd },
+    { 0x30, 0, 0, 0x00000014 },
+    { 0x15, 0, 15, 0x00000011 },
+    { 0x28, 0, 0, 0x00000036 },
+    { 0x15, 12, 0, 0x00000035 },
+    { 0x28, 0, 0, 0x00000038 },
+    { 0x15, 10, 11, 0x00000035 },
+    { 0x15, 0, 10, 0x00000800 },
+    { 0x30, 0, 0, 0x00000017 },
+    { 0x15, 0, 8, 0x00000011 },
+    { 0x28, 0, 0, 0x00000014 },
+    { 0x45, 6, 0, 0x00001fff },
+    { 0xb1, 0, 0, 0x0000000e },
+    { 0x48, 0, 0, 0x0000000e },
+    { 0x15, 2, 0, 0x00000035 },
+    { 0x48, 0, 0, 0x00000010 },
+    { 0x15, 0, 1, 0x00000035 },
+    { 0x6, 0, 0, 0x00040000 },
+    { 0x6, 0, 0, 0x00000000 },
+};
+
 // attach dns pkt filter to device
 int sniff_attach(struct dns_sniff *sniff)
 {
     // socket
-    sniff->sock_raw = socket(AF_PACKET, SOCK_RAW | SOCK_NONBLOCK, 0);
+    sniff->sock_raw = socket(AF_PACKET, SOCK_RAW | SOCK_NONBLOCK, htons(ETH_P_ALL));
     if (sniff->sock_raw == -1) {
         return log_errno("open AF_PACKET");
     }
 
-    // DNS filter
+    // bind to interface - kernel will start sending us pkts
+    struct sockaddr_ll sll = {
+        .sll_family  = AF_PACKET,
+        .sll_ifindex = sniff->dev_index,
+        .sll_protocol = htons(ETH_P_ALL)
+    };
+    if (bind(sniff->sock_raw, (struct sockaddr *) &sll, sizeof(sll)) < 0) {
+        return log_errno("bind to %s failed", sniff->dev_name);
+    }
+
+    // attach DNS filter
     struct sock_fprog bpf = {
-        .len = ARR_LEN(dns_filter),
+        .len =   sizeof(dns_filter) / sizeof(struct sock_filter),
         .filter = dns_filter
     };
     if (setsockopt(sniff->sock_raw, SOL_SOCKET, SO_ATTACH_FILTER, &bpf, sizeof(bpf)) < 0) {
 		return log_errno("Attach DNS filter to %s failed", sniff->dev_name);
-    }   
+    }
 
 	// promisc mode
 	struct packet_mreq mreq = {
@@ -335,16 +345,6 @@ int sniff_attach(struct dns_sniff *sniff)
     } while (rc == -1 && errno == EINTR);
     if (rc == -1) {
         return log_errno("epoll_ctl add filed for %d", sniff->sock_raw);
-    }
-
-    // finaly bind to interface - kernel will start sending us pkts
-    struct sockaddr_ll sll = {
-        .sll_family  = AF_PACKET,
-        .sll_ifindex = sniff->dev_index,
-        .sll_protocol = htons(ETH_P_ALL)
-    };
-    if (bind(sniff->sock_raw, (struct sockaddr *) &sll, sizeof(sll)) < 0) {
-        return log_errno("bind to %s failed", sniff->dev_name);
     }
 
     log_info("DNS active on %s", sniff->dev_name);
@@ -454,11 +454,11 @@ int main(int argc, char *argv[])
     int ec = EXIT_FAILURE;
 
     if (!(sniff = sniff_create())) { ec = 1; goto done; }
-    if (sniff_init(sniff) != 0)    { ec = 2; goto done; }
+    if (sniff_init(sniff) != 0)  { ec = 2; goto done; }
     if (sniff_parse_argv(sniff, argc, argv) != 0) { ec = 3;  goto done; }
     if (sniff_signals(sniff) != 0)  { ec = 4 ;goto done; }
     if (sniff_attach(sniff) != 0) { ec = 5; goto done; }
-    if (sniff_run(sniff) != 0) { ec = 6; goto done; }
+    if (sniff_start(sniff) != 0) { ec = 6; goto done; }
 
     if (caught_signo) {
         log_info("[dns-sniff PID:%d] shutting down: got signal %d (%s) from UID:%d PID:%d ", 

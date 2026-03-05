@@ -7,21 +7,22 @@
 #define DNS_ERR_HDRLEN  1
 #define DNS_ERR_BADJMP  2
 #define DNS_ERR_NUMJMP  3
-#define DNS_ERR_OUTLEN  4
-#define DNS_ERR_NONULL  5
-#define DNS_ERR_TRUNC   6
-#define DNS_ERR_TYPE_A      7   // IP4 address 
-#define DNS_ERR_TYPE_NS     8   // Authoritative Name Server
-#define DNS_ERR_TYPE_CNAME  9   // Canonical Name (Alias)
-#define DNS_ERR_TYPE_SOA    10  // Start of Authority
-#define DNS_ERR_TYPE_PTR    11  // Domain Name Pointer (Reverse DNS)
-#define DNS_ERR_TYPE_HINFO  12  // Host Information
-#define DNS_ERR_TYPE_MX     13  // Mail Exchange
-#define DNS_ERR_TYPE_TXT    14  // Text Strings
-#define DNS_ERR_TYPE_AAAA   15  // IPv6 Address
-#define DNS_ERR_TYPE_SRV    16  // Service Locator
-#define DNS_ERR_TYPE_OPT    17  // EDNS0 Options (RFC 6891)
-#define DNS_ERR_TYPE_ANY    18  // Wildcard match (Query only)
+#define DNS_ERR_NAMELEN  4
+#define DNS_ERR_OUTLEN   5
+#define DNS_ERR_NONULL   6
+#define DNS_ERR_TRUNC    7
+#define DNS_ERR_TYPE_A      8   // IP4 address 
+#define DNS_ERR_TYPE_NS     9   // Authoritative Name Server
+#define DNS_ERR_TYPE_CNAME  10   // Canonical Name (Alias)
+#define DNS_ERR_TYPE_SOA    12  // Start of Authority
+#define DNS_ERR_TYPE_PTR    13  // Domain Name Pointer (Reverse DNS)
+#define DNS_ERR_TYPE_HINFO  14  // Host Information
+#define DNS_ERR_TYPE_MX     15  // Mail Exchange
+#define DNS_ERR_TYPE_TXT    16  // Text Strings
+#define DNS_ERR_TYPE_AAAA   17  // IPv6 Address
+#define DNS_ERR_TYPE_SRV    18  // Service Locator
+#define DNS_ERR_TYPE_OPT    19  // EDNS0 Options (RFC 6891)
+#define DNS_ERR_TYPE_ANY    20  // Wildcard match (Query only)
 
 // DNS Record Types (QTYPE / TYPE)
 #define DNS_TYPE_A      1    // IPv4 Address
@@ -43,6 +44,10 @@
 #define DNS_CLASS_CH    3    // CHAOS
 #define DNS_CLASS_HS    4    // Hesiod
 #define DNS_CLASS_ANY   255  // Wildcard match (Query only)
+
+#define DNS_FLAGS_QUERY  0x8000 
+#define DNS_FLAGS_OPCODE 0x7800
+#define DNS_FLAGS_RECUR  0x0100 
 
 // Required structures
 struct dns_header {

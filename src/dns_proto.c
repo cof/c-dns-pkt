@@ -19,24 +19,25 @@ struct dns_decoder {
 };
 
 static const char *err2str[] = {
-    "DNS_ERR_NONE"
-    "DNS_ERR_HDRLEN"
-    "DNS_ERR_BADJMP"
-    "DNS_ERR_NUMJMP"
-    "DNS_ERR_OUTLEN"
-    "DNS_ERR_NONULL"
-    "DNS_ERR_TRUNC"
-    "DNS_ERR_TYPE_A"
-    "DNS_ERR_TYPE_NS"
-    "DNS_ERR_TYPE_CNAME"
-    "DNS_ERR_TYPE_SOA"
-    "DNS_ERR_TYPE_PTR"
-    "DNS_ERR_TYPE_HINFO"
-    "DNS_ERR_TYPE_MX"
-    "DNS_ERR_TYPE_TXT"
-    "DNS_ERR_TYPE_AAAA"
-    "DNS_ERR_TYPE_SRV"
-    "DNS_ERR_TYPE_OPT"
+    "DNS_ERR_NONE",
+    "DNS_ERR_HDRLEN",
+    "DNS_ERR_BADJMP",
+    "DNS_ERR_NUMJMP",
+    "DNS_ERR_NAMELEN",
+    "DNS_ERR_OUTLEN",
+    "DNS_ERR_NONULL",
+    "DNS_ERR_TRUNC",
+    "DNS_ERR_TYPE_A",
+    "DNS_ERR_TYPE_NS",
+    "DNS_ERR_TYPE_CNAME",
+    "DNS_ERR_TYPE_SOA",
+    "DNS_ERR_TYPE_PTR",
+    "DNS_ERR_TYPE_HINFO",
+    "DNS_ERR_TYPE_MX",
+    "DNS_ERR_TYPE_TXT",
+    "DNS_ERR_TYPE_AAAA",
+    "DNS_ERR_TYPE_SRV",
+    "DNS_ERR_TYPE_OPT",
     "DNS_ERR_TYPE_ANY"
 };
 
@@ -48,7 +49,7 @@ static int dns_err(int ec, const char *name, char *msg_buf, const char *fmt, ...
 
     estr = (ec >= 0 && ec < ARR_LEN(err2str)) ? err2str[ec] : "";
 
-    nw = snprintf(msg_buf, DNS_ERRBUF_SIZE,  "[ERROR] decode %s", name);
+    nw = snprintf(msg_buf, DNS_ERRBUF_SIZE,  "[ERROR] decode %s Section:", name);
     va_start(args, fmt);
     nw += vsnprintf(msg_buf + nw, DNS_ERRBUF_SIZE - nw, fmt, args);
     va_end(args);
@@ -66,12 +67,12 @@ int parse_dns_header(const uint8_t *buf, size_t len, struct dns_header *hdr)
     }
 
     // decode the header
-    hdr->id       = decode_u32(buf + 0);
-    hdr->flags    = decode_u32(buf + 2);
-    hdr->qd_count = decode_u32(buf + 4);
-    hdr->an_count = decode_u32(buf + 6);
-    hdr->ns_count = decode_u32(buf + 8);
-    hdr->ar_count = decode_u32(buf + 10);
+    hdr->id       = decode_u16(buf + 0);
+    hdr->flags    = decode_u16(buf + 2);
+    hdr->qd_count = decode_u16(buf + 4);
+    hdr->an_count = decode_u16(buf + 6);
+    hdr->ns_count = decode_u16(buf + 8);
+    hdr->ar_count = decode_u16(buf + 10);
 
 	// all done
     return 0;
@@ -82,7 +83,7 @@ int parse_dns_name(
 	char *out, size_t out_len, 
     size_t *bytes_consumed)
 {
-	int ridx = 0;
+	int ridx = offset;
 	int njmp = 0;
 	int len = 0;
 
@@ -104,8 +105,8 @@ int parse_dns_name(
 
 		// label
 		int pkt_rem = pkt_len - ridx;
-		if (len > pkt_rem) return -3;
-		if (len > out_len) return -4;
+		if (len > pkt_rem) return DNS_ERR_NAMELEN;
+		if (len > out_len) return DNS_ERR_OUTLEN; 
 		if (!njmp) *bytes_consumed += 1 + len;
 
 		// null check
@@ -121,7 +122,7 @@ int parse_dns_name(
 		if (!out_len) return DNS_ERR_OUTLEN;
 		if (ridx < pkt_len && pkt[ridx] != 0) {
 			// store the dot
-			*out = '.';
+			*out++ = '.';
 			out_len--;
 		}
     }
@@ -147,13 +148,13 @@ static int decode_section(struct dns_decoder *dec, const char *sec_name, int row
         // label
         ec = parse_dns_name(dec->pkt, dec->pkt_len, dec->offset, dec->name, sizeof(dec->name), &consumed);
         if (ec != 0) {
-            return dns_err(ec, sec_name, dec->emsg, "row %d name");
+            return dns_err(ec, sec_name, dec->emsg, "row %d name", i);
         }
         dec->offset += consumed;
 
         // need 10 bytes for header
         if (dec->offset + 10 > dec->pkt_len) {
-            return dns_err(DNS_ERR_TRUNC, sec_name, dec->emsg, "row  %d hdr truncatd", i);
+            return dns_err(DNS_ERR_TRUNC, sec_name, dec->emsg, "row %d hdr truncatd", i);
         }
         uint16_t type   = decode_u16(dec->pkt + dec->offset + 0);
         //uint16_t class  = decode_u16(dec->pkt + dec->offset + 2);
@@ -327,6 +328,15 @@ static int decode_questions(struct dns_decoder *dec)
 	return 0;
 }
 
+static const char *opcode2str[] = {
+    [0] = "QUERY",
+    [1] = "IQUERY",
+    [2] = "STATUS",
+    [3] = "",
+    [4] = "NOTIFY",
+    [5] = "UPDATE"
+};
+
 static int decode_header(struct dns_decoder *dec)
 {
     int ec = parse_dns_header(dec->pkt, dec->pkt_len, &dec->hdr);
@@ -335,6 +345,19 @@ static int decode_header(struct dns_decoder *dec)
         return dns_err(ec, "Header", dec->emsg, "packet len %d too small", dec->pkt_len);
     }
     dec->offset += sizeof(struct dns_header);
+
+    int flags = dec->hdr.flags;
+    int query = flags & DNS_FLAGS_QUERY  ? 0 : 1;
+    int opcode = flags & 0x7800 >> 11;
+    int recur = flags & DNS_FLAGS_RECUR;
+
+    if (opcode > ARR_LEN(opcode2str)) opcode =3;
+
+    snprintf(dec->emsg, DNS_ERRBUF_SIZE,
+        "[%s] ID 0x%04x OR:%d OPCODE:%s RD:%d",
+        query ? "QUERY" : "RESPONSE",
+        dec->hdr.id,
+        query, opcode2str[opcode], recur);
 
 	return 0;
 }
