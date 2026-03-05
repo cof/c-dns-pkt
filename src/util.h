@@ -114,6 +114,30 @@ static inline char *rwbuf_wres(struct rwbuf *buf, int len)
     return wptr;
 }
 
+static inline char *rwbuf_strcat(struct rwbuf *buf, const char *str, int len)
+{
+    char *wptr = rwbuf_wres(buf, len);
+
+    if (wptr) {
+        memcpy(wptr, str, len);
+    }
+
+    return wptr;
+}
+
+static inline char *rwbuf_strcat_sep(struct rwbuf *buf, int ch, const char *str, int len)
+{
+    int add_ch = (buf->widx > 0) ? 1 : 0;
+    char *wptr = rwbuf_wres(buf, len + add_ch);
+
+    if (wptr) {
+        if (add_ch) *wptr++ = ch;
+        memcpy(wptr, str, len);
+    }
+
+    return wptr;
+}
+
 char *itoa(char *buf, int len, int val);
 
 // logger

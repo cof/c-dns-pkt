@@ -193,7 +193,9 @@ static const char *rcode_tostr[] = {
 #define DNS_FLAGS_RA      0x0080
 #define DNS_FLAGS_RCODE   0x000F
 
-static char *dns_wmsg(struct dns_dec *dec, const char *fmt, ...)
+static char *dns_wmsg(struct dns_dec *dec, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
+
+static char *dns_wmsg(struct dns_dec *dec, const char *fmt, ...) 
 {
     va_list args;
     struct rwbuf *buf;
@@ -628,44 +630,64 @@ static int decode_header(struct dns_dec *dec)
     }
     dec->offset += sizeof(struct dns_header);
 
-    char tmp[2][10];
+    char num[2][10];
     struct dns_header *hdr = &dec->hdr;
     int qr = hdr->flags & DNS_FLAGS_QR ? 0 : 1;
     int opcode  = (hdr->flags & DNS_FLAGS_OPCODE) >> 11;
-    const char *opcode_str = ec_tostr(ARRAY(opcode_tostr), opcode, itoa(tmp[0],10, opcode));
+    const char *opcode_str = ec_tostr(ARRAY(opcode_tostr), opcode, itoa(num[0],10, opcode));
     const char *type_str = qr ? "RESPONSE" : "QUERY";
 
-    // validate opcode 
-    //if (opcode == 3 || opcode > 5) 
-
-    char flags_str[100];
-    flags_str[0] = '\0';
+    char extra[100];
+    struct rwbuf buf = RWBUF_INIT(extra, sizeof(extra));
+    extra[0] = '\0';
 
     if (qr) {
-        // query response flags
+        // query response
         int as = hdr->flags & DNS_FLAGS_AA ? 1 : 0;
         int rd = hdr->flags & DNS_FLAGS_RD ? 1 : 0;
         int ra = hdr->flags & DNS_FLAGS_RA ? 1 : 0;
         int rcode = hdr->flags & DNS_FLAGS_RCODE;
-        if (as) strcat(flags_str, " AS:1");
-        if (rd) strcat(flags_str, " RD:1");
-        if (ra) strcat(flags_str, " RA:1");
-        const char *rcode_str = ec_tostr(ARRAY(rcode_tostr), rcode, itoa(tmp[1],10,rcode));
-        strcat(flags_str," RCODE:");
-        strcat(flags_str, rcode_str);
+
+        // add flags
+        if (as) rwbuf_strcat_sep(&buf, ' ', STR_LIT("AS:1"));
+        if (rd) rwbuf_strcat_sep(&buf, ' ', STR_LIT("RD:1"));
+        if (ra) rwbuf_strcat_sep(&buf, ' ', STR_LIT("RA:1"));
+
+        // convert RCODE to str
+        itoa(num[1],10,rcode);
+        const char *rcode_str = ec_tostr(ARRAY(rcode_tostr), rcode, num[1]);
+        rwbuf_strcat_sep(&buf, ' ', STR_LIT("RCODE:"));
+        rwbuf_strcat(&buf, rcode_str, strlen(rcode_str));
+
+        // validate OPCODE range
+        if (opcode == 3 || opcode > 5) {
+            rwbuf_strcat_sep(&buf, ' ', STR_LIT("bad-opcode"));
+        }
+
+        // validate RCODE range
+        if (rcode > 10) {
+            rwbuf_strcat_sep(&buf, ' ', STR_LIT("bad-rcode"));
+        }
     }
     else {
-        // query flags
+        // query
         int rd = (hdr->flags & DNS_FLAGS_RD) ? 1 : 0;
         int ad = (hdr->flags & DNS_FLAGS_AD) ? 1 : 0;   
-        if (rd) strcat(flags_str, " RD:1");
-        if (ad) strcat(flags_str, " AD:1");
+
+        // add flags
+        if (rd) rwbuf_strcat_sep(&buf, ' ', STR_LIT("RD:1"));
+        if (ad) rwbuf_strcat_sep(&buf, ' ', STR_LIT("AD:1"));
+
+        // validate OPCODE range
+        if (opcode == 3 || opcode > 5) {
+            rwbuf_strcat_sep(&buf, ' ', STR_LIT("bad-opcode"));
+        }
     }
 
     // desc PDU as we decode
     dns_wmsg(dec,
-        "[%s] ID 0x%04x QR:%d OPCODE:%s%s\n",
-        type_str, dec->hdr.id, qr, opcode_str, flags_str);
+        "[%s] ID 0x%04x QR:%d OPCODE:%s %.*s\n",
+        type_str, dec->hdr.id, qr, opcode_str, buf.widx, buf.data);
 
     return 0;
 }
