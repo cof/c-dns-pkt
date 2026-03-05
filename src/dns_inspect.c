@@ -46,8 +46,8 @@ struct dns_sniff {
     // config
     pid_t pid;
     char *host;
-	char *port;
-	//  state
+    char *port;
+    //  state
     int mode;
     char dev_name[IFNAMSIZ]; 
     int dev_index;
@@ -74,53 +74,53 @@ static int sniff_pkt_process(struct dns_sniff *sniff, int pkt_len)
         return 0;
     }
 
-	unsigned char *ptr = make_ptr(sniff->pkt_buf, 0);
-	int offset = 0;
+    unsigned char *ptr = make_ptr(sniff->pkt_buf, 0);
+    int offset = 0;
 
-	// Etherner layer
-	struct ethhdr *eth = make_ptr(ptr, offset);
-	uint16_t type = ntohs(eth->h_proto);
-	offset += sizeof(*eth);
+    // Etherner layer
+    struct ethhdr *eth = make_ptr(ptr, offset);
+    uint16_t type = ntohs(eth->h_proto);
+    offset += sizeof(*eth);
 
- 	// VLAN tag ?
-	if (type ==  0x8100) {
-		// skip vlan tags
+    // VLAN tag ?
+    if (type ==  0x8100) {
+        // skip vlan tags
         uint16_t *iptr = make_ptr(ptr, 2);
-		type = ntohs(*iptr);
-		offset += 4;
-	}	
+        type = ntohs(*iptr);
+        offset += 4;
+    }   
 
-	// IP layer
-	int hdr_len = 0;
-	int proto = 0;
-	if (type ==  ETH_P_IP) {
-		struct iphdr *ip = make_ptr(ptr,offset);
-		if (ip->version != 4) return 0;
-		hdr_len = ip->ihl * 4;
-		proto = ip->protocol;
-	}
-	else if (type == ETH_P_IPV6) {
-		struct ipv6hdr *ip6 = make_ptr(ptr, offset);
-		if (ip6->version != 6) return 0;
-		proto = ip6->nexthdr;
-		hdr_len = 40;
-	}
-	else {
-		// unknown type
-		return 0;
-	}
-	offset += hdr_len;	
-	if (proto != IPPROTO_UDP) return 0;
+    // IP layer
+    int hdr_len = 0;
+    int proto = 0;
+    if (type ==  ETH_P_IP) {
+        struct iphdr *ip = make_ptr(ptr,offset);
+        if (ip->version != 4) return 0;
+        hdr_len = ip->ihl * 4;
+        proto = ip->protocol;
+    }
+    else if (type == ETH_P_IPV6) {
+        struct ipv6hdr *ip6 = make_ptr(ptr, offset);
+        if (ip6->version != 6) return 0;
+        proto = ip6->nexthdr;
+        hdr_len = 40;
+    }
+    else {
+        // unknown type
+        return 0;
+    }
+    offset += hdr_len;  
+    if (proto != IPPROTO_UDP) return 0;
 
-	// UDP layer
-	struct udphdr *udp = make_ptr(ptr, offset);
-	uint16_t src_port = ntohs(udp->source);
-	uint16_t dst_port = ntohs(udp->dest);
-	if (src_port != 53 && dst_port != 53) {
-		// not a DNS port ?
-		return 0;
-	}
-	offset += sizeof(*udp);
+    // UDP layer
+    struct udphdr *udp = make_ptr(ptr, offset);
+    uint16_t src_port = ntohs(udp->source);
+    uint16_t dst_port = ntohs(udp->dest);
+    if (src_port != 53 && dst_port != 53) {
+        // not a DNS port ?
+        return 0;
+    }
+    offset += sizeof(*udp);
 
     // call into api
     sniff->num_dns_pkts++;
@@ -318,17 +318,17 @@ int sniff_attach(struct dns_sniff *sniff)
         .filter = dns_filter
     };
     if (setsockopt(sniff->sock_raw, SOL_SOCKET, SO_ATTACH_FILTER, &bpf, sizeof(bpf)) < 0) {
-		return log_errno("Attach DNS filter to %s failed", sniff->dev_name);
+        return log_errno("Attach DNS filter to %s failed", sniff->dev_name);
     }
 
-	// promisc mode
-	struct packet_mreq mreq = {
-		.mr_ifindex = sniff->dev_index,
-		.mr_type    = PACKET_MR_PROMISC
-	};
-	if (setsockopt(sniff->sock_raw, SOL_PACKET, PACKET_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) < 0) {
+    // promisc mode
+    struct packet_mreq mreq = {
+        .mr_ifindex = sniff->dev_index,
+        .mr_type    = PACKET_MR_PROMISC
+    };
+    if (setsockopt(sniff->sock_raw, SOL_PACKET, PACKET_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) < 0) {
         return log_errno("setsockopt PACKET_MR_PROMISC");
-	}
+    }
 
     // create epoll fd
     sniff->epoll_fd = epoll_create1(0);
@@ -350,22 +350,22 @@ int sniff_attach(struct dns_sniff *sniff)
 
     log_info("DNS active on %s", sniff->dev_name);
 
-	// all done
+    // all done
     return 0;
 }
 
 static int sniff_usage(struct dns_sniff *sniff, const char *cmd)
 {
-	const char *base = strrchr(cmd, '/');
-	const char *prog_name = (base) ? base + 1 : cmd;
+    const char *base = strrchr(cmd, '/');
+    const char *prog_name = (base) ? base + 1 : cmd;
     FILE *out = stderr;
-	int w= 10;
+    int w= 10;
 
     fprintf(out,"Usage: %s [MODE] [OPTIONS]\n\n" , prog_name);
 
     fprintf(out, "MODE:\n");
-	fprintf(out, "  %-*s %s\n", w, "--help", "Show this help");
-	fprintf(out, "  %-*s %s\n", w, "capture", "--interface name");
+    fprintf(out, "  %-*s %s\n", w, "--help", "Show this help");
+    fprintf(out, "  %-*s %s\n", w, "capture", "--interface name");
 
     fprintf(out, "\nExample:\n");
     fprintf(out, "  %s capture --interface eth0\n", prog_name);
@@ -381,7 +381,7 @@ int sniff_parse_argv(struct dns_sniff *sniff, int argc, char *argv[])
     }
 
     // mode
-	struct str_slice mode = slice_make_cstr(argv[1]);
+    struct str_slice mode = slice_make_cstr(argv[1]);
     if (slice_cmp_cstr(mode, STR_LIT("capture"))) {
         sniff->mode = MODE_CAPTURE;
         int nargs = argc - 2;
@@ -389,8 +389,8 @@ int sniff_parse_argv(struct dns_sniff *sniff, int argc, char *argv[])
            return log_error("capture require an --interface name");
         }
         // --interface option
-		struct str_slice opt = slice_make_cstr(argv[2]);
-		struct str_slice val = slice_make_cstr(argv[3]);
+        struct str_slice opt = slice_make_cstr(argv[2]);
+        struct str_slice val = slice_make_cstr(argv[3]);
         if (!slice_cmp_cstr(opt, STR_LIT("--interface"))) {
            return log_error("capture unknown option %s", opt.ptr);
         }
