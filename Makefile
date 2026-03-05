@@ -85,7 +85,7 @@ install : all
 
 .PHONY: clean
 clean:
-	rm -rf $(BUILD_DIR) $(CMDS) $(BIN_DIR)
+	rm -rf $(BUILD_DIR) $(DNS_INSPECT) $(DNS_GEN)
 
 
 # VM stuff

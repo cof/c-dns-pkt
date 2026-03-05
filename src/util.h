@@ -31,6 +31,16 @@ static inline uint32_t decode_u32(const unsigned char *buf)
     return value;
 }
 
+static inline uint16_t decode_u16(const unsigned char *buf)
+{
+    uint16_t value;
+
+    value = buf[0] << 8;
+    value |= buf[1];
+
+    return value;
+}
+
 // logger
 void log_info(const char *fmt, ...);
 int _log_error(const char *file, int line, const char *func, int ec, const char *fmt, ...);
