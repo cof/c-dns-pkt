@@ -10,6 +10,7 @@ ifeq ($V,1)
 Q=
 endif
 
+DEBUG ?= 0
 
 ifeq ($(V),1)
 cmd_CC  = $(CC)
@@ -27,7 +28,7 @@ LD = gcc
 # compiler flags
 #CFLAGS = -Wall -Wextra -O2
 CFLAGS += -D_GNU_SOURCE -Wall -Werror -O2 -Isrc -MMD -MP
-ifdef DEBUG 
+ifeq ($(DEBUG), 1)
 	CFLAGS += -O0 -g
 endif
 LDFLAGS = -static
