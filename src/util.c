@@ -82,3 +82,19 @@ char *gen_path(const char *dir, const char *name)
 
     return path;
 }
+
+
+char *itoa(char *buf, int len, int val)
+{
+    char *str = buf + len -1;
+
+    *str = '\0';
+    if (val == 0) *--str = '0';
+
+    while (val) {
+        *--str = (val % 10) + '0';
+        val /= 10;
+    }
+
+    return str; 
+}
