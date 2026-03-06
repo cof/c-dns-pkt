@@ -34,9 +34,12 @@
 #include <errno.h>
 
 #include "util.h"
+#include "pcap.h"
 #include "dns_proto.h"
 
 #define MODE_CAPTURE 1
+#define MODE_READPCAP 2
+
 #define MAX_EVENTS 10
 #define PKTBUF_SIZE 2048
 #define PKT_MIN_LEN (14 + 20 + 8 + 12)
@@ -49,6 +52,8 @@ struct dns_sniff {
     char *port;
     //  state
     int mode;
+    char *pcap_filename;
+    struct pcap_file *pcap;
     char dev_name[IFNAMSIZ]; 
     int dev_index;
     int sock_raw;
@@ -261,10 +266,18 @@ int sniff_poll(struct dns_sniff *sniff)
     return 0;
 }
 
-int sniff_start(struct dns_sniff *sniff)
+int sniff_capture(struct dns_sniff *sniff)
 {
     while (keep_running) {
         if (sniff_poll(sniff) != 0) return -1;
+    }
+
+    if (caught_signo) {
+        log_info("[dns-sniff PID:%d] shutting down: got signal %d (%s) from UID:%d PID:%d ", 
+            sniff->pid, 
+            caught_signo, strsignal(caught_signo), 
+            sender_uid,
+            sender_pid);
     }
 
     return 0;
@@ -355,6 +368,28 @@ int sniff_attach(struct dns_sniff *sniff)
     return 0;
 }
 
+static int sniff_readpcap(struct dns_sniff *sniff)
+{
+    int pkt_len;
+
+    sniff->pcap = pcap_open_read(sniff->pcap_filename);
+    if (!sniff->pcap) {
+        return -1;
+    }
+
+    while ( (pkt_len = pcap_read(sniff->pcap, sniff->pkt_buf, sniff->buf_len)) > 0) {
+        if (sniff_pkt_process(sniff, pkt_len) != 0) {
+            return -1;
+        }
+    }
+
+     pcap_close(sniff->pcap);
+     sniff->pcap = NULL;
+
+     return 0;
+}
+
+
 static int sniff_usage(struct dns_sniff *sniff, const char *cmd)
 {
     const char *base = strrchr(cmd, '/');
@@ -362,14 +397,16 @@ static int sniff_usage(struct dns_sniff *sniff, const char *cmd)
     FILE *out = stderr;
     int w= 10;
 
-    fprintf(out,"Usage: %s [MODE] [OPTIONS]\n\n" , prog_name);
+    fprintf(out,"Usage: %s [MODE] [OPTIONS]\n\n", prog_name);
 
     fprintf(out, "MODE:\n");
     fprintf(out, "  %-*s %s\n", w, "--help", "Show this help");
     fprintf(out, "  %-*s %s\n", w, "capture", "--interface name");
+    fprintf(out, "  %-*s %s\n", w, "readpcap", "--fil name");
 
     fprintf(out, "\nExample:\n");
     fprintf(out, "  %s capture --interface eth0\n", prog_name);
+    fprintf(out, "  %s readpcap --file dns.pcap\n", prog_name);
 
     return -1;
 }
@@ -395,6 +432,7 @@ int sniff_parse_argv(struct dns_sniff *sniff, int argc, char *argv[])
         if (!slice_cmp_cstr(opt, STR_LIT("--interface"))) {
            return log_error("capture unknown option %s", opt.ptr);
         }
+        // device name
         if (opt.len >= sizeof(sniff->dev_name)) {
            return log_error("name cant be bigger than %zu", sizeof(sniff->dev_name) - 1);
         }
@@ -403,6 +441,24 @@ int sniff_parse_argv(struct dns_sniff *sniff, int argc, char *argv[])
         sniff->dev_index = if_nametoindex(sniff->dev_name);
         if (sniff->dev_index == 0) {
            return log_errno("if_nametoindex for %s failed", sniff->dev_name);
+        }
+    }
+    else if (slice_cmp_cstr(mode, STR_LIT("readpcap"))) {
+        sniff->mode = MODE_READPCAP;
+        int nargs = argc - 2;
+        if (nargs != 2) {
+           return log_error("readpcap requires a filename");
+        }
+        // --file
+        struct str_slice opt = slice_make_cstr(argv[2]);
+        struct str_slice val = slice_make_cstr(argv[3]);
+        if (!slice_cmp_cstr(opt, STR_LIT("--file"))) {
+           return log_error("readpcap unknown option %s", opt.ptr);
+        }
+        // filename
+        sniff->pcap_filename = strdup(val.ptr);
+        if (!sniff->pcap_filename) {
+            return log_errno("strdup failed for %.*s", (int) max(strlen(opt.ptr), 400), val.ptr);
         }
     }
     else {
@@ -421,6 +477,14 @@ void sniff_free(struct dns_sniff *sniff)
 
     if (sniff->epoll_fd != -1) {
         close(sniff->epoll_fd);
+    }
+
+    if (sniff->pcap) {
+        pcap_close(sniff->pcap);
+    }
+
+    if (sniff->pcap_filename) {
+        free(sniff->pcap_filename);
     }
 
     free(sniff);
@@ -442,7 +506,6 @@ struct dns_sniff *sniff_create(void)
     struct dns_sniff *sniff;
 
     sniff = malloc(sizeof(*sniff) + PKTBUF_SIZE);
-
     if (!sniff) {
         return log_errnon("Malloc failed for sniff state");
     }
@@ -458,16 +521,17 @@ int main(int argc, char *argv[])
     if (!(sniff = sniff_create())) { ec = 1; goto done; }
     if (sniff_init(sniff) != 0)  { ec = 2; goto done; }
     if (sniff_parse_argv(sniff, argc, argv) != 0) { ec = 3;  goto done; }
-    if (sniff_signals(sniff) != 0)  { ec = 4 ;goto done; }
-    if (sniff_attach(sniff) != 0) { ec = 5; goto done; }
-    if (sniff_start(sniff) != 0) { ec = 6; goto done; }
 
-    if (caught_signo) {
-        log_info("[dns-sniff PID:%d] shutting down: got signal %d (%s) from UID:%d PID:%d ", 
-            sniff->pid, 
-            caught_signo, strsignal(caught_signo), 
-            sender_uid,
-            sender_pid);
+    switch(sniff->mode) {
+    case MODE_CAPTURE:
+        if (sniff_signals(sniff) != 0)  { ec = 4 ;goto done; }
+        if (sniff_attach(sniff) != 0) { ec = 5; goto done; }
+        if (sniff_capture(sniff) != 0) { ec = 6; goto done; }
+        break;
+
+    case MODE_READPCAP:
+        if (sniff_readpcap(sniff) != 0) { ec = 7; goto done; }
+        break;
     }
 
     // all done

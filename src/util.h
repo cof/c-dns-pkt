@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 
 // general purpose macros
 #define ARR_LEN(a) (sizeof(a) / sizeof(a[0]))
@@ -19,6 +20,12 @@
 // Stringification macros
 #define XSTR(a) #a
 #define STR(a) XSTR(a)
+
+
+static inline size_t max(size_t x, size_t y)
+{
+    return x > y ? x : y;
+}
 
 static inline const char *ec_tostr(const char *estr[], int len, int ec, const char *def)
 {
@@ -139,6 +146,7 @@ static inline char *rwbuf_strcat_sep(struct rwbuf *buf, int ch, const char *str,
 }
 
 char *itoa(char *buf, int len, int val);
+int check_valid_file(const char *path);
 
 // logger
 void log_msg(const char *msg);
