@@ -26,7 +26,6 @@ CC = gcc
 LD = gcc
 
 # compiler flags
-#CFLAGS = -Wall -Wextra -O2
 CFLAGS += -D_GNU_SOURCE -Wall -Werror -O2 -Isrc -MMD -MP
 ifeq ($(DEBUG), 1)
 	CFLAGS += -O0 -g
