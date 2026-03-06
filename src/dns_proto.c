@@ -32,6 +32,9 @@
 #define DNS_NAME_SIZE 256
 #define DNS_MSG_SIZE 256 + 256 + 100 // big enough for 2 names + some extra
 
+#define DNS_MAX_JMP 10 // max number of compression ptr jmps
+#define DNS_MAX_UDP 512 // rfc1035 - can be overriden by EDNS0
+
 #define DNS_WHAT_NUL 0
 #define DNS_WHAT_QRY 0
 #define DNS_WHAT_RSP 1
@@ -53,6 +56,13 @@ struct dns_dec {
     // a simple error stack
     struct dns_err errs[DNS_MAX_EMSG];
     int nerr;
+    // flags
+    unsigned int got_edns : 1;
+    unsigned int dnssec_ok : 1;
+    // EDNS0 Options (RFC 6891)  
+    int udp_size;
+    uint8_t ext_rcode;
+    uint8_t edns_ver;
     // track what we write into emsg
     struct rwbuf emsg;
     char msg[DNS_MSG_SIZE]; // dns_err_tostr
@@ -63,13 +73,14 @@ struct dns_dec {
     X(DNS_ERR_OK, "Okay") \
     X(DNS_ERR_HDRLEN, "header len") \
     X(DNS_ERR_BADJMP, "Invalid compression pointer (outside range)") \
-    X(DNS_ERR_NUMJMP, "Invalid compression pointer (loop detected)") \
+    X(DNS_ERR_MAXJMP, "Invalid compression pointer (loop detected)") \
     X(DNS_ERR_NAMELEN, "Name length bigger than pkt size") \
     X(DNS_ERR_OUTLEN, "Name bigger than buf size") \
     X(DNS_ERR_NONULL, "Name missing null char") \
     X(DNS_ERR_TRUNC,  "Field truncated") \
     X(DNS_ERR_MINLEN, "Field smaller than min len") \
-    X(DNS_ERR_FLDLEN, "Field length bigger than pkt")
+    X(DNS_ERR_FLDLEN, "Field length bigger than pkt") \
+    X(DNS_ERR_OPTSECT, "OPT field not allowed")
 
 #define DNS_ERROR_ENUM(NAME, TEXT) NAME,
 #define DNS_ERROR_TEXT(NAME, TEXT) [NAME] = TEXT,
@@ -250,6 +261,8 @@ int parse_dns_header(const uint8_t *buf, size_t len, struct dns_header *hdr)
     return 0;
 }
 
+
+// max label size is 255 byte and max len is 253 (255-len-nul)
 int parse_dns_name(
     const uint8_t *pkt, size_t pkt_len, size_t offset, 
     char *out, size_t out_len, 
@@ -264,9 +277,9 @@ int parse_dns_name(
     while (ridx < pkt_len) {
         int len = pkt[ridx++];
         if ((len & 0xc0) == 0xc0) {
-            // jmp compression 
+            //  compression pointer - rfc1035 - 4.1.4. Message compression  
             if (ridx == pkt_len) return DNS_ERR_BADJMP; 
-            if (njmp++ > 10) return DNS_ERR_NUMJMP;
+            if (njmp++ > DNS_MAX_JMP) return DNS_ERR_MAXJMP;
             if (njmp == 1) *bytes_consumed += 2;
             len = ((len & 0x3F) << 8) | pkt[ridx];
             if (len < 12) return DNS_ERR_BADJMP;
@@ -275,7 +288,7 @@ int parse_dns_name(
             continue;
         }
 
-        // label
+        // label - len (0-63)
         int pkt_rem = pkt_len - ridx;
         if (len > pkt_rem) return DNS_ERR_NAMELEN;
         if (len > out_len) return DNS_ERR_OUTLEN; 
@@ -521,6 +534,9 @@ static int decode_record(struct dns_dec *dec, int section, struct dns_record *re
         break;
     }
     case DNS_TYPE_OPT: { // EDNS0 Options (RFC 6891)
+        if (section != DNS_DEC_ADDITIONAL) {
+            return dns_dec_err(dec, DNS_DEC_RECORD, DNS_DEC_TYPE_OPT, DNS_ERR_OPTSECT);
+        }
         size_t offset = dec->offset - 8;
         if (!*rec->name)  {
             strcpy(rec->name, "<Root>");
@@ -530,11 +546,16 @@ static int decode_record(struct dns_dec *dec, int section, struct dns_record *re
         uint32_t ttl_val  = decode_u32(dec->pkt + offset + 2);
         uint8_t ext_rcode = (ttl_val >> 24) & 0xFF;
         uint8_t version   = (ttl_val >> 16) & 0xFF;
-        uint16_t do_bit   = (ttl_val & 0x8000);
+        uint8_t do_bit   = (ttl_val & 0x8000);
         snprintf(dec->msg, sizeof(dec->msg),
-            "UDP-size:%d Ext-RCODE:%d Version:%d DNSEC-OK:%d",
+            "UDP-size:%d Ext-RCODE:%d EDNS0:%d DNSEC-OK:%d",
             udp_size, ext_rcode, version, !!do_bit);
-        // decoded okay
+        // store these values
+        dec->got_edns = 1;
+        dec->udp_size = udp_size;
+        dec->ext_rcode = ext_rcode;
+        dec->edns_ver = version;
+        dec->dnssec_ok = !!do_bit;
         rdata_desc = dec->msg;
         break;
     }
@@ -644,12 +665,14 @@ static int decode_header(struct dns_dec *dec)
     if (qr) {
         // query response
         int as = hdr->flags & DNS_FLAGS_AA ? 1 : 0;
+        int tc = (hdr->flags & DNS_FLAGS_TC) ? 1 : 0;
         int rd = hdr->flags & DNS_FLAGS_RD ? 1 : 0;
         int ra = hdr->flags & DNS_FLAGS_RA ? 1 : 0;
         int rcode = hdr->flags & DNS_FLAGS_RCODE;
 
         // add flags
         if (as) rwbuf_strcat_sep(&buf, ' ', STR_LIT("AS:1"));
+        if (tc) rwbuf_strcat_sep(&buf, ' ', STR_LIT("TC:1"));
         if (rd) rwbuf_strcat_sep(&buf, ' ', STR_LIT("RD:1"));
         if (ra) rwbuf_strcat_sep(&buf, ' ', STR_LIT("RA:1"));
 
@@ -671,10 +694,12 @@ static int decode_header(struct dns_dec *dec)
     }
     else {
         // query
+        int tc = (hdr->flags & DNS_FLAGS_TC) ? 1 : 0;
         int rd = (hdr->flags & DNS_FLAGS_RD) ? 1 : 0;
         int ad = (hdr->flags & DNS_FLAGS_AD) ? 1 : 0;   
 
         // add flags
+        if (tc) rwbuf_strcat_sep(&buf, ' ', STR_LIT("TC:1"));
         if (rd) rwbuf_strcat_sep(&buf, ' ', STR_LIT("RD:1"));
         if (ad) rwbuf_strcat_sep(&buf, ' ', STR_LIT("AD:1"));
 
@@ -740,6 +765,7 @@ int validate_dns_packet(const uint8_t *pkt, size_t pkt_len, char *emsg)
     struct dns_dec tmp = {
         .pkt = pkt,
         .pkt_len = pkt_len,
+        .udp_size = DNS_MAX_UDP,
         .emsg  = RWBUF_INIT(emsg, DNS_ERRBUF_SIZE)
     };
     struct dns_dec *dec = &tmp;
@@ -749,6 +775,11 @@ int validate_dns_packet(const uint8_t *pkt, size_t pkt_len, char *emsg)
     if ( (decode_section(dec, DNS_DEC_ANSWER,  dec->hdr.an_count)) != 0)  goto done;
     if ( (decode_section(dec, DNS_DEC_AUTHORITY, dec->hdr.ns_count)) != 0) goto done;
     if ( (decode_section(dec, DNS_DEC_ADDITIONAL, dec->hdr.ar_count)) != 0) goto done;
+
+    if (pkt_len > dec->udp_size) {
+        // Check packet doesn't exceed 512 bytes (UDP) or declared length
+        dns_wmsg(dec, "UDP message: packet-length %zu > max size %d\n", pkt_len, dec->udp_size);
+    }
 
 done:
     return generate_emsg(dec);
