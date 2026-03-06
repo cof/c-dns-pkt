@@ -52,7 +52,7 @@ $(BUILD_DIR):
 # build our binaries
 
 # dns-inspect
-DNS_INSPECT_SRCS = src/util.c src/dns_proto.c src/dns_inspect.c
+DNS_INSPECT_SRCS = src/util.c src/pcap.c src/dns_proto.c src/dns_inspect.c
 DNS_INSPECT_OBJS = $(DNS_INSPECT_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 DNS_INSPECT_DEPS = $(DNS_INSPECT_OBJS:.o=.d)
 -include $(DNS_INSPECT_DEPS)
