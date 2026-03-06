@@ -145,10 +145,10 @@ static int sniff_do_read(struct dns_sniff *sniff)
     // TODO use recvmmsg
     while (1) {
          nr = recvfrom(sniff->sock_raw, sniff->pkt_buf, sniff->buf_len, 0, NULL, NULL);
-         if (nr < 0) {
-             if (errno == EINTR) continue;
-             if (errno == EAGAIN) break;
-             return log_errno("read device %s failed on %d", sniff->dev_name, sniff->sock_raw);
+         if (nr  == -1) {
+             if (errno == EINTR) break;
+             if (errno == EAGAIN || EWOULDBLOCK) break;
+             return log_errno("read fd %d on dev %s failed", sniff->sock_raw, sniff->dev_name);
          }
          if (sniff_pkt_process(sniff, nr) != 0) {
              return -1;
@@ -173,15 +173,16 @@ int sniff_handle_event(struct dns_sniff *sniff, uint32_t events)
     if (events & (EPOLLERR | EPOLLHUP)) {
         // error event
         int error = 0;
+        uint32_t epoll = events & (EPOLLERR | EPOLLHUP);
         socklen_t errlen = sizeof(error);
         if (getsockopt(sniff->sock_raw, SOL_SOCKET, SO_ERROR, &error, &errlen) == -1) {
-            log_errno("epoll getsockopt failed for %d", sniff->sock_raw);
+            log_errno("socket %d epoll 0x%08x", sniff->sock_raw, epoll);
         }
         else if (error != 0) {
-            log_errno("epoll sockerr : (%s)  for %d", error, strerror(error), sniff->sock_raw);
+            log_error("socket %d epoll 0x%08x error %d (%s)", sniff->sock_raw, epoll, error, strerror(error));
         }
         else {
-            log_error("epoll error %d  for %d", events & (EPOLLERR | EPOLLHUP) , sniff->sock_raw);
+            log_error("socket %d epoll 0x%08x", sniff->sock_raw,  epoll);
         }
         shutdown = 1;
     }
@@ -395,13 +396,13 @@ int sniff_parse_argv(struct dns_sniff *sniff, int argc, char *argv[])
            return log_error("capture unknown option %s", opt.ptr);
         }
         if (opt.len >= sizeof(sniff->dev_name)) {
-           return log_errno("dev-name too big - cant be bigger than", sizeof(sniff->dev_name) - 1);
+           return log_error("name cant be bigger than %zu", sizeof(sniff->dev_name) - 1);
         }
         memcpy(sniff->dev_name, val.ptr, val.len);
         sniff->dev_name[val.len] = '\0';
         sniff->dev_index = if_nametoindex(sniff->dev_name);
         if (sniff->dev_index == 0) {
-           return log_errno("if_nametoindex for %s failed");
+           return log_errno("if_nametoindex for %s failed", sniff->dev_name);
         }
     }
     else {
