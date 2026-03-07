@@ -13,11 +13,11 @@ void log_msg(const char *msg)
     fflush(stdout);
 }
 
-void log_info(const char *fmt, ...)
+void log_info(const char *what, const char *fmt, ...)
 {
     va_list args;  
 
-    fprintf(stdout, "[+] ");
+    fprintf(stdout, "[%s] ", what);
 
     va_start(args, fmt);
     vfprintf(stdout, fmt, args);
