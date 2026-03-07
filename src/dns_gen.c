@@ -141,7 +141,7 @@ int main(int argc, char *argv[])
     if (gen_run(gen) != 0) { ec = 7; goto done; }
 
     if (caught_signo) {
-        log_info("[dns-gen PID:%d] shutting down: got signal %d (%s) from UID:%d PID:%d ", 
+        log_info("dns-gen", " PID:%d shutting down: got signal %d (%s) from UID:%d PID:%d ", 
             gen->pid, 
             caught_signo, strsignal(caught_signo), 
             sender_uid,

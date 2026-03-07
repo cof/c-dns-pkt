@@ -150,8 +150,8 @@ int check_valid_file(const char *path);
 
 // logger
 void log_msg(const char *msg);
-void log_info(const char *fmt, ...)
-    __attribute__((format(printf, 1, 2)));
+void log_info(const char *what, const char *fmt, ...)
+    __attribute__((format(printf, 2, 3)));
 int _log_error(const char *file, int line, const char *func, int ec, const char *fmt, ...) 
     __attribute__((format(printf, 5, 6)));
 void _fatal_error(const char *file, int line, const char *func, int ec, const char *fmt, ...)

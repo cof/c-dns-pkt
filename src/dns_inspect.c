@@ -37,8 +37,9 @@
 #include "pcap.h"
 #include "dns_proto.h"
 
-#define MODE_CAPTURE 1
-#define MODE_READPCAP 2
+#define MODE_CAPTURE   1
+#define MODE_READPCAP  2
+#define MODE_TRACEPCAP 3
 
 #define MAX_EVENTS 10
 #define PKTBUF_SIZE 2048
@@ -273,7 +274,7 @@ int sniff_capture(struct dns_sniff *sniff)
     }
 
     if (caught_signo) {
-        log_info("[dns-sniff PID:%d] shutting down: got signal %d (%s) from UID:%d PID:%d ", 
+        log_info("dns-sniff", "PID:%d shutting down: got signal %d (%s) from UID:%d PID:%d ", 
             sniff->pid, 
             caught_signo, strsignal(caught_signo), 
             sender_uid,
@@ -362,7 +363,7 @@ int sniff_attach(struct dns_sniff *sniff)
         return log_errno("epoll_ctl add filed for %d", sniff->sock_raw);
     }
 
-    log_info("DNS active on %s", sniff->dev_name);
+    log_info("dns-sniff", "DNS active on %s", sniff->dev_name);
 
     // all done
     return 0;
@@ -370,9 +371,9 @@ int sniff_attach(struct dns_sniff *sniff)
 
 static int sniff_readpcap(struct dns_sniff *sniff)
 {
-    int pkt_len;
+    size_t pkt_len;
 
-    sniff->pcap = pcap_open_read(sniff->pcap_filename);
+    sniff->pcap = pcap_open(sniff->pcap_filename, PCAP_READ);
     if (!sniff->pcap) {
         return -1;
     }
@@ -381,6 +382,25 @@ static int sniff_readpcap(struct dns_sniff *sniff)
         if (sniff_pkt_process(sniff, pkt_len) != 0) {
             return -1;
         }
+    }
+
+     pcap_close(sniff->pcap);
+     sniff->pcap = NULL;
+
+     return 0;
+}
+
+static int sniff_tracepcap(struct dns_sniff *sniff)
+{
+    size_t pkt_len;
+
+    sniff->pcap = pcap_open(sniff->pcap_filename, PCAP_READ | PCAP_TRACE);
+    if (!sniff->pcap) {
+        return -1;
+    }
+
+    while ( (pkt_len = pcap_read(sniff->pcap, sniff->pkt_buf, sniff->buf_len)) > 0) {
+        // do nothing
     }
 
      pcap_close(sniff->pcap);
@@ -402,11 +422,13 @@ static int sniff_usage(struct dns_sniff *sniff, const char *cmd)
     fprintf(out, "MODE:\n");
     fprintf(out, "  %-*s %s\n", w, "--help", "Show this help");
     fprintf(out, "  %-*s %s\n", w, "capture", "--interface name");
-    fprintf(out, "  %-*s %s\n", w, "readpcap", "--fil name");
+    fprintf(out, "  %-*s %s\n", w, "readpcap", "--file name");
+    fprintf(out, "  %-*s %s\n", w, "tracepcap", "--file name");
 
     fprintf(out, "\nExample:\n");
     fprintf(out, "  %s capture --interface eth0\n", prog_name);
     fprintf(out, "  %s readpcap --file dns.pcap\n", prog_name);
+    fprintf(out, "  %s tracecap --file dns.pcap\n", prog_name);
 
     return -1;
 }
@@ -454,6 +476,24 @@ int sniff_parse_argv(struct dns_sniff *sniff, int argc, char *argv[])
         struct str_slice val = slice_make_cstr(argv[3]);
         if (!slice_cmp_cstr(opt, STR_LIT("--file"))) {
            return log_error("readpcap unknown option %s", opt.ptr);
+        }
+        // filename
+        sniff->pcap_filename = strdup(val.ptr);
+        if (!sniff->pcap_filename) {
+            return log_errno("strdup failed for %.*s", (int) max(strlen(opt.ptr), 400), val.ptr);
+        }
+    }
+    else if (slice_cmp_cstr(mode, STR_LIT("tracepcap"))) {
+        sniff->mode = MODE_TRACEPCAP;
+        int nargs = argc - 2;
+        if (nargs != 2) {
+           return log_error("tracepcap requires a filename");
+        }
+        // --file
+        struct str_slice opt = slice_make_cstr(argv[2]);
+        struct str_slice val = slice_make_cstr(argv[3]);
+        if (!slice_cmp_cstr(opt, STR_LIT("--file"))) {
+           return log_error("tracepcap unknown option %s", opt.ptr);
         }
         // filename
         sniff->pcap_filename = strdup(val.ptr);
@@ -531,6 +571,10 @@ int main(int argc, char *argv[])
 
     case MODE_READPCAP:
         if (sniff_readpcap(sniff) != 0) { ec = 7; goto done; }
+        break;
+
+    case MODE_TRACEPCAP:
+        if (sniff_tracepcap(sniff) != 0) { ec = 8; goto done; }
         break;
     }
 
