@@ -24,6 +24,7 @@ endif
 INSTALL = install
 CC = gcc
 LD = gcc
+CTAGS = ctags
 
 # compiler flags
 CFLAGS += -D_GNU_SOURCE -Wall -Werror -O2 -Isrc -MMD -MP
@@ -73,6 +74,13 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
 .PHONY: test
 test:  $(DNS_INSPECT) $(DNS_GEN)
 	@echo "Starting tests"
+
+SOURCES = $(wildcard src/*.c src/*.h)
+.PHONY: tags
+tags: $(SOURCES)
+	@echo "Creating tags file"
+	$(Q)$(CTAGS) $(SOURCES)
+
 
 # =======
 # install

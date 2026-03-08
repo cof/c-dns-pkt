@@ -2,6 +2,21 @@
 #define __DNS_PROTO_H__
 
 #define DNS_ERRBUF_SIZE 4096
+#define DNS_MAX_NAME 253
+
+// DNS Record Types (QTYPE / TYPE)
+#define DNS_TYPE_A      1    // IPv4 Address
+#define DNS_TYPE_NS     2    // Authoritative Name Server
+#define DNS_TYPE_CNAME  5    // Canonical Name (Alias)
+#define DNS_TYPE_SOA    6    // Start of Authority
+#define DNS_TYPE_PTR    12   // Domain Name Pointer (Reverse DNS)
+#define DNS_TYPE_HINFO  13   // Host Information
+#define DNS_TYPE_MX     15   // Mail Exchange
+#define DNS_TYPE_TXT    16   // Text Strings
+#define DNS_TYPE_AAAA   28   // IPv6 Address
+#define DNS_TYPE_SRV    33   // Service Locator
+#define DNS_TYPE_OPT    41   // EDNS0 Options (RFC 6891) 
+#define DNS_TYPE_ANY    255  // Wildcard match (Query only)
 
 // Required structures
 struct dns_header {
