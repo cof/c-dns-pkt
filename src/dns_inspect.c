@@ -37,6 +37,7 @@
 #include "pcap.h"
 #include "dns_proto.h"
 
+// supported cmds
 #define MODE_CAPTURE   1
 #define MODE_READPCAP  2
 #define MODE_TRACEPCAP 3
@@ -154,7 +155,7 @@ static int sniff_do_read(struct dns_sniff *sniff)
          if (nr  == -1) {
              if (errno == EINTR) break;
              if (errno == EAGAIN || EWOULDBLOCK) break;
-             return log_errno("read fd %d on dev %s failed", sniff->sock_raw, sniff->dev_name);
+             return log_errno_rf("read fd %d on dev %s failed", sniff->sock_raw, sniff->dev_name);
          }
          if (sniff_pkt_process(sniff, nr) != 0) {
              return -1;
@@ -231,17 +232,17 @@ int sniff_signals(struct dns_sniff *sniff)
     sa.sa_sigaction = sniff_handle_signal;
     sa.sa_flags = SA_SIGINFO;
     if (sigaction(SIGINT, &sa, NULL) == -1) {
-        return log_errno("setup sigint");
+        return log_errno_rf("setup sigint");
     }
     if (sigaction(SIGTERM, &sa, NULL) == -1) {
-        return log_errno("setup sigterm");
+        return log_errno_rf("setup sigterm");
     }
 
     // XXX prevent write(fd) trigger a signal
     sa.sa_handler = SIG_IGN;
     sa.sa_flags = 0;
     if (sigaction(SIGPIPE, &sa, NULL) == -1) {
-        return log_errno("setup SIGPIPE");
+        return log_errno_rf("setup SIGPIPE");
     }
 
     return 0;
@@ -256,7 +257,7 @@ int sniff_poll(struct dns_sniff *sniff)
 
     if (nfd < 0) {
         if (errno == EINTR) return 0;
-        return log_errno("dns-sniff PID:%d epoll_wait failed", sniff->pid);
+        return log_errno_rf("dns-sniff PID:%d epoll_wait failed", sniff->pid);
     }
 
     for (int i = 0; i < nfd; i++) {
@@ -314,7 +315,7 @@ int sniff_attach(struct dns_sniff *sniff)
     // socket
     sniff->sock_raw = socket(AF_PACKET, SOCK_RAW | SOCK_NONBLOCK, htons(ETH_P_ALL));
     if (sniff->sock_raw == -1) {
-        return log_errno("open AF_PACKET");
+        return log_errno_rf("open AF_PACKET");
     }
 
     // bind to interface - kernel will start sending us pkts
@@ -324,7 +325,7 @@ int sniff_attach(struct dns_sniff *sniff)
         .sll_protocol = htons(ETH_P_ALL)
     };
     if (bind(sniff->sock_raw, (struct sockaddr *) &sll, sizeof(sll)) < 0) {
-        return log_errno("bind to %s failed", sniff->dev_name);
+        return log_errno_rf("bind to %s failed", sniff->dev_name);
     }
 
     // attach DNS filter
@@ -333,7 +334,7 @@ int sniff_attach(struct dns_sniff *sniff)
         .filter = dns_filter
     };
     if (setsockopt(sniff->sock_raw, SOL_SOCKET, SO_ATTACH_FILTER, &bpf, sizeof(bpf)) < 0) {
-        return log_errno("Attach DNS filter to %s failed", sniff->dev_name);
+        return log_errno_rf("Attach DNS filter to %s failed", sniff->dev_name);
     }
 
     // promisc mode
@@ -342,13 +343,13 @@ int sniff_attach(struct dns_sniff *sniff)
         .mr_type    = PACKET_MR_PROMISC
     };
     if (setsockopt(sniff->sock_raw, SOL_PACKET, PACKET_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) < 0) {
-        return log_errno("setsockopt PACKET_MR_PROMISC");
+        return log_errno_rf("setsockopt PACKET_MR_PROMISC");
     }
 
     // create epoll fd
     sniff->epoll_fd = epoll_create1(0);
     if (sniff->epoll_fd == -1) {
-        return log_errno("epoll_create1 failed");
+        return log_errno_rf("epoll_create1 failed");
     }
 
     // add socket to epoll
@@ -360,7 +361,7 @@ int sniff_attach(struct dns_sniff *sniff)
         rc = epoll_ctl(sniff->epoll_fd, EPOLL_CTL_ADD, sniff->sock_raw, &ev);
     } while (rc == -1 && errno == EINTR);
     if (rc == -1) {
-        return log_errno("epoll_ctl add filed for %d", sniff->sock_raw);
+        return log_errno_rf("epoll_ctl add filed for %d", sniff->sock_raw);
     }
 
     log_info("dns-sniff", "DNS active on %s", sniff->dev_name);
@@ -446,63 +447,63 @@ int sniff_parse_argv(struct dns_sniff *sniff, int argc, char *argv[])
         sniff->mode = MODE_CAPTURE;
         int nargs = argc - 2;
         if (nargs != 2) {
-           return log_error("capture require an --interface name");
+           return log_error_rf("capture require an --interface name");
         }
         // --interface option
         struct str_slice opt = slice_make_cstr(argv[2]);
         struct str_slice val = slice_make_cstr(argv[3]);
         if (!slice_cmp_cstr(opt, STR_LIT("--interface"))) {
-           return log_error("capture unknown option %s", opt.ptr);
+           return log_error_rf("capture unknown option %s", opt.ptr);
         }
         // device name
         if (opt.len >= sizeof(sniff->dev_name)) {
-           return log_error("name cant be bigger than %zu", sizeof(sniff->dev_name) - 1);
+           return log_error_rf("name cant be bigger than %zu", sizeof(sniff->dev_name) - 1);
         }
         memcpy(sniff->dev_name, val.ptr, val.len);
         sniff->dev_name[val.len] = '\0';
         sniff->dev_index = if_nametoindex(sniff->dev_name);
         if (sniff->dev_index == 0) {
-           return log_errno("if_nametoindex for %s failed", sniff->dev_name);
+           return log_errno_rf("if_nametoindex for %s failed", sniff->dev_name);
         }
     }
     else if (slice_cmp_cstr(mode, STR_LIT("readpcap"))) {
         sniff->mode = MODE_READPCAP;
         int nargs = argc - 2;
         if (nargs != 2) {
-           return log_error("readpcap requires a filename");
+           return log_error_rf("readpcap requires a filename");
         }
         // --file
         struct str_slice opt = slice_make_cstr(argv[2]);
         struct str_slice val = slice_make_cstr(argv[3]);
         if (!slice_cmp_cstr(opt, STR_LIT("--file"))) {
-           return log_error("readpcap unknown option %s", opt.ptr);
+           return log_error_rf("readpcap unknown option %s", opt.ptr);
         }
         // filename
         sniff->pcap_filename = strdup(val.ptr);
         if (!sniff->pcap_filename) {
-            return log_errno("strdup failed for %.*s", (int) max(strlen(opt.ptr), 400), val.ptr);
+            return log_errno_rf("strdup failed for %.*s", (int) max(strlen(opt.ptr), 400), val.ptr);
         }
     }
     else if (slice_cmp_cstr(mode, STR_LIT("tracepcap"))) {
         sniff->mode = MODE_TRACEPCAP;
         int nargs = argc - 2;
         if (nargs != 2) {
-           return log_error("tracepcap requires a filename");
+           return log_error_rf("tracepcap requires a filename");
         }
         // --file
         struct str_slice opt = slice_make_cstr(argv[2]);
         struct str_slice val = slice_make_cstr(argv[3]);
         if (!slice_cmp_cstr(opt, STR_LIT("--file"))) {
-           return log_error("tracepcap unknown option %s", opt.ptr);
+           return log_error_rf("tracepcap unknown option %s", opt.ptr);
         }
         // filename
         sniff->pcap_filename = strdup(val.ptr);
         if (!sniff->pcap_filename) {
-            return log_errno("strdup failed for %.*s", (int) max(strlen(opt.ptr), 400), val.ptr);
+            return log_errno_rf("strdup failed for %.*s", (int) max(strlen(opt.ptr), 400), val.ptr);
         }
     }
     else {
-        log_error("Unsupported mode %s", mode.ptr);
+        log_error_rf("Unsupported mode %s", mode.ptr);
         return sniff_usage(sniff, argv[0]);
     }
 
@@ -547,7 +548,7 @@ struct dns_sniff *sniff_create(void)
 
     sniff = malloc(sizeof(*sniff) + PKTBUF_SIZE);
     if (!sniff) {
-        return log_errnon("Malloc failed for sniff state");
+        return log_errno_rn("Malloc failed for sniff state");
     }
 
     return sniff;
