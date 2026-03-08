@@ -28,7 +28,7 @@ void log_info(const char *what, const char *fmt, ...)
 }
 
 
-int _log_error(const char *file, int line, const char *func, int ec, const char *fmt, ...)
+void _log_error(const char *file, int line, const char *func, int ec, const char *fmt, ...)
 {
     va_list args;  
 
@@ -39,13 +39,11 @@ int _log_error(const char *file, int line, const char *func, int ec, const char 
     va_end(args);
 
     if (ec != 0) {
+        // have an errno
         fprintf(stderr, ": %s (errno: %d)", strerror(ec), ec);
     }
 
     fprintf(stderr, "\n");
-
-    // XXX always -1
-    return -1;
 }
 
 void _fatal_error(const char *file, int line, const char *func, int ec, const char *fmt, ...)

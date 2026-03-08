@@ -119,6 +119,7 @@ struct pcap_file {
     int fmt; // PCAP_FMTLEG, PCAP_FMTNG
     int (*read_hdr)(struct pcap_file *file);
     size_t (*read_pkt)(struct pcap_file *file, void *buf, size_t len);
+    int sys_errno; // saved errno
     unsigned int is_reader : 1; // we read pcap
     unsigned int must_swap : 1; // need to swap endian
     unsigned int have_idb  : 1; // loaded a idb

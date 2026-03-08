@@ -8,6 +8,11 @@
 #include <string.h>
 #include <errno.h>
 
+// system errors
+#define UTIL_OK    0
+#define UTIL_FAIL -1
+#define UTIL_EOF  -2
+
 // general purpose macros
 #define ARR_LEN(a) (sizeof(a) / sizeof(a[0]))
 #define ARRAY(a) (a), ARR_LEN(a)
@@ -146,20 +151,61 @@ static inline char *rwbuf_strcat_sep(struct rwbuf *buf, int ch, const char *str,
 }
 
 char *itoa(char *buf, int len, int val);
-int check_valid_file(const char *path);
 
 // logger
 void log_msg(const char *msg);
 void log_info(const char *what, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));
-int _log_error(const char *file, int line, const char *func, int ec, const char *fmt, ...) 
+void _log_error(const char *file, int line, const char *func, int ec, const char *fmt, ...) 
     __attribute__((format(printf, 5, 6)));
 void _fatal_error(const char *file, int line, const char *func, int ec, const char *fmt, ...)
     __attribute__((format(printf, 5, 6)));
 
-#define log_error(...)  _log_error(__FILE__, __LINE__, __func__, 0,  __VA_ARGS__)
-#define log_errno(...)  _log_error(__FILE__, __LINE__, __func__, errno,  __VA_ARGS__)
-#define log_errnon(...)  (_log_error(__FILE__, __LINE__, __func__, errno,  __VA_ARGS__), (void *) NULL) 
+// report estr
+#define log_error(...) \
+    _log_error(__FILE__, __LINE__, __func__, 0, __VA_ARGS__)
+
+// report estr, return FAIL
+#define log_error_rf(...) ({ \
+    _log_error(__FILE__, __LINE__, __func__, errno,  __VA_ARGS__); \
+    UTIL_FAIL; \
+})
+
+// report estr, return 0
+#define log_error_rz(...) ({ \
+    _log_error(__FILE__, __LINE__, __func__, errno,  __VA_ARGS__); \
+    0; \
+})
+
+// report estr, return NULL
+#define log_error_rn(...) ({ \
+    _log_error(__FILE__, __LINE__, __func__, errno,  __VA_ARGS__); \
+    (void *) NULL; \
+})
+
+// report errno + estr
+#define log_errno(...) \
+    _log_error(__FILE__, __LINE__, __func__, errno,  __VA_ARGS__)
+
+// report errno + estr, return NULL
+#define log_errno_rn(...) ({ \
+    _log_error(__FILE__, __LINE__, __func__, errno,  __VA_ARGS__); \
+    (void *) NULL; \
+})
+
+// report errno + estr, return ec
+#define log_errno_re(ec, ...) ({ \
+    _log_error(__FILE__, __LINE__, __func__, errno,  __VA_ARGS__); \
+    (ec); \
+})
+
+// report errno + estr, return FAIL
+#define log_errno_rf(...) ({ \
+    _log_error(__FILE__, __LINE__, __func__, errno,  __VA_ARGS__); \
+    UTIL_FAIL; \
+})
+
+
 #define fatal_error(...) _fatal_error(__FILE__, __LINE__, __func__, 0,  __VA_ARGS__)
 #define fatal_errno(...) _fatal_error(__FILE__, __LINE__, __func__, errno,  __VA_ARGS__)
 #define log_errorn(...) (log_error(__VA_ARGS__), (void*)NULL)

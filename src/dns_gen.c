@@ -61,17 +61,17 @@ int gen_signals(struct dns_gen *gen)
     sa.sa_sigaction = gen_handle_signal;
     sa.sa_flags = SA_SIGINFO;
     if (sigaction(SIGINT, &sa, NULL) == -1) {
-        return log_errno("setup sigint");
+        return log_errno_rf("setup sigint");
     }
     if (sigaction(SIGTERM, &sa, NULL) == -1) {
-        return log_errno("setup sigterm");
+        return log_errno_rf("setup sigterm");
     }
 
     // XXX prevent write(fd) trigger a signal
     sa.sa_handler = SIG_IGN;
     sa.sa_flags = 0;
     if (sigaction(SIGPIPE, &sa, NULL) == -1) {
-        return log_errno("setup SIGPIPE");
+        return log_errno_rf("setup SIGPIPE");
     }
 
     return 0;
@@ -95,10 +95,10 @@ int gen_parse_argv(struct dns_gen *gen, int argc, char *argv[])
         }
 		// store
 		if (host.len && (gen->host = strndup(host.ptr, host.len)) == NULL) {
-            return log_errno("strdup-hostname");
+            return log_errno_rf("strdup-hostname");
         }
 		if (port.len && (gen->port = strndup(port.ptr, port.len)) == NULL) { 
-            return log_errno("strdup-portno");
+            return log_errno_rf("strdup-portno");
         }
 	}
 
@@ -123,7 +123,7 @@ struct dns_gen *gen_create(void)
 
     gen = malloc(sizeof(*gen));
     if (!gen) {
-        return log_errnon("Malloc failed for gen state");
+        return log_errno_rn("Malloc failed for gen state");
     }
 
     return gen;

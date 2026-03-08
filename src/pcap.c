@@ -13,33 +13,37 @@
 #include "util.h"
 #include "pcap.h"
 
-#define PCAP_ZERO 0
-#define PCAP_ERR -1
+#define PCAP_FAIL -1
 #define PCAP_EOF -2
 
-#define pcap_log(what, fmt, ...) log_info(what, fmt, ##__VA_ARGS__)
+#define pcap_log(what, fmt, ...) \
+    log_info(what, fmt, ##__VA_ARGS__)
 
-#define pcap_errorn(ec, fmt, ...) ({ \
-	_log_error(__FILE__, __LINE__, __func__, 0, fmt, ##__VA_ARGS__); \
-    errno = (ec); \
-	(void *)NULL; \
-})
-
-#define pcap_errori(ec, fmt, ...) ({ \
-	_log_error(__FILE__, __LINE__, __func__, 0, fmt, ##__VA_ARGS__); \
-    errno = (ec); \
-	PCAP_ERR; \
-})
-
-#define pcap_errorz(ec, fmt, ...) ({ \
-	_log_error(__FILE__, __LINE__, __func__, 0, fmt, ##__VA_ARGS__); \
-    errno = (ec); \
-	PCAP_ZERO; \
+// save errno, log errno, return FAIL
+#define pcap_log_errno_rf(file, fmt, ...) ({ \
+    if (!file->sys_err) { \
+        file->sys_err = 1; \
+        file->sys_errno = errno; \
+    } \
+    _log_error(__FILE__, __LINE__, __func__, errno, fmt, ##__VA_ARGS__); \
+    UTIL_FAIL; \
 })
 
 static uint32_t inline pad_len(uint32_t cap_len)
 {
     return  (4 - (cap_len % 4)) % 4;
+}
+
+static int pcap_open_file(struct pcap_file *file, const char *path_name)
+{
+    char *open_mode = file->is_reader ? "rb" : "wb";
+
+    file->fp = fopen(path_name, open_mode);
+    if (!file->fp) {
+        return pcap_log_errno_rf(file, "fopen %s", path_name);
+    }
+
+    return 0;
 }
 
 // wrapper around fread call - track/log errors
@@ -48,16 +52,16 @@ static int pcap_read_data(struct pcap_file *file, const char *name, void *data, 
     size_t nread = fread(data, 1, len, file->fp);
 
     if (nread != len) {
+        if (ferror(file->fp)) {
+            return pcap_log_errno_rf(file, "pcap: Read %s #%lu size %zu failed", name, file->rec_cnt + 1,  len);
+        }
         if (nread == 0 && feof(file->fp)) {
             file->have_eof = 1;
             return PCAP_EOF;
         }
-        if (!ferror(file->fp)) {
-            // should never happen ?
-            errno = EBADMSG;
-        }
-        file->sys_err = 1;
-        return pcap_errori(errno, "pcap: Read %s #%lu size %zu failed", name, file->rec_cnt + 1,  len);
+        // should never happen
+        file->sys_errno = EIO;
+        return PCAP_FAIL;
     }
 
     return 0;
@@ -66,9 +70,8 @@ static int pcap_read_data(struct pcap_file *file, const char *name, void *data, 
 // read strt of a new block/record
 static int pcap_read_block(struct pcap_file *file, const char *name, void *block, size_t len)
 {
-    if (pcap_read_data(file, name, block, len) != 0) {
-        return -1;
-    }
+    int nr = pcap_read_data(file, name, block, len);
+    if (nr != 0) return nr;
 
     file->rec_cnt++;
 
@@ -79,8 +82,7 @@ static int pcap_read_block(struct pcap_file *file, const char *name, void *block
 static int pcap_seek_data(struct pcap_file *file, const char *name, long len, int whence)
 {
     if (fseek(file->fp, len, whence) != 0) {
-        file->sys_err = 1;
-        return pcap_errori(errno, "pcap: %s seek %lu whence %d failed", name, len, whence);
+        return pcap_log_errno_rf(file, "pcap: %s seek %lu whence %d failed", name, len, whence);
     }
 
     return 0;
@@ -99,35 +101,33 @@ static int pcap_data_rewind(struct pcap_file *file, const char *name, long len)
 static int pcap_detect_fmt(struct pcap_file *file)
 {
     uint32_t magic;
+    int ec;
 
-    if (pcap_read_data(file, "magic", &magic, sizeof(magic)) != 0) {
-        return -1;
-    }
+    ec = pcap_read_data(file, "magic", &magic, sizeof(magic));
+    if (ec) return ec;
 
-    if (fseek(file->fp, 0, SEEK_SET) == -1) {
-        file->sys_err = 1;
-        return pcap_errori(errno, "pcap: magic rewind failed");
-    }
+    ec = pcap_seek_data(file, "magic rewind", 0, SEEK_SET);
+    if (ec) return ec;
 
     if (pcap_islegacy(magic)) return PCAP_FMTLEG;
     if (pcap_isng(magic)) return PCAP_FMTNG;
 
-    return pcap_errori(EBADMSG, "Not a pcap file");
+    return log_error_rf("Not a pcap file");
 }
 
 // classic pcap
 static int pcap_read_hdr(struct pcap_file *file)
 {
     struct pcap_hdr *hdr = &file->hdr.pcap;
-    size_t nread = fread(hdr, 1, sizeof(*hdr), file->fp);
 
-    if (nread < sizeof(file->hdr.pcap)) {
-        if (!ferror(file->fp)) errno = EBADMSG;
-        return pcap_errori(errno, "Read %zu byte pcap-hdr failed", sizeof(*hdr));
-    }
+    int rc = pcap_read_data(file, "pcap-hdr", hdr, sizeof(*hdr));
+    if (rc) return rc;
 
     if (!pcap_isnative(hdr->magic_num)) {
         file->must_swap = 1;
+    }
+
+    if (file->must_swap) {
         hdr->magic_num = __builtin_bswap32(hdr->magic_num);
         hdr->major_ver = __builtin_bswap16(hdr->major_ver);
         hdr->minor_ver = __builtin_bswap16(hdr->minor_ver);
@@ -154,10 +154,8 @@ static size_t pcap_read_pkt(struct pcap_file *file, void *buf, size_t len)
     struct pcap_rec rec;
 
     // read the packet record
-    if (pcap_read_block(file, "pcap-rec", &rec, sizeof(rec)) != 0) {
-        // tell caller to stop reading
-        return 0;
-    }
+    int rc = pcap_read_block(file, "pcap-rec", &rec, sizeof(rec));
+    if (rc) return rc;
 
     if (file->must_swap) {
         rec.ts_sec = __builtin_bswap32(rec.ts_sec);
@@ -175,7 +173,7 @@ static size_t pcap_read_pkt(struct pcap_file *file, void *buf, size_t len)
 
     // can we fit the packet
     if (rec.incl_len > len) {
-       return pcap_errori(EBADMSG, "pcap-read pkt-len %u too big for buf %zu", rec.incl_len, len);
+       return log_error_rf("pcap-read pkt-len %u too big for buf %zu", rec.incl_len, len);
     }
 
     // read the packet data
@@ -192,12 +190,11 @@ static int pcap_read_shb(struct pcap_file *file)
 {
     struct pcapng_shb_hdr *shb = &file->hdr.pcapng;
 
-    if (pcap_read_block(file, "SHB", shb, sizeof(*shb)) != 0) {
-        return -1;
-    }
+    int rc = pcap_read_block(file, "SHB", shb, sizeof(*shb));
+    if (rc) return rc;
 
     if (!pcap_bom_isng(shb->magic)) {
-        return pcap_errori(EBADMSG, "pcapng: Bad SHB bom 0x%08x", shb->magic);
+        return log_error_rf("pcapng: Bad SHB bom 0x%08x", shb->magic);
     }
 
     file->must_swap = pcapng_isnative(shb->magic) ? 0 : 1; 
@@ -219,21 +216,19 @@ static int pcap_read_shb(struct pcap_file *file)
     }
 
     if (shb->total_len < sizeof(*shb)) {
-        return pcap_errori(EBADMSG, "pcapng: bad block %lu type %s len %u", file->rec_cnt, "SHB", shb->total_len);
+        return log_error_rf("pcapng: bad block %lu type %s len %u", file->rec_cnt, "SHB", shb->total_len);
     }
 
     // skip options + footer
-    uint32_t skip_len = shb->total_len - sizeof(*shb);
-    return pcap_data_skip(file, "SHB", skip_len);
+    return pcap_data_skip(file, "SHB", shb->total_len - sizeof(*shb));
 }
 
 static int pcap_read_idb(struct pcap_file *file)
 {
     struct pcapng_idb_hdr *idb = &file->idb;
 
-    if (pcap_read_block(file, "IDB", idb, sizeof(*idb)) != 0) {
-        return -1;
-    }
+    int rc = pcap_read_block(file, "IDB", idb, sizeof(*idb));
+    if (rc) return rc;
 
     file->have_idb = 1;
 
@@ -253,25 +248,24 @@ static int pcap_read_idb(struct pcap_file *file)
     }
 
     if (idb->total_len < sizeof(*idb)) {
-        return pcap_errori(EBADMSG, "pcapng: bad block %lu type %s len %u", file->rec_cnt, "IDB", idb->total_len);
+        return log_error_rf("pcapng: bad block %lu type %s len %u", file->rec_cnt, "IDB", idb->total_len);
     }
 
     // skip options + footer;
-    uint32_t skip_len = idb->total_len - sizeof(*idb);
-    return pcap_data_skip(file, "IDB", skip_len);
+    return pcap_data_skip(file, "IDB", idb->total_len - sizeof(*idb));
 }
 
+// return packet length or zero on error or eof
 static size_t pcap_read_epb(struct pcap_file *file, void *buf, size_t len)
 {
     if (!file->have_idb) {
-        return pcap_errori(EBADMSG, "pcapng: bad block %lu type %s %s", file->rec_cnt, "EPB", "missing IDB");
+        return log_error_rz("pcapng: bad block %lu type %s %s", file->rec_cnt, "EPB", "missing IDB");
     }
 
     // read the header
     struct pcapng_epb_hdr epb;
-    if (pcap_read_block(file, "EPB", &epb, sizeof(epb)) != 0) {
-        return 0; 
-    }
+    int rc = pcap_read_block(file, "EPB", &epb, sizeof(epb));
+    if (rc) return 0;
 
     if (file->must_swap) {
         epb.type = __builtin_bswap32(epb.type);
@@ -292,36 +286,34 @@ static size_t pcap_read_epb(struct pcap_file *file, void *buf, size_t len)
     }
 
     if (epb.total_len < sizeof(epb)) {
-        return pcap_errori(EBADMSG, "pcapng: bad block %lu type %s len %u", file->rec_cnt, "EPB", epb.total_len);
+        return log_error_rz("pcapng: bad block %lu type %s len %u", file->rec_cnt, "EPB", epb.total_len);
     }
 
     // read packet data
     uint32_t cap_len = epb.incl_len;
-    if (pcap_read_data(file, "EPB", buf, epb.incl_len) != 0) {
-        return 0;
-    }
+    rc = pcap_read_data(file, "EPB", buf, epb.incl_len);
+    if (rc) return 0;
 
     // skip padding + options
     uint32_t skip_len = epb.total_len - (sizeof(epb) + cap_len);
-    if (pcap_data_skip(file, "EPB", skip_len) != 0) {
-        return 0;
-    }
+    rc = pcap_data_skip(file, "EPB", skip_len);
+    if (rc) return 0;
 
     // report packet length
     return epb.incl_len;
 }
 
-static ssize_t pcap_read_spb(struct pcap_file *file, void *buf, size_t len)
+// return packet length or zero on error or eof
+static size_t pcap_read_spb(struct pcap_file *file, void *buf, size_t len)
 {
     if (!file->have_idb) {
-        return pcap_errori(EBADMSG, "pcapng: bad block %lu type %s %s", file->rec_cnt, "SPB", "missing IDB");
+        return log_error_rz("pcapng: bad block %lu type %s %s", file->rec_cnt, "SPB", "missing IDB");
     }
 
     // read the header
     struct pcapng_epb_hdr spb;
-    if (pcap_read_block(file, "SPB", &spb, sizeof(spb)) != 0) {
-        return -1;
-    }
+    int rc = pcap_read_block(file, "SPB", &spb, sizeof(spb));
+    if (rc) return 0;
 
     if (file->must_swap) {
         spb.type = __builtin_bswap32(spb.type);
@@ -338,20 +330,18 @@ static ssize_t pcap_read_spb(struct pcap_file *file, void *buf, size_t len)
     }
 
     if (spb.total_len < sizeof(spb)) {
-        return pcap_errori(EBADMSG, "pcapng: bad block %lu type %s len %u", file->rec_cnt, "SPB", spb.total_len);
+        return log_error_rz("pcapng: bad block %lu type %s len %u", file->rec_cnt, "SPB", spb.total_len);
     }
 
     // read packet data
     uint32_t cap_len = spb.total_len - (sizeof(spb) + 4);
-    if (pcap_read_data(file, "SPB", buf, cap_len) != 0) {
-        return 0;
-    }
+    rc = pcap_read_data(file, "SPB", buf, cap_len);
+    if (rc) return 0;
 
     // skip padding + footer
     uint32_t skip_len = spb.total_len - (sizeof(spb) + cap_len);
-    if (pcap_data_skip(file, "SPB", skip_len) != 0) {
-        return 0;
-    }
+    rc = pcap_data_skip(file, "SPB", skip_len);
+    if (rc) return 0;
 
     // report packet length
     return cap_len;
@@ -364,9 +354,8 @@ static int pcap_skip_block(struct pcap_file *file)
         uint32_t total_len;
     } blk;
 
-    if (pcap_read_block(file, "skip", &blk, sizeof(&blk)) != 0) {
-        return -1;
-    }
+    int rc = pcap_read_block(file, "skip", &blk, sizeof(&blk));
+    if (rc) return rc;
 
     if (file->must_swap) {
         blk.type = __builtin_bswap32(blk.type);
@@ -374,7 +363,7 @@ static int pcap_skip_block(struct pcap_file *file)
     }
 
     if (blk.total_len < sizeof(blk)) {
-        return pcap_errori(EBADMSG, "pcap: Bad block %lu total_len %u", file->rec_cnt + 1, blk.total_len);
+        return log_error_rf("pcap: Bad block %lu total_len %u", file->rec_cnt + 1, blk.total_len);
     }
 
     // skip options
@@ -385,11 +374,11 @@ static int pcap_peek_block(struct pcap_file *file)
 {
     uint32_t type;
 
-    int nr = pcap_read_data(file, "peek-block", &type, sizeof(type));
-    if (nr != 0) return nr;
+    int rc = pcap_read_data(file, "peek-block", &type, sizeof(type));
+    if (rc) return rc;
 
-    nr = pcap_data_rewind(file, "peek-rewind", sizeof(type));
-    if (nr != 0) return nr;
+    rc = pcap_data_rewind(file, "peek-rewind", sizeof(type));
+    if (rc) return rc;
 
     if (file->must_swap) {
         type = __builtin_bswap32(type);
@@ -423,14 +412,9 @@ static size_t pcapng_read_pkt(struct pcap_file *file, void *buf, size_t len)
     return 0;
 }
 
-static void pcap_close_werr(struct pcap_file *file, int ec)
+static int pcap_setup_fmt(struct pcap_file *file)
 {
-    pcap_close(file);
-    errno = ec;
-}
-
-static int pcap_setup_fptrs(struct pcap_file *file)
-{
+    file->fmt = pcap_detect_fmt(file);
 
     switch(file->fmt) {
     case PCAP_FMTLEG:
@@ -442,60 +426,55 @@ static int pcap_setup_fptrs(struct pcap_file *file)
         file->read_pkt = pcapng_read_pkt;
         break;
     default: 
-        break;
+        return log_error_rf("pcap fmt %d unsupported", file->fmt);
     }
 
     return 0;
-
 }
 
-struct pcap_file *pcap_open(const char *path, int flags)
+struct pcap_file *pcap_open(const char *path_name, int flags)
 {
     struct pcap_file *file;
 
-    // check read|write mode
+    // check flags 
     int mode = flags & (PCAP_READ | PCAP_WRITE);
     if (mode == 0 || mode == (PCAP_READ | PCAP_WRITE)) {
-        return pcap_errorn(EINVAL, "Read or Write flag must be set");
+        return log_error_rn("Read or Write flag must be set");
     }
 
     file = malloc(sizeof(*file));
     if (!file) {
-        return pcap_errorn(errno, "malloc state");
+        return log_errno_rn("malloc state");
     }
-    memset(file, 0, sizeof(*file));
 
+    // init
+    memset(file, 0, sizeof(*file));
     if (flags & PCAP_TRACE) file->trace_rec = 1;
     if (flags & PCAP_READ) file->is_reader = 1;
 
-    char *open_mode = file->is_reader ? "rb" : "wb";
+    if (pcap_open_file(file, path_name) != 0) goto err;
+    if (pcap_setup_fmt(file) != 0) goto err;
+    if (file->read_hdr(file) != 0) goto err;
 
-    file->fp = fopen(path, open_mode);
-    if (!file->fp) {
-        pcap_close_werr(file, errno);
-        return pcap_errorn(errno, "fopen %s", path);
-    }
-
-    // detect the file
-    file->fmt = pcap_detect_fmt(file);
-    if (pcap_setup_fptrs(file) != 0) {
-        pcap_close_werr(file, EPROTONOSUPPORT);
-        return NULL;
-    }
-
-    if (file->read_hdr(file) != 0) {
-        pcap_close_werr(file, errno);
-        file = NULL;
-    }
-
+    // all done
     return file;
+
+err:
+    pcap_close(file);
+    return NULL;
 }
 
 void pcap_close(struct pcap_file *file)
 {
     if (file->fp) {
-        fclose(file->fp);
-        file->fp = NULL;
+        if (fclose(file->fp) != 0) {
+            log_errno("fclose failed");
+        }
+    }
+
+    if (file->sys_errno) {
+        // restore errno
+        errno = file->sys_errno;
     }
 
     free(file);
@@ -504,7 +483,8 @@ void pcap_close(struct pcap_file *file)
 
 size_t pcap_read(struct pcap_file *file, void *buf, size_t len)
 {
-    if (file->sys_err) {
+    if (file->sys_err || file->have_eof) {
+        // nothing to read
         return 0;
     }
    
