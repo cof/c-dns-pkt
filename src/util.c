@@ -24,9 +24,22 @@ void log_info(const char *what, const char *fmt, ...)
     va_end(args);
 
     fprintf(stdout, "\n");
-    fflush(stdout);
 }
 
+int log_cmd_err(const char *cmd, const char *opt, const char *fmt, ...)
+{
+    va_list args;  
+
+    fprintf(stdout, "[ERROR] %s: %s: ", cmd, opt);
+
+    va_start(args, fmt);
+    vfprintf(stdout, fmt, args);
+    va_end(args);
+
+    fprintf(stdout, "\n");
+    
+    return -1;
+}
 
 void _log_error(const char *file, int line, const char *func, int ec, const char *fmt, ...)
 {
@@ -110,7 +123,7 @@ char *itoa(char *buf, int len, int val)
 
 static int find_cmd(struct str_slice cmd, int ncmd, struct util_cmd cmds[ncmd])
 {
-    slice_tolower(&cmd);
+    cmd = slice_tolower(cmd);
 
     for (int i = 0; i < ncmd; i++) {
         if (slice_cmp_cstr(cmd, cmds[i].name, cmds[i].len)) {

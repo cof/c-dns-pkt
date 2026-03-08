@@ -156,6 +156,8 @@ char *itoa(char *buf, int len, int val);
 void log_msg(const char *msg);
 void log_info(const char *what, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));
+int log_cmd_err(const char *cmd, const char *opt, const char *fmt, ...)
+    __attribute__((format(printf, 3, 4)));
 void _log_error(const char *file, int line, const char *func, int ec, const char *fmt, ...) 
     __attribute__((format(printf, 5, 6)));
 void _fatal_error(const char *file, int line, const char *func, int ec, const char *fmt, ...)
@@ -282,7 +284,7 @@ static inline struct str_slice slice_split(struct str_slice *src, int ch)
 
 char *slice_strdup(const struct str_slice str);
 
-static inline void str2lower(char *str, size_t len)
+static inline void str_tolower(char *str, size_t len)
 {
     while (len) {
         int ch = *str;
@@ -292,7 +294,7 @@ static inline void str2lower(char *str, size_t len)
     }
 }
 
-static inline void str2upper(char *str, size_t len)
+static inline void str_toupper(char *str, size_t len)
 {
     while (len) {
         int ch = *str;
@@ -331,16 +333,16 @@ static inline struct str_slice *slice_trim(struct str_slice *str)
     return slice_ltrim(slice_rtrim(str));
 }
 
-static inline struct str_slice *slice_toupper(struct str_slice *str)
+static inline struct str_slice slice_toupper(struct str_slice str)
 {
-    str2upper(str->ptr, str->len);
+    str_toupper(str.ptr, str.len);
 
     return str;
 }
 
-static inline struct str_slice *slice_tolower(struct str_slice *str)
+static inline struct str_slice slice_tolower(struct str_slice str)
 {
-    str2lower(str->ptr, str->len);
+    str_tolower(str.ptr, str.len);
 
     return str;
 }
