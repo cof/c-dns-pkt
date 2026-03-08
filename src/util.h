@@ -15,7 +15,7 @@
 
 // general purpose macros
 #define ARR_LEN(a) (sizeof(a) / sizeof(a[0]))
-#define ARRAY(a) (a), ARR_LEN(a)
+#define ARRAY(a) ARR_LEN(a), a
 #define STR_LIT(s) (s), (sizeof(s) - 1)
 #define containerof(ptr, type, member) ((type *)((char *)(ptr) - offsetof(type, member)))
 #define make_ptr(ptr, offset) ((void *) (ptr + offset))
@@ -32,7 +32,7 @@ static inline size_t max(size_t x, size_t y)
     return x > y ? x : y;
 }
 
-static inline const char *ec_tostr(const char *estr[], int len, int ec, const char *def)
+static inline const char *ec_tostr(int len, const char *estr[len], int ec, const char *def)
 {
     const char *str;
 
@@ -217,6 +217,8 @@ struct str_slice {
     size_t len;
 };
 
+#define SLICE(x) (int) (x).len, (x).ptr
+
 static inline struct str_slice slice_make(char *str, size_t len)
 {
     struct str_slice dst;
@@ -277,6 +279,8 @@ static inline struct str_slice slice_split(struct str_slice *src, int ch)
 
     return dst;
 }
+
+char *slice_strdup(const struct str_slice str);
 
 static inline void str2lower(char *str, size_t len)
 {
@@ -341,6 +345,16 @@ static inline struct str_slice *slice_tolower(struct str_slice *str)
     return str;
 }
 
+struct util_cmd {
+    const char *name;
+    size_t len;
+    int (*func)(void *state, int narg, struct str_slice args[]);
+};
+
+int util_parse_argv(void *state,
+    int argc, char *argv[],
+    int ncmd, struct util_cmd cmds[ncmd],
+    int (*usage_func)(void *state, struct str_slice prog));
 
 char *gen_path(const char *dir, const char *name);
 
