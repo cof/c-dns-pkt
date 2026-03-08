@@ -13,7 +13,6 @@
 #include <string.h> 
 #include <signal.h>
 
-#include <sys/epoll.h>
 #include <sys/types.h> 
 #include <sys/socket.h>
 #include <netpacket/packet.h>
@@ -30,7 +29,6 @@
 #include <netinet/tcp.h>
 #include <netdb.h> 
 #include <unistd.h>
-#include <sys/epoll.h>
 #include <errno.h>
 
 #include "util.h"
@@ -42,10 +40,13 @@
 #define MODE_READPCAP  2
 #define MODE_TRACEPCAP 3
 
-#define MAX_EVENTS 10
-#define PKTBUF_SIZE 2048
+#define PKT_BUFSIZE 2048
+#define PKT_MAXRECV 10
 #define PKT_MIN_LEN (14 + 20 + 8 + 12)
+
 #define make_ptr(ptr, offset) ((void *) (ptr + offset))
+#define RCVBUF_SIZE (2 * 1024 * 1024)
+#define MAX_EVENTS 10
 
 struct dns_sniff {
     // config
@@ -59,40 +60,39 @@ struct dns_sniff {
     char dev_name[IFNAMSIZ]; 
     int dev_index;
     int sock_raw;
-    int epoll_fd;
     // packet counters
     uint64_t num_recv_pkts;
     uint64_t num_dns_pkts;
     uint64_t num_dns_okay;
     uint64_t num_dns_fail;
     // read buffer
-    int buf_len;
-    char pkt_buf[];
+    struct mmsghdr msgs[PKT_MAXRECV];
+    struct iovec   vecs[PKT_MAXRECV];
+    uint8_t        bufs[PKT_MAXRECV][PKT_BUFSIZE];
 };
 
 static char dns_errbuf[DNS_ERRBUF_SIZE];
 
-static int sniff_pkt_process(struct dns_sniff *sniff, int pkt_len)
+static int sniff_process_pkt(struct dns_sniff *sniff, uint8_t *pkt_data, uint32_t pkt_len)
 {
     sniff->num_recv_pkts++;
 
     if (pkt_len < PKT_MIN_LEN) {
-        // TOO small (eth+IP+UDP)
+        // too small (eth+IP+UDP)
         return 0;
     }
 
-    unsigned char *ptr = make_ptr(sniff->pkt_buf, 0);
     int offset = 0;
 
     // Etherner layer
-    struct ethhdr *eth = make_ptr(ptr, offset);
+    struct ethhdr *eth = make_ptr(pkt_data, offset);
     uint16_t type = ntohs(eth->h_proto);
     offset += sizeof(*eth);
 
     // VLAN tag ?
     if (type ==  0x8100) {
         // skip vlan tags
-        uint16_t *iptr = make_ptr(ptr, 2);
+        uint16_t *iptr = make_ptr(pkt_data, 2);
         type = ntohs(*iptr);
         offset += 4;
     }   
@@ -101,13 +101,13 @@ static int sniff_pkt_process(struct dns_sniff *sniff, int pkt_len)
     int hdr_len = 0;
     int proto = 0;
     if (type ==  ETH_P_IP) {
-        struct iphdr *ip = make_ptr(ptr,offset);
+        struct iphdr *ip = make_ptr(pkt_data,offset);
         if (ip->version != 4) return 0;
         hdr_len = ip->ihl * 4;
         proto = ip->protocol;
     }
     else if (type == ETH_P_IPV6) {
-        struct ipv6hdr *ip6 = make_ptr(ptr, offset);
+        struct ipv6hdr *ip6 = make_ptr(pkt_data, offset);
         if (ip6->version != 6) return 0;
         proto = ip6->nexthdr;
         hdr_len = 40;
@@ -120,7 +120,7 @@ static int sniff_pkt_process(struct dns_sniff *sniff, int pkt_len)
     if (proto != IPPROTO_UDP) return 0;
 
     // UDP layer
-    struct udphdr *udp = make_ptr(ptr, offset);
+    struct udphdr *udp = make_ptr(pkt_data, offset);
     uint16_t src_port = ntohs(udp->source);
     uint16_t dst_port = ntohs(udp->dest);
     if (src_port != 53 && dst_port != 53) {
@@ -131,7 +131,7 @@ static int sniff_pkt_process(struct dns_sniff *sniff, int pkt_len)
 
     // call into api
     sniff->num_dns_pkts++;
-    if (validate_dns_packet(ptr + offset, pkt_len - offset, dns_errbuf) == 0) {
+    if (validate_dns_packet(pkt_data + offset, pkt_len - offset, dns_errbuf) == 0) {
         sniff->num_dns_okay++;
     }
     else {
@@ -143,66 +143,14 @@ static int sniff_pkt_process(struct dns_sniff *sniff, int pkt_len)
     return 0;
 }
 
-
-static int sniff_do_read(struct dns_sniff *sniff)
+static int sniff_process_msg(struct dns_sniff *sniff, struct mmsghdr *msg)
 {
-    ssize_t nr;
+    uint8_t *pkt_data = msg->msg_hdr.msg_iov->iov_base;
+    uint32_t pkt_len = msg->msg_len;
 
-    // loopp until all packer read or error 
-    // TODO use recvmmsg
-    while (1) {
-         nr = recvfrom(sniff->sock_raw, sniff->pkt_buf, sniff->buf_len, 0, NULL, NULL);
-         if (nr  == -1) {
-             if (errno == EINTR) break;
-             if (errno == EAGAIN || EWOULDBLOCK) break;
-             return log_errno_rf("read fd %d on dev %s failed", sniff->sock_raw, sniff->dev_name);
-         }
-         if (sniff_pkt_process(sniff, nr) != 0) {
-             return -1;
-         }
-    }
-
-    // all done
-    return 0;
+    return sniff_process_pkt(sniff, pkt_data, pkt_len);
 }
 
-int sniff_handle_event(struct dns_sniff *sniff, uint32_t events)
-{
-    int shutdown = 0;
-
-    if (events & EPOLLIN) {
-        // got a read event
-        if (sniff_do_read(sniff) != 0) {
-           shutdown = 1;
-        }
-    }
-
-    if (events & (EPOLLERR | EPOLLHUP)) {
-        // error event
-        int error = 0;
-        uint32_t epoll = events & (EPOLLERR | EPOLLHUP);
-        socklen_t errlen = sizeof(error);
-        if (getsockopt(sniff->sock_raw, SOL_SOCKET, SO_ERROR, &error, &errlen) == -1) {
-            log_errno("socket %d epoll 0x%08x", sniff->sock_raw, epoll);
-        }
-        else if (error != 0) {
-            log_error("socket %d epoll 0x%08x error %d (%s)", sniff->sock_raw, epoll, error, strerror(error));
-        }
-        else {
-            log_error("socket %d epoll 0x%08x", sniff->sock_raw,  epoll);
-        }
-        shutdown = 1;
-    }
-
-    if (shutdown) {
-        close(sniff->sock_raw);
-        sniff->sock_raw = -1;
-        return -1;
-    }
-
-    // all done
-    return 0;
-}
 
 // signal handling
 volatile sig_atomic_t keep_running = 1;
@@ -248,38 +196,28 @@ int sniff_signals(struct dns_sniff *sniff)
     return 0;
 }
 
-// event handling
-int sniff_poll(struct dns_sniff *sniff)
-{
-    struct epoll_event events[MAX_EVENTS];
-
-    int nfd = epoll_wait(sniff->epoll_fd, events, MAX_EVENTS, -1);
-
-    if (nfd < 0) {
-        if (errno == EINTR) return 0;
-        return log_errno_rf("dns-sniff PID:%d epoll_wait failed", sniff->pid);
-    }
-
-    for (int i = 0; i < nfd; i++) {
-        sniff_handle_event(sniff, events[i].events);
-    }
-
-    // all done
-    return 0;
-}
 
 int sniff_capture(struct dns_sniff *sniff)
 {
     while (keep_running) {
-        if (sniff_poll(sniff) != 0) return -1;
+        // read a block
+        int nr = recvmmsg(sniff->sock_raw, sniff->msgs, PKT_MAXRECV, MSG_WAITFORONE, NULL);
+        if (nr < 0) {
+            if (errno == EINTR) continue;
+             return log_errno_rf("recvmmsg fd %d on dev %s failed", sniff->sock_raw, sniff->dev_name);
+        }
+        for (int i = 0; i < nr; i++) {
+            int rc = sniff_process_msg(sniff, &sniff->msgs[i]);
+            if (rc) return rc;
+        }
     }
 
     if (caught_signo) {
-        log_info("dns-sniff", "PID:%d shutting down: got signal %d (%s) from UID:%d PID:%d ", 
-            sniff->pid, 
+        log_info("dns-sniff", 
+            "PID:%d shutting down: got signal %d (%s) from UID:%d PID:%d ",
+            sniff->pid,
             caught_signo, strsignal(caught_signo), 
-            sender_uid,
-            sender_pid);
+            sender_uid, sender_pid);
     }
 
     return 0;
@@ -313,7 +251,7 @@ static struct sock_filter dns_filter[] = {
 int sniff_attach(struct dns_sniff *sniff)
 {
     // socket
-    sniff->sock_raw = socket(AF_PACKET, SOCK_RAW | SOCK_NONBLOCK, htons(ETH_P_ALL));
+    sniff->sock_raw = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
     if (sniff->sock_raw == -1) {
         return log_errno_rf("open AF_PACKET");
     }
@@ -337,6 +275,19 @@ int sniff_attach(struct dns_sniff *sniff)
         return log_errno_rf("Attach DNS filter to %s failed", sniff->dev_name);
     }
 
+    // set receive buffer size
+    int size = RCVBUF_SIZE;
+    if (setsockopt(sniff->sock_raw, SOL_SOCKET, SO_RCVBUF, &size, sizeof(size)) < 0) {
+        log_errno_rf("Set RCVBUF size %d failed", size);
+    }
+
+    /* timestamping
+    int flags= 
+    if (setsockopt(sniff->sock_raw, SOL_SOCKET, SO_TIMESTAMPING, &flags, sizeof(flags)) < 0) {
+        return log_errno_rf("enable timestamping on %d failed", sniff->sock_raw);
+    }
+    */
+
     // promisc mode
     struct packet_mreq mreq = {
         .mr_ifindex = sniff->dev_index,
@@ -344,24 +295,6 @@ int sniff_attach(struct dns_sniff *sniff)
     };
     if (setsockopt(sniff->sock_raw, SOL_PACKET, PACKET_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) < 0) {
         return log_errno_rf("setsockopt PACKET_MR_PROMISC");
-    }
-
-    // create epoll fd
-    sniff->epoll_fd = epoll_create1(0);
-    if (sniff->epoll_fd == -1) {
-        return log_errno_rf("epoll_create1 failed");
-    }
-
-    // add socket to epoll
-    int rc;
-    struct epoll_event ev = { 0 };
-    ev.events = EPOLLIN;
-    ev.data.ptr = sniff;
-    do {
-        rc = epoll_ctl(sniff->epoll_fd, EPOLL_CTL_ADD, sniff->sock_raw, &ev);
-    } while (rc == -1 && errno == EINTR);
-    if (rc == -1) {
-        return log_errno_rf("epoll_ctl add filed for %d", sniff->sock_raw);
     }
 
     log_info("dns-sniff", "DNS active on %s", sniff->dev_name);
@@ -379,10 +312,13 @@ static int sniff_readpcap(struct dns_sniff *sniff)
         return -1;
     }
 
-    while ( (pkt_len = pcap_read(sniff->pcap, sniff->pkt_buf, sniff->buf_len)) > 0) {
-        if (sniff_pkt_process(sniff, pkt_len) != 0) {
-            return -1;
-        }
+    // select a buffer
+    uint8_t *buf = sniff->bufs[0];
+    uint32_t buf_len = sizeof(sniff->bufs[0]);
+
+    while ( (pkt_len = pcap_read(sniff->pcap, buf, buf_len)) > 0) {
+        int rc = sniff_process_pkt(sniff, buf, buf_len);
+        if (rc) return rc;
     }
 
      pcap_close(sniff->pcap);
@@ -400,7 +336,11 @@ static int sniff_tracepcap(struct dns_sniff *sniff)
         return -1;
     }
 
-    while ( (pkt_len = pcap_read(sniff->pcap, sniff->pkt_buf, sniff->buf_len)) > 0) {
+    // select a buffer
+    uint8_t *buf = sniff->bufs[0];
+    uint32_t buf_len = sizeof(sniff->bufs[0]);
+
+    while ( (pkt_len = pcap_read(sniff->pcap, buf, buf_len)) > 0) {
         // do nothing
     }
 
@@ -516,10 +456,6 @@ void sniff_free(struct dns_sniff *sniff)
         close(sniff->sock_raw);
     }
 
-    if (sniff->epoll_fd != -1) {
-        close(sniff->epoll_fd);
-    }
-
     if (sniff->pcap) {
         pcap_close(sniff->pcap);
     }
@@ -531,13 +467,20 @@ void sniff_free(struct dns_sniff *sniff)
     free(sniff);
 }
 
+
 static int sniff_init(struct dns_sniff *sniff)
 {
-    memset(sniff, 0, sizeof(*sniff) + PKTBUF_SIZE);
 
-    sniff->buf_len = PKTBUF_SIZE;
+    memset(sniff, 0, sizeof(*sniff));
+
     sniff->sock_raw = -1;
-    sniff->epoll_fd = -1;
+
+    for (int i = 0; i < PKT_MAXRECV; i++) {
+        sniff->vecs[i].iov_base = sniff->bufs[i];
+        sniff->vecs[i].iov_len  = sizeof(sniff->bufs[i]);
+        sniff->msgs[i].msg_hdr.msg_iov  = &sniff->vecs[i];
+        sniff->msgs[i].msg_hdr.msg_iovlen  = 1;
+    }
 
     return 0;
 }
@@ -546,7 +489,8 @@ struct dns_sniff *sniff_create(void)
 {
     struct dns_sniff *sniff;
 
-    sniff = malloc(sizeof(*sniff) + PKTBUF_SIZE);
+    sniff = malloc(sizeof(*sniff));
+
     if (!sniff) {
         return log_errno_rn("Malloc failed for sniff state");
     }
