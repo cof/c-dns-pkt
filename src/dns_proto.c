@@ -56,7 +56,7 @@
 
 
 struct dns_err {
-int group;
+    int group;
     int field;
     int ec;
 };
@@ -588,7 +588,7 @@ static int decode_record(struct dns_dec *dec, int section, struct dns_record *re
 
     // desc PDU as we decode
     dns_wmsg(dec, "  %s: %s %s %s %s\n",
-        ec_tostr(dec_code_tostr, ARR_LEN(dec_code_tostr), section, "???"),
+        ec_tostr(ARRAY(dec_code_tostr), section, "???"),
         rec->name, qclass_tostr(rec->class, num[0]), qtype_tostr(rec->type, num[1]),
         rdata_desc
     );
@@ -734,9 +734,9 @@ static int decode_header(struct dns_dec *dec)
 
 char *dns_err_tostr(struct dns_dec *dec, struct dns_err *err)
 {
-    const char *group = ec_tostr(dec_code_tostr, ARR_LEN(dec_code_tostr), err->group, "???");
-    const char *field = ec_tostr(dec_code_tostr, ARR_LEN(dec_code_tostr), err->field, "???");
-    const char *error = ec_tostr(dns_ec_tostr, ARR_LEN(dns_ec_tostr), err->ec, "???");
+    const char *group = ec_tostr(ARRAY(dec_code_tostr), err->group, "???");
+    const char *field = ec_tostr(ARRAY(dec_code_tostr), err->field, "???");
+    const char *error = ec_tostr(ARRAY(dns_ec_tostr), err->ec, "???");
 
     int nw = snprintf(dec->msg, sizeof(dec->msg), "%s %s %s", group, field, error);
     if (nw < 0 || nw >= sizeof(dec->msg)) {

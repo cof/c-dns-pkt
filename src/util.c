@@ -81,6 +81,17 @@ char *gen_path(const char *dir, const char *name)
     return path;
 }
 
+char *slice_strdup(const struct str_slice str)
+{
+    char *copy = malloc(str.len + 1);
+
+    if (copy) {
+        memcpy(copy, str.ptr, str.len);
+        copy[str.len] = 0;
+    }
+
+    return copy;
+}
 
 char *itoa(char *buf, int len, int val)
 {
@@ -97,3 +108,69 @@ char *itoa(char *buf, int len, int val)
     return str; 
 }
 
+static int find_cmd(struct str_slice cmd, int ncmd, struct util_cmd cmds[ncmd])
+{
+    slice_tolower(&cmd);
+
+    for (int i = 0; i < ncmd; i++) {
+        if (slice_cmp_cstr(cmd, cmds[i].name, cmds[i].len)) {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+static struct str_slice slice_rsplit1(struct str_slice src, int ch)
+{
+    struct str_slice dst;
+
+    dst.ptr = memrchr(src.ptr, ch, src.len);
+
+    if (dst.ptr) {
+        dst.len = src.len - (dst.ptr - src.ptr + 1);
+        dst.ptr++;
+    }
+    else {
+        dst.ptr = src.ptr;
+        dst.len = src.len;
+    }
+
+    return dst;
+}
+
+int util_parse_argv(void *state,
+    int argc, char *argv[],
+    int ncmd, struct util_cmd cmds[ncmd],
+    int (*usage_func)(void *state, struct str_slice prog))
+{
+    // mode
+    struct str_slice mode = slice_make_cstr(argv[1]);
+    int cmd_idx = find_cmd(mode, ncmd, cmds);
+
+    if (argc < 2) {
+        if (usage_func) {
+            return usage_func(state, slice_rsplit1(slice_make_cstr(argv[0]), '/'));
+        }
+        // fail
+        return -1;
+    }
+
+    if (cmd_idx == -1) {
+        log_error_rf("Unsupported mode %.*s", (int) mode.len, mode.ptr);
+        if (usage_func) {
+            return usage_func(state, slice_rsplit1(slice_make_cstr(argv[0]), '/'));
+        }
+        // fail
+        return -1;
+    }
+
+    // load remaing args
+    int len = argc - 2;
+    struct str_slice args[len];
+    for (int i = 0; i < len; i++) {
+        args[i] = slice_make_cstr(argv[i + 2]);
+    }
+
+    return cmds[cmd_idx].func(state, len, args);
+}
