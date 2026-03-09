@@ -11,6 +11,7 @@
 // DNS header flags
 #define DNS_FLAGS_QR      0x8000 // query response
 #define DNS_FLAGS_OPCODE  0x7800 // 4 bit Opcode (0 .. 5)
+#define DNS_FLAGS_CD      0x0800 // Checking Disabled (DNSSEC)
 #define DNS_FLAGS_AA      0x0400 // Authoritative Answer
 #define DNS_FLAGS_TC      0x0200 // Truncated
 #define DNS_FLAGS_AD      0x0020 // Authentic Data

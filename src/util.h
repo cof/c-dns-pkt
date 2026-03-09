@@ -257,16 +257,57 @@ static inline struct str_slice slice_split(struct str_slice *src, int ch)
 {
     struct str_slice dst;
    
-    dst.ptr = memchr(src->ptr, ch, src->len);
+    char *ptr = memchr(src->ptr, ch, src->len);
+
+    if (ptr) {
+        // split on ch
+        dst.ptr = src->ptr;
+        dst.len = ptr - src->ptr;
+        src->ptr = ptr + 1;
+        src->len -= dst.len + 1;
+    }
+    else {
+        // take it all
+        dst.ptr = src->ptr;
+        dst.len = src->len;
+        src->ptr = NULL;
+        src->len = 0;
+    }
+
+    return dst;
+}
+
+static inline struct str_slice slice_rsplit1(struct str_slice src, int ch)
+{
+    struct str_slice dst;
+
+    dst.ptr = memrchr(src.ptr, ch, src.len);
 
     if (dst.ptr) {
-        dst.len = src->len - (dst.ptr - src->ptr + 1);
-        src->len -= dst.len + 1;
+        dst.len = src.len - (dst.ptr - src.ptr + 1);
         dst.ptr++;
     }
     else {
-        dst.len = 0;
+        dst.ptr = src.ptr;
+        dst.len = src.len;
     }
+
+    return dst;
+}
+
+static inline struct str_slice slice_lsplit1(struct str_slice src, int ch)
+{
+    struct str_slice dst;
+
+    dst.ptr = memchr(src.ptr, ch, src.len);
+
+    if (dst.ptr) {
+        dst.len = src.len - (dst.ptr - src.ptr + 1);
+    }
+    else {
+        dst.len = src.len;
+    }
+    dst.ptr = src.ptr;
 
     return dst;
 }

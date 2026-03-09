@@ -134,24 +134,6 @@ static int find_cmd(struct str_slice cmd, int ncmd, struct util_cmd cmds[ncmd])
     return -1;
 }
 
-static struct str_slice slice_rsplit1(struct str_slice src, int ch)
-{
-    struct str_slice dst;
-
-    dst.ptr = memrchr(src.ptr, ch, src.len);
-
-    if (dst.ptr) {
-        dst.len = src.len - (dst.ptr - src.ptr + 1);
-        dst.ptr++;
-    }
-    else {
-        dst.ptr = src.ptr;
-        dst.len = src.len;
-    }
-
-    return dst;
-}
-
 int util_parse_argv(void *state,
     int argc, char *argv[],
     int ncmd, struct util_cmd cmds[ncmd],
