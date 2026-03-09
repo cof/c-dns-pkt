@@ -1,9 +1,12 @@
 #ifndef __DNS_PROTO_H__
 #define __DNS_PROTO_H__
 
-#define DNS_ERRBUF_SIZE 4096
-#define DNS_MAX_PDU 2048
-#define DNS_MAX_NAME 253
+#define DNS_EMSG_MAXLEN 4096
+#define DNS_MAX_PDUSIZE 2048
+#define DNS_NAME_MAXLEN 255
+#define DNS_NAME_MAXSTR 253
+#define DNS_MAX_REC     16
+#define DNS_HDR_LEN     12
 
 // DNS header flags
 #define DNS_FLAGS_QR      0x8000 // query response
@@ -87,22 +90,98 @@ int parse_dns_name(
 
 int validate_dns_packet(const uint8_t *pkt, size_t len, char *error_msg);
 
+// helper api
+const char *rcode_tostr(int rcode, const char *def_str);
+
+// 4.1.2. Question section format
+struct dns_quest {
+    const char *qname;
+    uint16_t qtype;
+    uint16_t qclass;
+};
+
+
+// 4.1.3. Resource record format
+struct dns_rec {
+    char *name;
+    uint16_t type;
+    uint16_t class;
+    uint32_t ttl; 
+    uint16_t rdlen;     
+    union {
+        uint8_t a[4];   // 1
+        char *ns_name; // 2
+        char *cname;   // 5
+        struct {
+            char *mname;
+            char *rname;
+            uint32_t serial;
+            uint32_t refresh;
+            uint32_t retry;
+            uint32_t expire;
+            uint32_t min;
+        } soa; // 6
+        char *ptr_name; 
+        struct {
+            uint8_t cpu_len;
+            uint8_t os_offset;
+            uint8_t os_len;
+        } hinfo; // 13
+        struct {
+            uint16_t pref;    
+            char *name;
+        } mx; // 15
+        char *txt; // 16
+        uint8_t aaaa[16];  //  28
+        struct {
+            uint16_t prior;
+            uint16_t weight;
+            uint16_t port;
+            char *name;
+        } srv; // 33
+        struct {
+            uint16_t udp_size;
+            uint32_t ttl_val;
+            uint8_t ext_rcode;
+            uint8_t edns_ver;
+            uint8_t do_bit;
+        } opt; // 41
+        uint8_t *raw;
+    } data;
+};
+
+struct dns_sect {
+    int num_rec;
+    struct dns_rec rec[DNS_MAX_REC];
+};
+
+struct dns_msg {
+    struct dns_header hdr;
+    char names[DNS_MAX_PDUSIZE];
+    int names_len;
+    int num_quest;
+    struct dns_quest quest[DNS_MAX_REC];
+    struct dns_sect ans;
+    struct dns_sect auth;
+    struct dns_sect add;
+};
+
+int dns_decode_msg(struct dns_msg *msg, uint8_t *buf, size_t len);
 
 const char *dns_class_tostr(int ec, const char *def);
 const char *dns_type_tostr(int ec, const char *def);
+int dns_rec_tostr(char *buf, size_t buf_len, struct dns_rec *rec);
 
 // A simple dns pkt encoder
 struct dns_enc {
-    uint8_t *pkt_buf;
-    size_t pkt_len;  
-    size_t pkt_max;  
-    size_t offset;
     struct dns_header hdr;
+    uint8_t *pkt_buf;
+    size_t pkt_max;
+    size_t pkt_len;
 };
 
 int dns_enc_start(struct dns_enc *enc, uint16_t tid, uint16_t flags);
 int dns_enc_end(struct dns_enc *enc);
-int dns_enc_query_start(struct dns_enc *enc, uint16_t tid, uint8_t recur_desired, uint8_t dns_sec);
 int dns_enc_add_quest(struct dns_enc *enc, const char *name, uint16_t qtype,  uint16_t qclass);
 
 #endif

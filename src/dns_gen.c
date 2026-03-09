@@ -44,11 +44,13 @@ struct dns_gen {
     uint16_t dns_class;
     char *serv_addr;
     uint32_t recv_timeout;
-    uint8_t pkt_buf[DNS_MAX_PDU];
-    char emsg[DNS_ERRBUF_SIZE];
+    uint8_t pkt_buf[DNS_MAX_PDUSIZE];
+    char emsg[DNS_EMSG_MAXLEN];
     // last tid sent
-    uint16_t tid;
     ssize_t recv_len;
+    uint16_t tid_sent;
+    struct timespec ts_sent;
+    struct timespec ts_recv;
     // connetion
     struct sockaddr_storage dst_addr;
     socklen_t dst_len;
@@ -56,6 +58,7 @@ struct dns_gen {
     // flags
     unsigned int use_tcp : 1;
     unsigned int sys_err : 1;
+    unsigned int log_msg : 1;
 };
 
 
@@ -101,6 +104,13 @@ int gen_signals(struct dns_gen *gen)
     }
 
     return 0;
+}
+
+static double time_diff_ms(struct timespec *begin, struct timespec *end)
+{
+	double diff_sec = end->tv_sec  - begin->tv_sec;
+	double diff_nsec = end->tv_nsec - begin->tv_nsec;
+    return (diff_sec * 1000.0) + (diff_nsec / 1000000.0);
 }
 
 static int get_dns_type(struct str_slice str)
@@ -202,21 +212,25 @@ static int gen_connect(struct dns_gen *gen)
     return 0;
 }
     
-static int gen_send_pdu(struct dns_gen *gen, uint8_t *pkt, size_t len)
+static int send_dns_pdu(struct dns_gen *gen, uint8_t *pkt, size_t len)
 {
-    int rc = sendto(gen->sock_fd, 
+    ssize_t nsent = sendto(gen->sock_fd, 
         pkt, len, 0,
         (struct sockaddr *) &gen->dst_addr, gen->dst_len
     );
 
-    if (rc == -1) {
-        return log_errno_rf("sendto %zu bytes failed", len);
+    if (nsent == -1) {
+        return log_errno_rf("sendto failed to send %zu bytes", len);
+    }
+
+    if (nsent != len) {
+        return log_error_rf("sendto truncated: %zd/%zu bytes", nsent, len);
     }
 
     return 0;
 }
 
-static int gen_recv_pdu(struct dns_gen *gen)
+static int recv_dns_pdu(struct dns_gen *gen)
 {
     struct sockaddr_storage from_addr;
     socklen_t from_len = sizeof(from_addr);
@@ -235,6 +249,10 @@ static int gen_recv_pdu(struct dns_gen *gen)
     }
 
     gen->recv_len = nread;
+    if (clock_gettime(CLOCK_MONOTONIC, &gen->ts_recv) != 0) {
+        log_errno("clock_gettime ts_recv failed");
+        // keep going ?
+	}
 
     return 0;
 }
@@ -250,40 +268,87 @@ static int gen_send_query(struct dns_gen *gen, const char *name, uint16_t qclass
     uint16_t tid = rand() % 65536;
     qtype = qtype  ?: DNS_TYPE_A;
     qclass = qclass ?: DNS_CLASS_IN;
+    uint16_t flags = DNS_FLAGS_RD | DNS_FLAGS_AD;
 
     // encode PDU
-    dns_enc_query_start(&enc, tid, 1, 1);
+    int rc = dns_enc_start(&enc, tid, flags);
     dns_enc_add_quest(&enc, name, qtype, qclass);
     dns_enc_end(&enc);
 
-    // ensure pkt is valid before we send
-    int rc = validate_dns_packet(enc.pkt_buf, enc.pkt_len, gen->emsg);
-    if (rc) {
+    // check message is valid before we send
+    if (gen->log_msg) {
+        rc = validate_dns_packet(enc.pkt_buf, enc.pkt_len, gen->emsg);
         log_msg(gen->emsg);
-        return rc;
+        if (rc) return rc;
     }
 
     log_info("dns-gen", "Send query ID:0x%04x for %s %s %s", tid, name,
         dns_class_tostr(qclass, NULL), dns_type_tostr(qtype, NULL));
 
-    // send PDU
-    rc = gen_send_pdu(gen, enc.pkt_buf, enc.pkt_len);
-    if (!rc) return rc;
+    // send it
+    rc = send_dns_pdu(gen, enc.pkt_buf, enc.pkt_len);
+    if (rc) return rc;
 
-    // sent as far as we know
-    gen->tid = tid;
+    // msg sent  as far as we know
+    gen->tid_sent = tid;
+    if (clock_gettime(CLOCK_MONOTONIC, &gen->ts_sent) != 0) {
+        log_errno("clock_gettime ts_sent failed");
+        // keep going ?
+    }
 
     return 0;
 }
 
 static int gen_recv_resp(struct dns_gen *gen)
 {
-    int rc = gen_recv_pdu(gen);
+    int rc = recv_dns_pdu(gen);
     if (rc) return rc;
 
-    // try and decode pkt
-    rc = validate_dns_packet(gen->pkt_buf, gen->recv_len, gen->emsg);
-    return rc;
+    struct dns_msg msg = { 0 };
+    rc = dns_decode_msg(&msg, gen->pkt_buf, gen->recv_len);
+    if (rc) return rc;
+
+    // check response
+    struct dns_header *hdr = &msg.hdr;
+    if (!(hdr->flags & DNS_FLAGS_QR)) {
+        return log_info_rz("dns-gen", 
+            "Unexpected DNS message ID: 0x%04x Flags: 0x%04x Len %zu",
+            hdr->id, hdr->flags, gen->recv_len);
+    }
+
+    // check Transaction ID
+    if (hdr->id != gen->tid_sent) {
+        return log_info_rz("dng-gen",
+            "Response ID 0x%04x does not match Request ID 0x%04x", hdr->id, gen->tid_sent);
+    }
+
+    // check Result Code
+    int rcode = hdr->flags & DNS_FLAGS_RCODE;
+    if (rcode != DNS_RCODE_NOERROR) {
+        char num[10];
+        itoa(num, 10, rcode);
+        return log_info_rz("dng-gen",
+            "Response ID %d failed with error %s", hdr->id, rcode_tostr(rcode, num));
+    }
+
+    double delta_ms = time_diff_ms(&gen->ts_sent, &gen->ts_recv);
+
+    char *desc = ""; 
+    gen->emsg[0] = '\0';
+    if (msg.ans.num_rec == 1) {
+        dns_rec_tostr(gen->emsg, sizeof(gen->emsg), &msg.ans.rec[0]);
+        desc = gen->emsg;
+    }
+
+    log_msg("Received response in %.3fms: %s", delta_ms,  desc);
+    for (int i = 0; i < msg.ans.num_rec; i++) {
+        int nw = dns_rec_tostr(gen->emsg, sizeof(gen->emsg), &msg.ans.rec[i]);
+        if (nw) {
+            log_msg(gen->emsg);
+        }
+    }
+
+    return 0;
 }
 
 static int gen_do_query(struct dns_gen *gen)
@@ -315,7 +380,7 @@ static int gen_setup_query(void *state, int narg, struct str_slice args[])
             }
             struct str_slice val = args[++i];
             if (!val.len) return log_cmd_err(cmd, "--name <dns-name>", "cannot be blank");
-            if (val.len > DNS_MAX_NAME) return log_cmd_err(cmd, "--name <dns-name>", "name too big");
+            if (val.len > DNS_NAME_MAXSTR) return log_cmd_err(cmd, "--name <dns-name>", "name too big");
             memcpy(gen->dns_name, val.ptr, val.len);
             gen->dns_name[val.len] = '\0';
         }
@@ -343,6 +408,9 @@ static int gen_setup_query(void *state, int narg, struct str_slice args[])
         }
         else if (slice_cmp_cstr(opt,  STR_LIT("--tcp"))) {
             gen->use_tcp = 1;
+        }
+        else if (slice_cmp_cstr(opt,  STR_LIT("--log"))) {
+            gen->log_msg = 1;
         }
         else {
             return log_cmd_err(cmd, "unknown option", "%.*s", SLICE(opt));

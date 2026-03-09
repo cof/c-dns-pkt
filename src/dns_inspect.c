@@ -65,13 +65,14 @@ struct dns_sniff {
     uint64_t num_dns_pkts;
     uint64_t num_dns_okay;
     uint64_t num_dns_fail;
-    // read buffer
+    // validate emsg
+    char dns_emsg[DNS_EMSG_MAXLEN];
+    // packet read buffers
     struct mmsghdr msgs[PKT_MAXRECV];
     struct iovec   vecs[PKT_MAXRECV];
     uint8_t        bufs[PKT_MAXRECV][PKT_BUFSIZE];
 };
 
-static char dns_errbuf[DNS_ERRBUF_SIZE];
 
 static int sniff_process_pkt(struct dns_sniff *sniff, uint8_t *pkt_data, uint32_t pkt_len)
 {
@@ -131,13 +132,13 @@ static int sniff_process_pkt(struct dns_sniff *sniff, uint8_t *pkt_data, uint32_
 
     // call into api
     sniff->num_dns_pkts++;
-    if (validate_dns_packet(pkt_data + offset, pkt_len - offset, dns_errbuf) == 0) {
+    if (validate_dns_packet(pkt_data + offset, pkt_len - offset, sniff->dns_emsg) == 0) {
         sniff->num_dns_okay++;
     }
     else {
         sniff->num_dns_fail++;
     }
-    log_msg(dns_errbuf);
+    log_msg(sniff->dns_emsg);
 
     // all done
     return 0;
@@ -279,13 +280,6 @@ int sniff_attach(struct dns_sniff *sniff)
     if (setsockopt(sniff->sock_raw, SOL_SOCKET, SO_RCVBUF, &size, sizeof(size)) < 0) {
         log_errno_rf("Set RCVBUF size %d failed", size);
     }
-
-    /* timestamping
-    int flags= 
-    if (setsockopt(sniff->sock_raw, SOL_SOCKET, SO_TIMESTAMPING, &flags, sizeof(flags)) < 0) {
-        return log_errno_rf("enable timestamping on %d failed", sniff->sock_raw);
-    }
-    */
 
     // promisc mode
     struct packet_mreq mreq = {

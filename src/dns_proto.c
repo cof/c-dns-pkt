@@ -23,7 +23,7 @@
 
 #define DNS_MAX_EMSG 10
 #define DNS_NAME_SIZE 256
-#define DNS_MSG_SIZE 256 + 256 + 100 // big enough for 2 names + some extra
+#define DNS_MSG_SIZE (256 + 256 + 100) // big enough for 2 names + some extra
 
 #define DNS_MAX_JMP 10 // max number of compression ptr jmps
 #define DNS_MAX_UDP 512 // rfc1035 - can be overriden by EDNS0
@@ -39,11 +39,12 @@ struct dns_dec {
     size_t pkt_len;
     size_t consumed;
     size_t offset;
-    struct dns_header hdr;
     // a simple error stack
     struct dns_err errs[DNS_MAX_EMSG];
     int nerr;
     // flags
+    unsigned int need_emsg : 1;
+    unsigned int load_msg : 1;
     unsigned int got_edns : 1;
     unsigned int dnssec_ok : 1;
     // EDNS0 Options (RFC 6891)  
@@ -51,6 +52,7 @@ struct dns_dec {
     uint8_t ext_rcode;
     uint8_t edns_ver;
     // track what we write into emsg
+    struct dns_header hdr;
     struct rwbuf emsg;
     char msg[DNS_MSG_SIZE]; // dns_err_tostr
 };
@@ -80,6 +82,7 @@ static inline uint16_t dec_u16(const unsigned char *buf)
 
     return value;
 }
+
 
 // XXX - use xmacros to ensure both code and string match
 #define DNS_ERRORS(X) \
@@ -145,6 +148,13 @@ static const char *dec_code_tostr[] = {
     DNS_DECODES(DNS_DECODE_TEXT)
 };
 
+/*
+static const char *sect_code_tostr(int sect_code)
+{
+    return ec_tostr(ARRAY(dec_code_tostr), sect_code, "???");
+}
+*/
+
 const char *dns_class_tostr(int ec, const char *def)
 {
     if (ec == 0) return "";
@@ -184,7 +194,7 @@ static const char *opcode_tostr[] = {
     [DNS_OPCODE_UPDATE ] = "UPDATE"
 };
 
-static const char *rcode_tostr[] = {
+static const char *rcode_strs[] = {
     [DNS_RCODE_NOERROR]  = "NoError",
     [DNS_RCODE_FORMERR]  = "FormErr",
     [DNS_RCODE_SERVFAIL] = "ServFail",
@@ -207,6 +217,10 @@ static const char *rcode_tostr[] = {
     [22] = "BADTRUC"
 };
 
+const char *rcode_tostr(int rcode, const char *def_str)
+{
+    return ec_tostr(ARRAY(rcode_strs), rcode, def_str);
+}
 
 static char *dns_wmsg(struct dns_dec *dec, const char *fmt, ...) 
 {
@@ -220,8 +234,8 @@ static char *dns_wmsg(struct dns_dec *dec, const char *fmt, ...)
     va_end(args);
 
     if (nw < 0 || nw >= rwbuf_wrem(buf)) {
-        log_error("wbuffer full");
-        return NULL;
+        errno = ENOBUFS;
+        return log_errno_rn("dns_wnsg: writer failed");
     }
 
     // return ptr where we stored messge
@@ -271,7 +285,7 @@ static int dns_dec_genmsg(struct dns_dec *dec)
 
     // desribe error
     dns_wmsg(dec, "[ERROR] ");
-    if (dec->pkt_len > sizeof(dec->hdr)) {
+    if (dec->pkt_len >= DNS_HDR_LEN) {
         // have a hdr
         dns_wmsg(dec, "ID 0x%04x ",  dec->hdr.id);
     }
@@ -291,12 +305,12 @@ static int dns_dec_genmsg(struct dns_dec *dec)
 // Required functions
 int parse_dns_header(const uint8_t *buf, size_t len, struct dns_header *hdr)
 {
-    if (len < sizeof(*hdr)) {
+    if (len < DNS_HDR_LEN) {
         // too small
         return DNS_ERR_HDRLEN;
     }
 
-    // decode the header
+    // decode hdr
     hdr->id       = dec_u16(buf + 0);
     hdr->flags    = dec_u16(buf + 2);
     hdr->qd_count = dec_u16(buf + 4);
@@ -371,167 +385,379 @@ int parse_dns_name(
     return 0;
 }
 
-static int dns_dec_record(struct dns_dec *dec, int section, struct dns_record *rec)
+int dns_rec_tostr(char *buf, size_t buf_len, struct dns_rec *rec)
 {
-    size_t consumed;
-    size_t offset;
-    int ec; 
     char ip_addr[INET_ADDRSTRLEN];
-    char *rdata_desc;
     char num[2][10];
+    itoa(num[0], 10, rec->class); 
+    itoa(num[1], 10, rec->type);
 
-    // label
-    ec = parse_dns_name(dec->pkt_buf, dec->pkt_len, dec->offset, rec->name, sizeof(rec->name), &consumed);
+    char *wptr = buf;
+    char *wptr_end = wptr + buf_len;
+
+    // prefix
+    wptr += snprintf(wptr, wptr_end - wptr,
+        "  %s %s %s ",
+        rec->name, 
+        dns_class_tostr(rec->class, num[0]), 
+        dns_type_tostr(rec->type, num[1])
+    );
+
+    const char *desc = "";
+
+    switch(rec->type) {
+    case DNS_TYPE_A: // IP4 address
+        if (inet_ntop(AF_INET, rec->data.a, ip_addr, sizeof(ip_addr)) == NULL) {
+            log_errno("inet_ntop failed to decode IPv4 addr");
+            strcpy(ip_addr, "???");
+        }
+        desc = ip_addr;
+        break;
+    case DNS_TYPE_NS: // Authoritative Name Server
+        desc = rec->data.ns_name;
+        break;
+    case DNS_TYPE_CNAME: // Canonical Name (Alias)
+        desc = rec->data.cname;
+        break;
+    case DNS_TYPE_SOA: // Start of Authority
+        // name + name + 5 integers
+        wptr += snprintf(wptr, wptr_end - wptr, 
+            "MNAME=%s RNAME=%s %u %u %u %u %u",
+            rec->data.soa.mname,
+            rec->data.soa.rname,
+            rec->data.soa.serial,
+            rec->data.soa.refresh,
+            rec->data.soa.retry,
+            rec->data.soa.expire,
+            rec->data.soa.min);
+        break;
+    case DNS_TYPE_PTR:  // Domain Name Pointer (Reverse DNS)
+        desc = rec->data.ptr_name;
+        break;
+    case DNS_TYPE_HINFO: // Host Information
+        wptr += snprintf(wptr, wptr_end - wptr, 
+            "cpu_len=%d os_offset=%d os_len=%d", 
+            rec->data.hinfo.cpu_len,
+            rec->data.hinfo.os_offset,
+            rec->data.hinfo.os_len);
+        break;
+    case DNS_TYPE_MX: // Mail Exchange 
+        wptr += snprintf(wptr, wptr_end - wptr, 
+            "Pref %d MX %s",
+            rec->data.mx.pref,
+            rec->data.mx.name);
+        break;
+    case DNS_TYPE_TXT:
+        desc = rec->data.txt;
+        break;
+    case DNS_TYPE_AAAA:  // IPv6 Address
+        if (inet_ntop(AF_INET6, rec->data.aaaa, ip_addr, sizeof(ip_addr)) == NULL) {
+            log_errno("inet_ntop failed to decode IPv6 addr");
+            strcpy(ip_addr, "???");
+        }
+        desc = ip_addr;
+        break;
+    case DNS_TYPE_SRV: // Service Locator
+        wptr += snprintf(wptr, wptr_end - wptr, 
+            "Priority %d Weight %d Port %d SRV %s", 
+            rec->data.srv.prior, 
+            rec->data.srv.weight, 
+            rec->data.srv.port,
+            rec->data.srv.name);
+        break;
+    default:
+        break;
+    }
+
+    // suffix
+    wptr += snprintf(wptr, wptr_end - wptr, "  %s\n", desc);
+
+    // bytes written
+    return wptr - buf;
+}
+
+static char *msg_store_name(struct dns_msg *msg, const char *name)
+{
+    size_t len = strlen(name);
+
+    // space for name + nul ?
+    if (msg->names_len + len + 1 > sizeof(msg->names)) {
+        errno = ENOBUFS;
+        return NULL;
+    }
+
+    // copy name
+    char *str = msg->names + msg->names_len;
+    memcpy(str, name, len);
+    str[len] = '\0';
+    msg->names_len += len + 1;
+
+    return str;
+}
+
+static int parse_record(struct dns_dec *dec, struct dns_msg *msg, 
+    int sect_code, struct dns_sect *sect)
+{
+    // grab next section rec
+    struct dns_rec *rec = NULL;
+    if (dec->load_msg) {
+        if (sect->num_rec >= ARR_LEN(sect->rec)) {
+            return log_error_rf("No space to store %d record", sect_code);
+        }
+        rec = &sect->rec[sect->num_rec];
+    }
+
+    // 3.2. RR definitions
+    char *wptr = dec->msg;
+    char *wptr_end = wptr + sizeof(dec->msg);
+
+    // name
+    char *name = wptr;
+    size_t consumed;
+    int ec = parse_dns_name(dec->pkt_buf, dec->pkt_len, dec->offset, name, wptr_end - wptr,  &consumed);
     if (ec != 0) {
         return dns_dec_err(dec, DNS_DEC_RECORD, DNS_DEC_NAME, ec);
     }
+    wptr += consumed;
+
+    if (rec) {
+        rec->name = msg_store_name(msg, name);
+        if (!rec->name) {
+            return log_errno_rf("No space to store record name");
+        }
+    }
+
     dec->offset += consumed;
 
-    // need 10 bytes for header
+    // need 10 bytes for header (type, class, ttl, rdlen)
     if (dec->offset + 10 > dec->pkt_len) {
         return dns_dec_err(dec, DNS_DEC_RECORD, DNS_DEC_HDR, DNS_ERR_TRUNC);
     }
 
-    rec->type   = dec_u16(dec->pkt_buf + dec->offset + 0);
-    rec->class  = dec_u16(dec->pkt_buf + dec->offset + 2);
-    rec->ttl    = dec_u32(dec->pkt_buf + dec->offset + 4);
-    rec->rdlength = dec_u16(dec->pkt_buf + dec->offset + 8);
+    uint16_t rr_type  = dec_u16(dec->pkt_buf + dec->offset + 0);
+    uint16_t rr_class = dec_u16(dec->pkt_buf + dec->offset + 2);
+    uint32_t rr_ttl   = dec_u32(dec->pkt_buf + dec->offset + 4);
+    uint16_t rdlen    = dec_u16(dec->pkt_buf + dec->offset + 8);
+
+    if (rec) {
+        rec->type = rr_type;
+        rec->class = rr_class;
+        rec->ttl = rr_ttl;
+        rec->rdlen = rdlen;
+    }
 
     // rdata
     dec->offset += 10;
-    if (dec->offset + rec->rdlength > dec->pkt_len) {
+    if (dec->offset + rdlen > dec->pkt_len) {
         return dns_dec_err(dec, DNS_DEC_RECORD, DNS_DEC_RDATA, DNS_ERR_TRUNC);
     }
-
-    rdata_desc = "";
+    const uint8_t *rdata = dec->pkt_buf + dec->offset;
 
     // decode rdata
-    switch(rec->type) {
+    char *rdata_desc = "";
+    char ip_addr[INET_ADDRSTRLEN];
+
+    // decode rdata
+    switch(rr_type) {
     case DNS_TYPE_A: // IP4 address
         // integer
-        if (rec->rdlength != 4) {
+        if (rdlen != 4) {
             return dns_dec_err(dec, DNS_DEC_RECORD, DNS_DEC_TYPE_A, DNS_ERR_MINLEN);
         }
-        if (inet_ntop(AF_INET, dec->pkt_buf + dec->offset, dec->msg, sizeof(dec->msg)) == NULL) {
+        if (rec) {
+            mempcpy(rec->data.a, rdata, rdlen);
+        }
+        if (inet_ntop(AF_INET, rdata, ip_addr, sizeof(ip_addr)) == NULL) {
             log_errno("inet_ntop failed to decode IPv4 addr");
             strcpy(dec->msg, "???");
         }
-        rdata_desc = dec->msg;
+        // decoded
+        rdata_desc = ip_addr;
         break;
-    case DNS_TYPE_NS: //  Authoritative Name Server
-        if (rec->rdlength < 1) {
+    case DNS_TYPE_NS: { //  Authoritative Name Server
+        if (rdlen < 1) {
             return dns_dec_err(dec, DNS_DEC_RECORD, DNS_DEC_TYPE_NS, DNS_ERR_MINLEN);
         }
-        ec = parse_dns_name(dec->pkt_buf, dec->pkt_len, dec->offset, dec->msg, sizeof(dec->msg), &consumed);
+        // decode name
+        char *ns_name = wptr;
+        int ec = parse_dns_name(dec->pkt_buf, dec->pkt_len, dec->offset, ns_name, wptr_end - wptr,  &consumed);
         if (ec != 0) {
             return dns_dec_err(dec, DNS_DEC_RECORD, DNS_DEC_TYPE_NS, ec);
         }
-        rdata_desc = dec->msg;
+        if (rec) {
+            rec->data.ns_name = msg_store_name(msg, ns_name);
+            if (!rec->data.ns_name) {
+                return log_errno_rf("No space to store ns_name");
+            }
+        }
+        wptr += consumed;
+        // decoded
+        rdata_desc = ns_name;
         break;
-    case DNS_TYPE_CNAME: // Canonical Name (Alias)
-        ec = parse_dns_name(dec->pkt_buf, dec->pkt_len, dec->offset, dec->msg, sizeof(dec->msg), &consumed);
+    }
+    case DNS_TYPE_CNAME: { // Canonical Name (Alias)
+        // decode name
+        char *cname = wptr;
+        ec = parse_dns_name(dec->pkt_buf, dec->pkt_len, dec->offset, cname, wptr_end - wptr, &consumed);
         if (ec != 0) {
             return dns_dec_err(dec, DNS_DEC_RECORD, DNS_DEC_TYPE_CNAME, ec);
         }
-        rdata_desc = dec->msg;
+        if (rec) {
+            rec->data.cname = msg_store_name(msg, cname);
+            if (!rec->data.cname) {
+                return log_errno_rf("No space to store cname");
+            }
+        }
+        wptr += consumed;
+        rdata_desc = cname;
         break;
+    }
     case DNS_TYPE_SOA: { // Start of Authority
         // name + name + 5 integers
         // Primary Master Name Server - MNAME
-        offset = dec->offset;
-        char *wptr = dec->msg;
-        char *wptr_end = wptr + sizeof(dec->msg);
-        int nw = snprintf(wptr, wptr_end - wptr, "MNAME=");
-        wptr += nw;
-        ec = parse_dns_name(dec->pkt_buf, dec->pkt_len, offset, wptr, DNS_NAME_SIZE, &consumed);
+        wptr += snprintf(wptr, wptr_end - wptr, "MNAME=");
+        size_t offset = dec->offset;
+        char *mname = wptr;
+        ec = parse_dns_name(dec->pkt_buf, dec->pkt_len, offset, mname, wptr_end - wptr, &consumed);
         if (ec != 0) {
             return dns_dec_err(dec, DNS_DEC_RECORD, DNS_DEC_TYPE_SOA, ec);
         }
-        offset += consumed;
         wptr += consumed;
-        *wptr++ = ' ';
+        offset += consumed;
+
+        if (rec) {
+            rec->data.soa.mname = msg_store_name(msg, mname);
+            if (!rec->data.soa.mname) {
+                return log_errno_rf("No space to store mname");
+            }
+        }
+
         // Responsible Person's Email - RNAME
-        nw += snprintf(wptr, wptr_end - wptr, "RNAME=");
-        wptr += nw;
-        ec = parse_dns_name(dec->pkt_buf, dec->pkt_len, offset, wptr, DNS_NAME_SIZE, &consumed);
+        wptr += snprintf(wptr, wptr_end - wptr, " RNAME=");
+        char *rname = wptr;
+        ec = parse_dns_name(dec->pkt_buf, dec->pkt_len, offset, rname, wptr_end - wptr, &consumed);
         if (ec != 0) {
             return dns_dec_err(dec, DNS_DEC_RECORD, DNS_DEC_TYPE_SOA, ec);
         }
-        offset += consumed;
         wptr += consumed;
-        *wptr++ = ' ';
+        offset += consumed;
+
+        if (rec) {
+            rec->data.soa.rname = msg_store_name(msg, rname);
+            if (!rec->data.soa.mname) {
+                return log_errno_rf("No space to store rname");
+            }
+        }
+
         // serial + refresh + retry + expire + mininum (5 x 32 bit ints)
-        if (offset + 20 > dec->offset + rec->rdlength) {
+        if (offset + 20 > dec->offset + rdlen) {
             return dns_dec_err(dec, DNS_DEC_RECORD, DNS_DEC_TYPE_SOA, DNS_ERR_TRUNC);
         }
+
         char *names[5] = { "serial","refresh", "retry", "expire", "mininum" };
         uint32_t vals[5];
         memcpy(vals, dec->pkt_buf + offset, 20);
         for (int i = 0; i < 5; i++) {
             vals[i] = ntohl(vals[i]);
-            nw = snprintf(wptr, wptr_end - wptr, " %s=%u", names[i], vals[i]);
+            wptr += snprintf(wptr, wptr_end - wptr, " %s=%u", names[i], vals[i]);
         }
-        // "MNAME=%s RNAME=%s %u %u %u %u %u"
+
+        if (rec) {
+            rec->data.soa.serial = vals[0];
+            rec->data.soa.refresh = vals[1];
+            rec->data.soa.retry = vals[2];
+            rec->data.soa.expire = vals[3];
+            rec->data.soa.min = vals[4];
+        }
+
+        // decoded
         rdata_desc = dec->msg;
         break;
     }
-    case DNS_TYPE_PTR:  // Domain Name Pointer (Reverse DNS)
-        ec = parse_dns_name(dec->pkt_buf, dec->pkt_len, dec->offset, dec->msg, sizeof(dec->msg), &consumed);
+    case DNS_TYPE_PTR: { // Domain Name Pointer (Reverse DNS)
+        char *ptr_name = wptr;
+        ec = parse_dns_name(dec->pkt_buf, dec->pkt_len, dec->offset, ptr_name, wptr_end - wptr, &consumed);
         if (ec != 0) {
             return dns_dec_err(dec, DNS_DEC_RECORD, DNS_DEC_TYPE_CNAME, ec);
         }
-        rdata_desc = dec->msg;
+        wptr += consumed;
+
+        if (rec) {
+            rec->data.ptr_name = msg_store_name(msg, ptr_name);
+            if (!rec->data.ptr_name) {
+                return log_errno_rf("No space to store PTR");
+            }
+        }
+
+        // decoded
+        rdata_desc = ptr_name;
         break;
+    }
     case DNS_TYPE_HINFO: { // Host Information
-        if (rec->rdlength < 2) {
+        if (rdlen < 2) {
             return dns_dec_err(dec, DNS_DEC_RECORD, DNS_DEC_TYPE_HINFO, DNS_ERR_MINLEN);
         }
         uint8_t cpu_len = dec->pkt_buf[dec->offset];
-        if (cpu_len + 1 > rec->rdlength) {
+        if (cpu_len + 1 > rdlen) {
             return dns_dec_err(dec, DNS_DEC_RECORD, DNS_DEC_TYPE_HINFO, DNS_ERR_FLDLEN);
         }
         uint8_t os_offset = 1 + cpu_len;
-        if (os_offset >= rec->rdlength) {
+        if (os_offset >= rdlen) {
             return dns_dec_err(dec, DNS_DEC_RECORD, DNS_DEC_TYPE_HINFO, DNS_ERR_FLDLEN);
         }
         uint8_t os_len = dec->pkt_buf[dec->offset + os_offset];
-        if (os_len + 1 + os_len != rec->rdlength) {
+        if (os_len + 1 + os_len != rdlen) {
             return dns_dec_err(dec, DNS_DEC_RECORD, DNS_DEC_TYPE_HINFO, DNS_ERR_FLDLEN);
         }
+        if (rec) {
+            rec->data.hinfo.cpu_len = cpu_len;
+            rec->data.hinfo.os_offset = os_offset;
+            rec->data.hinfo.os_len = os_len;
+        }
+        wptr += snprintf(wptr, wptr_end - wptr,
+            "cpu_len=%d os_offset=%d os_len=%d",
+            cpu_len, os_offset, os_len);
+
+        // decoeded
+        rdata_desc = dec->msg;
         break;
     }
     case DNS_TYPE_MX: {  // Mail Exchange 
-        if (rec->rdlength < 3)  {
+        if (rdlen < 3)  {
             return dns_dec_err(dec, DNS_DEC_RECORD, DNS_DEC_TYPE_MX, DNS_ERR_MINLEN);
         }
-        char *wptr = dec->msg;
-        char *wptr_end = wptr + sizeof(dec->msg);
         // preference
-        uint16_t preference = dec_u16(dec->pkt_buf + dec->offset);
-        int nw = snprintf(wptr, wptr_end - wptr, "%d ", preference);
-        wptr += nw;
+        uint16_t pref = dec_u16(dec->pkt_buf + dec->offset);
+        wptr += snprintf(wptr, wptr_end - wptr, "pref %d mx_name=", pref);
+
         // Mail Server Name
-        ec = parse_dns_name(dec->pkt_buf, dec->pkt_len, dec->offset + 2, wptr, DNS_NAME_SIZE, &consumed);
+        char *mx_name = wptr;
+        ec = parse_dns_name(dec->pkt_buf, dec->pkt_len, dec->offset + 2, mx_name, wptr_end - wptr, &consumed);
         if (ec != 0) {
             return dns_dec_err(dec, DNS_DEC_RECORD, DNS_DEC_TYPE_MX, ec);
         }
-        // parse_dns_name adds a nul
         wptr += consumed;
+
+        if (rec) {
+            rec->data.mx.pref = pref;
+            rec->data.mx.name = msg_store_name(msg, mx_name);
+            if (!rec->data.mx.name) {
+                return log_errno_rf("No space to store mx_name");
+            }
+        }
+
         // decoded
         rdata_desc = dec->msg;
         break;
     }
     case DNS_TYPE_TXT: { // Text Strings
-
-        unsigned const char *rdata_ptr = dec->pkt_buf + dec->offset;
-        char *wptr = dec->msg;
-        char *wptr_end = wptr + sizeof(dec->msg);
         int ridx = 0;
+        char *txt_name = wptr;
 
-        while (ridx < rec->rdlength) {
+        while (ridx < rdlen) {
             // Length
-            uint8_t txt_len = dec->pkt_buf[ridx++];
-            if (ridx + txt_len > rec->rdlength) {
+            uint8_t txt_len = rdata[ridx++];
+            if (ridx + txt_len > rdlen) {
                 return dns_dec_err(dec, DNS_DEC_RECORD, DNS_DEC_TYPE_TXT, DNS_ERR_FLDLEN);
             }
             // Text
@@ -539,69 +765,107 @@ static int dns_dec_record(struct dns_dec *dec, int section, struct dns_record *r
                 log_error("DNS_TYPE_TXT string longer than desc buffer");
                 break;
             }
-            wptr = mempcpy(wptr, rdata_ptr + ridx , txt_len);
+            wptr = mempcpy(wptr, rdata + ridx , txt_len);
             *wptr++ = ' ';
             ridx += txt_len;
         }
         *wptr = '\0';
+
+        if (rec) {
+            rec->data.txt = msg_store_name(msg, txt_name);
+            if (!rec->data.txt) {
+                return log_errno_rf("No space to store TXT");
+            }
+        }
+
         // decoded
-        rdata_desc = dec->msg;
+        rdata_desc = txt_name;
         break;
     }
     case DNS_TYPE_AAAA:  // IPv6 Address
-        if (rec->rdlength != 16) {
+        if (rdlen != 16) {
             return dns_dec_err(dec, DNS_DEC_RECORD, DNS_DEC_TYPE_AAAA, DNS_ERR_MINLEN);
         }
-        if (inet_ntop(AF_INET6, dec->pkt_buf + dec->offset, dec->msg, sizeof(dec->msg)) == NULL) {
+        if (inet_ntop(AF_INET6, rdata, ip_addr, sizeof(ip_addr)) == NULL) {
             log_errno("inet_ntop failed to decode IPv6 addr");
             strcpy(ip_addr, "???");
         }
-        rdata_desc = dec->msg;
+        if (rec) {
+            mempcpy(rec->data.aaaa, rdata, rdlen);
+        }
+        // decoded
+        rdata_desc = ip_addr;
         break;
     case DNS_TYPE_SRV: { // Service Locator
         // 2 + 2 + 2 + target
-        if (rec->rdlength < 7) {
+        if (rdlen < 7) {
             return dns_dec_err(dec, DNS_DEC_RECORD, DNS_DEC_TYPE_SRV, DNS_ERR_MINLEN);
         }
         uint16_t prior = dec_u16(dec->pkt_buf + dec->offset + 0);
         uint16_t weight = dec_u16(dec->pkt_buf + dec->offset + 2);
         uint16_t port = dec_u16(dec->pkt_buf + dec->offset + 4);
-        char *wptr = dec->msg;
-        char *wptr_end = wptr + sizeof(dec->msg);
-        int nw = snprintf(dec->msg, wptr_end - wptr, "Priority %d Weight %d port %d ", prior, weight, port);
-        wptr += nw;
+        wptr += snprintf(wptr, wptr_end - wptr, "Priority %d Weight %d port %d ", prior, weight, port);
         // name
-        int ec = parse_dns_name(dec->pkt_buf, dec->pkt_len, dec->offset + 6, wptr, DNS_NAME_SIZE, &consumed);
+        char *srv_name = wptr;
+        int ec = parse_dns_name(dec->pkt_buf, dec->pkt_len, dec->offset + 6, srv_name, wptr_end - wptr, &consumed);
         if (ec != 0) {
             return dns_dec_err(dec, DNS_DEC_RECORD, DNS_DEC_TYPE_SRV, ec);
         }
+        wptr += consumed;
+
+        if (rec) {
+            rec->data.srv.prior = prior;
+            rec->data.srv.weight = weight;
+            rec->data.srv.port = port;
+            rec->data.srv.name = msg_store_name(msg, srv_name);
+            if (!rec->data.srv.name) {
+                return log_errno_rf("No space to store srv_name");
+            }
+        }
+
         // decoded
         rdata_desc = dec->msg;
         break;
     }
     case DNS_TYPE_OPT: { // EDNS0 Options (RFC 6891)
-        if (section != DNS_DEC_ADDITIONAL) {
+        if (sect_code != DNS_DEC_ADDITIONAL) {
             return dns_dec_err(dec, DNS_DEC_RECORD, DNS_DEC_TYPE_OPT, DNS_ERR_OPTSECT);
         }
         size_t offset = dec->offset - 8;
-        if (!*rec->name)  {
-            strcpy(rec->name, "<Root>");
+        if (!*name)  {
+            name = "<Root>";
         }
-        rec->class = 0;
         uint16_t udp_size = dec_u16(dec->pkt_buf + offset);
         uint32_t ttl_val  = dec_u32(dec->pkt_buf + offset + 2);
         uint8_t ext_rcode = (ttl_val >> 24) & 0xFF;
         uint8_t version   = (ttl_val >> 16) & 0xFF;
         uint8_t do_bit   = (ttl_val & 0x8000);
-        snprintf(dec->msg, sizeof(dec->msg),
+
+        if (rec) {
+            rec->data.opt.udp_size = udp_size;
+            rec->data.opt.ttl_val = udp_size;
+            rec->data.opt.ext_rcode = udp_size;
+            rec->data.opt.edns_ver = udp_size;
+            rec->data.opt.do_bit = do_bit;
+            rec->class = 0;
+            rec->name = msg_store_name(msg, "<Root>");
+            if (!rec->name) {
+                return log_errno_rf("No space to store <Root>");
+            }
+        }
+
+        wptr += snprintf(wptr, wptr_end - wptr,
             "UDP-size:%d Ext-RCODE:%d EDNS0:%d DNSEC-OK:%d",
             udp_size, ext_rcode, version, !!do_bit);
+
         // store these values
         dec->got_edns = 1;
         dec->udp_size = udp_size;
         dec->ext_rcode = ext_rcode;
         dec->edns_ver = version;
         dec->dnssec_ok = !!do_bit;
+
+        // decoded
         rdata_desc = dec->msg;
         break;
     }
@@ -611,78 +875,121 @@ static int dns_dec_record(struct dns_dec *dec, int section, struct dns_record *r
         break;
     }
 
-    // next row
-    dec->offset += rec->rdlength;
+    // next record
+    sect->num_rec++;
+    dec->offset += rdlen;
 
-    itoa(num[0], 10, rec->class); 
-    itoa(num[1], 10, rec->type);
+    if (dec->need_emsg) {
+        char num[2][10];
+        itoa(num[0], 10, rr_class); 
+        itoa(num[1], 10, rr_type);
 
-    // desc PDU as we decode
-    dns_wmsg(dec, "  %s: %s %s %s %s\n",
-        ec_tostr(ARRAY(dec_code_tostr), section, "???"),
-        rec->name, dns_class_tostr(rec->class, num[0]), 
-        dns_type_tostr(rec->type, num[1]),
-        rdata_desc
-    );
+        // desc PDU as we decode
+        char *res = dns_wmsg(dec, "  %s: %s %s %s %s\n",
+            ec_tostr(ARRAY(dec_code_tostr), sect_code, "???"),
+            name, dns_class_tostr(rr_class, num[0]), dns_type_tostr(rr_type, num[1]),
+            rdata_desc
+        );
+        if (!res) ec = -1;
+    }
 
     // all done
-    return 0;
+    return ec;
 }
 
-static int dns_dec_section(struct dns_dec *dec, int section, int rows)
+static int parse_question(struct dns_dec *dec, struct dns_msg *msg)
 {
-    struct dns_record rec;
+    // grab next section quest
+    struct dns_quest *quest = NULL;
+    if (dec->load_msg) {
+        if (msg->num_quest >= ARR_LEN(msg->quest)) {
+            return log_error_rf("No space to store question");
+        }
+        quest = &msg->quest[msg->num_quest];
+    }
 
-    for (int i = 0; i < rows; i++) {
-        if (dns_dec_record(dec, section, &rec) != 0) {
-            return dns_dec_err(dec, DNS_DEC_PDU, section, i);
+    char *wptr = dec->msg;
+    char *wptr_end = wptr + sizeof(dec->msg);
+
+    // label
+    char *name = wptr;
+    size_t consumed;
+    int ec = parse_dns_name(dec->pkt_buf, dec->pkt_len, dec->offset, name, wptr_end - wptr, &consumed);
+    if (ec != 0) {
+        return dns_dec_err(dec, DNS_DEC_QUESTION, DNS_DEC_NAME, ec);
+    }
+
+    dec->offset += consumed;
+    wptr += consumed;
+
+    if (dec->offset + 4 > dec->pkt_len) {
+        return dns_dec_err(dec, DNS_DEC_QUESTION, DNS_DEC_HDR, DNS_ERR_TRUNC);
+    }
+
+    uint16_t qtype  = dec_u16(dec->pkt_buf + dec->offset);
+    uint16_t qclass = dec_u16(dec->pkt_buf + dec->offset + 2);
+    dec->offset += 4;
+
+    if (quest)  {
+        quest->qtype = qtype;
+        quest->qclass = qclass;
+        quest->qname = msg_store_name(msg, name);
+        if (!quest->qname) {
+            return log_errno_rf("No space to store question name");
+        }
+    }
+
+    // decoded
+    msg->num_quest++;
+
+    if (dec->need_emsg) {
+        // desc PDU as we decode
+        char num[2][10];
+        itoa(num[0], 10, qclass); 
+        itoa(num[1], 10, qtype);
+        char *res= dns_wmsg(dec, "  %s: %s %s %s\n",
+            "Question", name, 
+            dns_class_tostr(qclass, num[0]), 
+            dns_type_tostr(qtype, num[1])
+        );
+        if (!res) ec = -1;
+    }
+
+    // all done
+    return ec;
+}
+
+static int dns_dec_sect(struct dns_dec *dec, struct dns_msg *msg, 
+    int nrec, int sect_code, struct dns_sect *sect)
+{
+    for (int i = 0; i < nrec; i++) {
+        if (parse_record(dec, msg, sect_code, sect) != 0) {
+            return dns_dec_err(dec, DNS_DEC_PDU, sect_code, i);
         }
     }
 
     return 0;
 }
 
-static int dns_dec_question(struct dns_dec *dec, struct dns_question *quest)
+static int decode_additional(struct dns_dec *dec, struct dns_msg *msg)
 {
-    size_t consumed;
-    int ec; 
-    char num[2][10];
-
-    // label
-    ec = parse_dns_name(dec->pkt_buf, dec->pkt_len, dec->offset, quest->qname, sizeof(quest->qname), &consumed);
-    if (ec != 0) {
-        return dns_dec_err(dec, DNS_DEC_QUESTION, DNS_DEC_NAME, ec);
-    }
-
-    dec->offset += consumed;
-    if (dec->offset + 4 > dec->pkt_len) {
-        return dns_dec_err(dec, DNS_DEC_QUESTION, DNS_DEC_HDR, DNS_ERR_TRUNC);
-    }
-
-    quest->qtype  = dec_u16(dec->pkt_buf + dec->offset);
-    quest->qclass = dec_u16(dec->pkt_buf + dec->offset + 2);
-    dec->offset += 4;
-
-    itoa(num[0], 10, quest->qclass); 
-    itoa(num[1], 10, quest->qtype);
-
-    // desc PDU as we decode
-    dns_wmsg(dec, "  %s: %s %s %s\n",
-        "Question", quest->qname, 
-        dns_class_tostr(quest->qclass, num[0]), 
-        dns_type_tostr(quest->qtype,  num[1])
-    );
-
-    // all done
-    return 0;
+    return dns_dec_sect(dec, msg, msg->hdr.ar_count, DNS_DEC_ADDITIONAL, &msg->add);
 }
 
-static int dns_dec_questions(struct dns_dec *dec)
+static int decode_authority(struct dns_dec *dec, struct dns_msg *msg)
 {
-    struct dns_question quest;
+    return dns_dec_sect(dec, msg, msg->hdr.ns_count, DNS_DEC_AUTHORITY, &msg->auth);
+}
 
-    for (int i = 0; i < dec->hdr.qd_count; i++) {
-        if (dns_dec_question(dec, &quest) != 0) {
+static int decode_answer(struct dns_dec *dec, struct dns_msg *msg)
+{
+    return dns_dec_sect(dec, msg, msg->hdr.an_count, DNS_DEC_ANSWER, &msg->ans);
+}
+
+static int decode_question(struct dns_dec *dec, struct dns_msg *msg)
+{
+    for (int i = 0; i < msg->hdr.qd_count; i++) {
+        if (parse_question(dec, msg) != 0) {
             return dns_dec_err(dec, DNS_DEC_PDU, DNS_DEC_QUESTION, i);
         }
     }
@@ -690,19 +997,26 @@ static int dns_dec_questions(struct dns_dec *dec)
     return 0;
 }
 
-static int dns_dec_header(struct dns_dec *dec)
+static int decode_header(struct dns_dec *dec, struct dns_header *hdr)
 {
-    int ec = parse_dns_header(dec->pkt_buf, dec->pkt_len, &dec->hdr);
+    int ec = parse_dns_header(dec->pkt_buf, dec->pkt_len, hdr);
 
     if (ec != 0) {
         return dns_dec_err(dec, DNS_DEC_PDU, DNS_DEC_HDR, ec);
     }
+
     dec->offset += sizeof(struct dns_header);
 
+    if (!dec->need_emsg) return 0;
+
+    // copy hdr fields for dns_dec_genmsg
+    dec->hdr = *hdr;
+
+    // describe
     char num[2][10];
-    struct dns_header *hdr = &dec->hdr;
-    int qr = hdr->flags & DNS_FLAGS_QR ? 0 : 1;
-    int opcode  = (hdr->flags & DNS_FLAGS_OPCODE) >> 11;
+    uint16_t flags = hdr->flags;
+    int qr = flags & DNS_FLAGS_QR ? 1 : 0;
+    int opcode  = (flags & DNS_FLAGS_OPCODE) >> 11;
     const char *opcode_str = ec_tostr(ARRAY(opcode_tostr), opcode, itoa(num[0],10, opcode));
     const char *type_str = qr ? "RESPONSE" : "QUERY";
 
@@ -712,11 +1026,11 @@ static int dns_dec_header(struct dns_dec *dec)
 
     if (qr) {
         // query response
-        int as = hdr->flags & DNS_FLAGS_AA ? 1 : 0;
-        int tc = (hdr->flags & DNS_FLAGS_TC) ? 1 : 0;
-        int rd = hdr->flags & DNS_FLAGS_RD ? 1 : 0;
-        int ra = hdr->flags & DNS_FLAGS_RA ? 1 : 0;
-        int rcode = hdr->flags & DNS_FLAGS_RCODE;
+        int as = flags & DNS_FLAGS_AA ? 1 : 0;
+        int tc = flags & DNS_FLAGS_TC ? 1 : 0;
+        int rd = flags & DNS_FLAGS_RD ? 1 : 0;
+        int ra = flags & DNS_FLAGS_RA ? 1 : 0;
+        int rcode = flags & DNS_FLAGS_RCODE;
 
         // add flags
         if (as) rwbuf_strcat_sep(&buf, ' ', STR_LIT("AS:1"));
@@ -726,7 +1040,7 @@ static int dns_dec_header(struct dns_dec *dec)
 
         // convert RCODE to str
         itoa(num[1],10,rcode);
-        const char *rcode_str = ec_tostr(ARRAY(rcode_tostr), rcode, num[1]);
+        const char *rcode_str = rcode_tostr(rcode, num[1]);
         rwbuf_strcat_sep(&buf, ' ', STR_LIT("RCODE:"));
         rwbuf_strcat(&buf, rcode_str, strlen(rcode_str));
 
@@ -742,9 +1056,9 @@ static int dns_dec_header(struct dns_dec *dec)
     }
     else {
         // query
-        int tc = (hdr->flags & DNS_FLAGS_TC) ? 1 : 0;
-        int rd = (hdr->flags & DNS_FLAGS_RD) ? 1 : 0;
-        int ad = (hdr->flags & DNS_FLAGS_AD) ? 1 : 0;   
+        int tc = flags & DNS_FLAGS_TC ? 1 : 0;
+        int rd = flags & DNS_FLAGS_RD ? 1 : 0;
+        int ad = flags & DNS_FLAGS_AD ? 1 : 0;   
 
         // add flags
         if (tc) rwbuf_strcat_sep(&buf, ' ', STR_LIT("TC:1"));
@@ -760,8 +1074,34 @@ static int dns_dec_header(struct dns_dec *dec)
     // desc PDU as we decode
     dns_wmsg(dec,
         "[%s] ID 0x%04x QR:%d OPCODE:%s %.*s\n",
-        type_str, dec->hdr.id, qr, opcode_str, buf.widx, buf.data);
+        type_str, hdr->id, qr, opcode_str, buf.widx, buf.data);
 
+    return 0;
+}
+
+// See rfc1035 Message format 4.1. Format
+static int decode_msg(struct dns_dec *dec, struct dns_msg *msg)
+{
+    int rc;
+
+    rc = decode_header(dec, &msg->hdr);
+    if (rc != 0) return rc;
+    rc = decode_question(dec, msg);
+    if (rc)  return rc;
+    rc = decode_answer(dec, msg);
+    if (rc) return rc;
+    rc = decode_authority(dec, msg);
+    if (rc) return rc;
+    rc = decode_additional(dec, msg);
+    if (rc) return rc;
+
+    // validate message size
+    if (dec->need_emsg && dec->pkt_len > dec->udp_size) {
+        // Check packet doesn't exceed 512 bytes (UDP) or declared length
+        dns_wmsg(dec, "UDP message: packet-length %zu > max size %d\n", dec->pkt_len, dec->udp_size);
+    }
+
+    // all done
     return 0;
 }
 
@@ -769,78 +1109,84 @@ static int dns_dec_header(struct dns_dec *dec)
 // Required functions
 int validate_dns_packet(const uint8_t *pkt_buf, size_t pkt_len, char *emsg)
 {
-    struct dns_dec tmp = {
+    struct dns_dec dec = {
         .pkt_buf = pkt_buf,
         .pkt_len = pkt_len,
         .udp_size = DNS_MAX_UDP,
-        .emsg = RWBUF_INIT(emsg, DNS_ERRBUF_SIZE)
+        .need_emsg = 1,
+        .load_msg = 0,
+        .emsg = RWBUF_INIT(emsg, DNS_EMSG_MAXLEN)
     };
-    struct dns_dec *dec = &tmp;
 
-    if ( (dns_dec_header(dec)) != 0) goto done;
-    if ( (dns_dec_questions(dec)) != 0) goto done;
-    if ( (dns_dec_section(dec, DNS_DEC_ANSWER,  dec->hdr.an_count)) != 0)  goto done;
-    if ( (dns_dec_section(dec, DNS_DEC_AUTHORITY, dec->hdr.ns_count)) != 0) goto done;
-    if ( (dns_dec_section(dec, DNS_DEC_ADDITIONAL, dec->hdr.ar_count)) != 0) goto done;
+    struct dns_msg msg = { 0 };
 
-    if (pkt_len > dec->udp_size) {
-        // Check packet doesn't exceed 512 bytes (UDP) or declared length
-        dns_wmsg(dec, "UDP message: packet-length %zu > max size %d\n", pkt_len, dec->udp_size);
+    int rc = decode_msg(&dec, &msg);
+
+    if (dec.need_emsg) {
+        rc = dns_dec_genmsg(&dec);
     }
 
-done:
-    return dns_dec_genmsg(dec);
+    return rc;
+}
+
+int dns_decode_msg(struct dns_msg *msg, uint8_t *buf, size_t len)
+{
+    struct dns_dec dec = {
+        .pkt_buf = buf,
+        .pkt_len = len,
+        .udp_size = DNS_MAX_UDP,
+        .load_msg = 1
+    };
+
+    return decode_msg(&dec, msg);
 }
 
 // DNS encoder 
-static inline uint8_t *enc_u32(uint8_t *wpos, uint32_t value)
-{
-    *wpos++ = value >> 24;
-    *wpos++ = value >> 16;
-    *wpos++ = value >> 8;
-    *wpos++ = value;
 
-    return wpos;
+static inline uint8_t *enc_u32(uint8_t *wptr, uint32_t value)
+{
+    *wptr++ = value >> 24;
+    *wptr++ = value >> 16;
+    *wptr++ = value >> 8;
+    *wptr++ = value;
+
+    return wptr;
 }
 
-static inline uint8_t *enc_u16(uint8_t *wpos, uint16_t value)
+static inline uint8_t *enc_u16(uint8_t *wptr, uint16_t value)
 {
-    *wpos++ = value >> 8;
-    *wpos++ = value;
+    *wptr++ = value >> 8;
+    *wptr++ = value;
 
-    return wpos;
+    return wptr;
 }
 
-static int dns_enc_hdr(uint8_t *buf, size_t len, const struct dns_header *hdr)  
+static int enc_hdr(uint8_t *wptr, const struct dns_header *hdr)  
 {
-    if (len < sizeof(*hdr)) {
-        return -1;
-    }
-    
-    enc_u16(buf + 0,  hdr->id);
-    enc_u16(buf + 2,  hdr->flags);
-    enc_u16(buf + 4,  hdr->qd_count);
-    enc_u16(buf + 6,  hdr->an_count);
-    enc_u16(buf + 8,  hdr->ns_count);
-    enc_u16(buf + 10, hdr->ar_count);
+    wptr = enc_u16(wptr, hdr->id);
+    wptr = enc_u16(wptr, hdr->flags);
+    wptr = enc_u16(wptr, hdr->qd_count);
+    wptr = enc_u16(wptr, hdr->an_count);
+    wptr = enc_u16(wptr, hdr->ns_count);
+    wptr = enc_u16(wptr, hdr->ar_count);
 
-    return 0;
+    return DNS_HDR_LEN;
 }
 
-static int dns_enc_name(uint8_t *pkt, size_t pkt_len, size_t offset, const char *name)
+// TODO add compression support
+static uint8_t *enc_name(uint8_t *wptr, const char *name)
 {
-    uint8_t *dst = pkt + offset;
-    uint8_t *len_pos = dst++;
+    uint8_t *len_pos = wptr++;
     int len = 0;
     
     while (*name) {
         if (*name == '.') {
             *len_pos = len;
-            len_pos = dst++;
+            len_pos = wptr++;
             len = 0;
         }
         else {
-            *dst++ = *name;
+            *wptr++ = *name;
             len++;
         }
         name++;
@@ -848,20 +1194,39 @@ static int dns_enc_name(uint8_t *pkt, size_t pkt_len, size_t offset, const char 
 
     // final label - drop a nul
     *len_pos = len;
-    *dst++ = 0;
+    *wptr++ = 0;
 
-    // return bytes written
-    return dst - (pkt + offset);
+    // return wpos
+    return wptr;
+}
+
+static inline void dns_enc_retspace(struct dns_enc *enc, size_t len)
+{
+    enc->pkt_len -= len;
+}
+
+static inline uint8_t *dns_enc_mkspace(struct dns_enc *enc, size_t len)
+{
+    if (enc->pkt_len + len > enc->pkt_max) {
+        return NULL;
+    }
+
+    uint8_t *buf = enc->pkt_buf + enc->pkt_len;
+    enc->pkt_len += len;
+
+    return buf;
 }
 
 static int dns_enc_question(struct dns_enc *enc, struct dns_question *quest)
 {
-    int nw = dns_enc_name(enc->pkt_buf, enc->pkt_max, enc->offset, quest->qname);
-    enc->offset += nw;
+    uint8_t *buf = dns_enc_mkspace(enc, DNS_NAME_MAXLEN + 4);
+    if (!buf) return -1;
 
-    enc_u16(enc->pkt_buf + enc->offset + 0,  quest->qtype);
-    enc_u16(enc->pkt_buf + enc->offset + 2,  quest->qclass);
-    enc->offset += 4;
+    uint8_t *wptr = buf;
+    wptr = enc_name(wptr, quest->qname);
+    wptr = enc_u16(wptr, quest->qtype);
+    wptr = enc_u16(wptr, quest->qclass);
+    dns_enc_retspace(enc, (DNS_NAME_MAXLEN + 4) - (wptr - buf));
 
     enc->hdr.qd_count++;
 
@@ -870,7 +1235,12 @@ static int dns_enc_question(struct dns_enc *enc, struct dns_question *quest)
 
 int dns_enc_start(struct dns_enc *enc, uint16_t tid, uint16_t flags)
 {
-    enc->offset += sizeof(enc->hdr);
+    enc->pkt_len = 0;
+
+    if (!dns_enc_mkspace(enc, DNS_HDR_LEN)) {
+        return -1;
+    }
+
     enc->hdr.id = tid;
     enc->hdr.flags = flags;
 
@@ -879,20 +1249,9 @@ int dns_enc_start(struct dns_enc *enc, uint16_t tid, uint16_t flags)
 
 int dns_enc_end(struct dns_enc *enc)
 {
-    enc->pkt_len = enc->offset;
-    dns_enc_hdr(enc->pkt_buf, enc->pkt_len, &enc->hdr);
+    enc_hdr(enc->pkt_buf, &enc->hdr);
 
-    return enc->offset;
-}
-
-int dns_enc_query_start(struct dns_enc *enc, uint16_t tid, uint8_t recur_desired, uint8_t dns_sec)
-{
-    uint16_t opcode = DNS_OPCODE_QUERY;
-    uint16_t flags = opcode << 11;
-    if (recur_desired) flags |= DNS_FLAGS_RD;
-    if (dns_sec) flags |= DNS_FLAGS_AD;
-
-    return dns_enc_start(enc, tid, flags);
+    return enc->pkt_len;
 }
 
 int dns_enc_add_quest(struct dns_enc *enc, const char *name, uint16_t qtype,  uint16_t qclass)
