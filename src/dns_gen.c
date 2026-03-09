@@ -42,6 +42,7 @@ struct dns_gen {
     char dns_name[256];
     uint16_t dns_type;
     uint16_t dns_class;
+    uint16_t dns_flags;
     char *serv_addr;
     uint32_t recv_timeout;
     uint8_t pkt_buf[DNS_MAX_PDUSIZE];
@@ -59,6 +60,7 @@ struct dns_gen {
     unsigned int use_tcp : 1;
     unsigned int sys_err : 1;
     unsigned int log_msg : 1;
+    unsigned int use_flags : 1;
 };
 
 
@@ -138,6 +140,37 @@ static int get_dns_class(struct str_slice str)
     if (slice_cmp_cstr(str, STR_LIT("ANY")))  return DNS_CLASS_ANY;
 
     return 0;
+}
+
+static int get_dns_flag(struct str_slice str)
+{
+    if (slice_cmp_cstr(str, STR_LIT("CD")))  return DNS_FLAGS_CD;
+    if (slice_cmp_cstr(str, STR_LIT("RD")))  return DNS_FLAGS_RD;
+    if (slice_cmp_cstr(str, STR_LIT("AD")))  return DNS_FLAGS_AD;
+
+    return 0;
+}
+
+
+static uint16_t get_dns_flags(uint16_t flags, struct str_slice flags_str)
+{
+    while (flags_str.len) {
+        struct str_slice flag = slice_split(&flags_str, '|');
+        slice_trim(&flag);
+        struct str_slice on_off = slice_rsplit(&flag, ':');
+        slice_trim(&on_off);
+        uint16_t mask = get_dns_flag(flag);
+        if (mask && on_off.len) {
+            if (*on_off.ptr == '0') {
+                flags &= ~mask;
+            }
+            else if (*on_off.ptr == '1') {
+                flags |= mask;
+            }
+        }
+    }
+
+    return flags;
 }
 
 static int gen_do_fuzz(struct dns_gen *gen)
@@ -268,7 +301,7 @@ static int gen_send_query(struct dns_gen *gen, const char *name, uint16_t qclass
     uint16_t tid = rand() % 65536;
     qtype = qtype  ?: DNS_TYPE_A;
     qclass = qclass ?: DNS_CLASS_IN;
-    uint16_t flags = DNS_FLAGS_RD | DNS_FLAGS_AD;
+    uint16_t flags = gen->dns_flags;
 
     // encode PDU
     int rc = dns_enc_start(&enc, tid, flags);
@@ -328,7 +361,7 @@ static int gen_recv_resp(struct dns_gen *gen)
         char num[10];
         itoa(num, 10, rcode);
         return log_info_rz("dng-gen",
-            "Response ID %d failed with error %s", hdr->id, rcode_tostr(rcode, num));
+            "Response ID 0x%04x failed with error %s", hdr->id, rcode_tostr(rcode, num));
     }
 
     double delta_ms = time_diff_ms(&gen->ts_sent, &gen->ts_recv);
@@ -340,7 +373,7 @@ static int gen_recv_resp(struct dns_gen *gen)
         desc = gen->emsg;
     }
 
-    log_msg("Received response in %.3fms: %s", delta_ms,  desc);
+    log_info("dns-gen", "Received response in %.3fms: %s", delta_ms,  desc);
     for (int i = 0; i < msg.ans.num_rec; i++) {
         int nw = dns_rec_tostr(gen->emsg, sizeof(gen->emsg), &msg.ans.rec[i]);
         if (nw) {
@@ -371,6 +404,7 @@ static int gen_setup_query(void *state, int narg, struct str_slice args[])
     const char *cmd = "query";
 
     gen->mode = MODE_QUERY;
+    gen->dns_flags = DNS_FLAGS_RD;
 
     for (int i = 0; i < narg; i++) {
         struct str_slice opt = args[i];
@@ -397,6 +431,12 @@ static int gen_setup_query(void *state, int narg, struct str_slice args[])
             if (!val.len) return log_cmd_err(cmd, "--type <dns-type>", "cannot be blank");
             gen->dns_class = get_dns_class(slice_toupper(val));
             if (!gen->dns_class) return log_cmd_err(cmd, "--type <dns-type>", "Value Must be one of IN|CS|CH|HS|ANY");
+        }
+        else if (slice_cmp_cstr(opt,  STR_LIT("--flags"))) {
+            if (i == narg - 1) return log_cmd_err(cmd, "--class <dns-class>", "requires an argument");
+            struct str_slice val = args[++i];
+            if (!val.len) return log_cmd_err(cmd, "--flags <dns-flags>", "Must look like AD:0|CD:0|RD:0");
+            gen->dns_flags = get_dns_flags(gen->dns_flags, slice_toupper(val));
         }
         else if (slice_cmp_cstr(opt,  STR_LIT("--server"))) {
             if (i == narg - 1) return log_cmd_err(cmd, "--server <ip-addr>", "requires an argument");
@@ -432,12 +472,13 @@ static int gen_usage(void *state, struct str_slice prog_name)
     fprintf(out,"Usage: %.*s [MODE] [OPTIONS]\n\n", SLICE(prog_name));
 
     fprintf(out, "MODE:\n");
-    fprintf(out, "  %-*s %s\n", w, "query", "--name <dns-name> --type <rec-type> --server <ip-addr> --tcp");
+    fprintf(out, "  %-*s %s\n", w, "query", "--name <dns-name> --type <rec-type> --server <ip-addr> --flags <flags> --tcp");
     fprintf(out, "  %-*s %s\n", w, "fuzz", "--type <rec-type> --server <ip-addr>");
     fprintf(out, "  %-*s %s\n", w, "response", "--id <trans-id> --name <dns-name> --answer <ip-addr> --output <pcap-file>");
 
     fprintf(out, "\nExample:\n");
     fprintf(out, "  %.*s query --name example.com --type A --server 8.8.8.8\n", SLICE(prog_name));
+    fprintf(out, "  %.*s query --name example.com --type A --server 8.8.8.8 --flags 'AD:1|CD:1|RD:0'\n", SLICE(prog_name));
     fprintf(out, "  %.*s fuzz --type compression-loop --server 127.0.0.1\n", SLICE(prog_name));
     fprintf(out, "  %.*s response --id 0x1234 --name test.local --answer 192.168.1.1 --output packet.bin\n", SLICE(prog_name));
 

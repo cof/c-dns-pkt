@@ -1058,11 +1058,13 @@ static int decode_header(struct dns_dec *dec, struct dns_header *hdr)
         // query
         int tc = flags & DNS_FLAGS_TC ? 1 : 0;
         int rd = flags & DNS_FLAGS_RD ? 1 : 0;
+        int cd = flags & DNS_FLAGS_CD ? 1 : 0;
         int ad = flags & DNS_FLAGS_AD ? 1 : 0;   
 
         // add flags
         if (tc) rwbuf_strcat_sep(&buf, ' ', STR_LIT("TC:1"));
         if (rd) rwbuf_strcat_sep(&buf, ' ', STR_LIT("RD:1"));
+        if (cd) rwbuf_strcat_sep(&buf, ' ', STR_LIT("CD:1"));
         if (ad) rwbuf_strcat_sep(&buf, ' ', STR_LIT("AD:1"));
 
         // validate OPCODE range
