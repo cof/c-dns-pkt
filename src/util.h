@@ -141,6 +141,17 @@ void _log_error(const char *file, int line, const char *func, int ec, const char
 void _fatal_error(const char *file, int line, const char *func, int ec, const char *fmt, ...)
     __attribute__((format(printf, 5, 6)));
 
+#define log_msg_rf(msg) ({ \
+    log_msg(msg); \
+    UTIL_FAIL; \
+})
+
+// report msg, return 0
+#define log_info_rz(what, ...) ({ \
+    log_info(what,  __VA_ARGS__); \
+    UTIL_OK; \
+})
+
 // report estr
 #define log_error(...) \
     _log_error(__FILE__, __LINE__, __func__, 0, __VA_ARGS__)
@@ -154,7 +165,7 @@ void _fatal_error(const char *file, int line, const char *func, int ec, const ch
 // report estr, return 0
 #define log_error_rz(...) ({ \
     _log_error(__FILE__, __LINE__, __func__, 0,  __VA_ARGS__); \
-    0; \
+    UTIL_OK; \
 })
 
 // report estr, return NULL
