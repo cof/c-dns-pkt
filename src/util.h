@@ -43,29 +43,6 @@ static inline const char *ec_tostr(int len, const char *estr[len], int ec, const
     return str ?: def;
 }
 
-// decoders
-static inline uint32_t decode_u32(const unsigned char *buf)
-{
-    uint32_t value;
-
-    value = buf[0] << 24;
-    value |= buf[1] << 16;
-    value |= buf[2] << 8;
-    value |= buf[3];
-
-    return value;
-}
-
-static inline uint16_t decode_u16(const unsigned char *buf)
-{
-    uint16_t value;
-
-    value = buf[0] << 8;
-    value |= buf[1];
-
-    return value;
-}
-
 // buffer code
 struct rwbuf {
     char *data;
@@ -81,6 +58,7 @@ static inline void rwbuf_init(struct rwbuf *buf, char *data, int len)
     buf->widx = 0;
     buf->ridx = 0;
 }
+
 #define RWBUF_INIT(_buf, _len) { .data = (_buf), .cap = (_len), .widx = 0, .ridx = 0 }
 
 
@@ -169,19 +147,19 @@ void _fatal_error(const char *file, int line, const char *func, int ec, const ch
 
 // report estr, return FAIL
 #define log_error_rf(...) ({ \
-    _log_error(__FILE__, __LINE__, __func__, errno,  __VA_ARGS__); \
+    _log_error(__FILE__, __LINE__, __func__, 0,  __VA_ARGS__); \
     UTIL_FAIL; \
 })
 
 // report estr, return 0
 #define log_error_rz(...) ({ \
-    _log_error(__FILE__, __LINE__, __func__, errno,  __VA_ARGS__); \
+    _log_error(__FILE__, __LINE__, __func__, 0,  __VA_ARGS__); \
     0; \
 })
 
 // report estr, return NULL
 #define log_error_rn(...) ({ \
-    _log_error(__FILE__, __LINE__, __func__, errno,  __VA_ARGS__); \
+    _log_error(__FILE__, __LINE__, __func__, 0,  __VA_ARGS__); \
     (void *) NULL; \
 })
 

@@ -196,7 +196,6 @@ int sniff_signals(struct dns_sniff *sniff)
     return 0;
 }
 
-
 int sniff_capture(struct dns_sniff *sniff)
 {
     while (keep_running) {
@@ -303,7 +302,17 @@ int sniff_attach(struct dns_sniff *sniff)
     return 0;
 }
 
-static int sniff_readpcap(struct dns_sniff *sniff)
+static int sniff_do_capture(struct dns_sniff *sniff)
+{
+    if (sniff_signals(sniff) != 0) return 4;
+    if (sniff_attach(sniff) != 0)  return 4;
+    if (sniff_capture(sniff) != 0) return 4;
+
+    return 0;
+}
+
+
+static int sniff_do_readpcap(struct dns_sniff *sniff)
 {
     size_t pkt_len;
 
@@ -327,7 +336,7 @@ static int sniff_readpcap(struct dns_sniff *sniff)
      return 0;
 }
 
-static int sniff_tracepcap(struct dns_sniff *sniff)
+static int sniff_do_tracepcap(struct dns_sniff *sniff)
 {
     size_t pkt_len;
 
@@ -524,23 +533,13 @@ int main(int argc, char *argv[])
     if (sniff_parse_argv(sniff, argc, argv) != 0) { ec = 3;  goto done; }
 
     switch(sniff->mode) {
-    case MODE_CAPTURE:
-        if (sniff_signals(sniff) != 0)  { ec = 4 ;goto done; }
-        if (sniff_attach(sniff) != 0) { ec = 5; goto done; }
-        if (sniff_capture(sniff) != 0) { ec = 6; goto done; }
-        break;
-
-    case MODE_READPCAP:
-        if (sniff_readpcap(sniff) != 0) { ec = 7; goto done; }
-        break;
-
-    case MODE_TRACEPCAP:
-        if (sniff_tracepcap(sniff) != 0) { ec = 8; goto done; }
-        break;
+    case MODE_CAPTURE:   ec = sniff_do_capture(sniff); break;
+    case MODE_READPCAP:  ec = sniff_do_readpcap(sniff); break;
+    case MODE_TRACEPCAP: ec = sniff_do_tracepcap(sniff); break;
+    default: 
+        log_error("Unsupported mode %d", sniff->mode);
+        ec = 4;
     }
-
-    // all done
-    ec = 0;
 
 done:
     if (sniff) sniff_free(sniff);
