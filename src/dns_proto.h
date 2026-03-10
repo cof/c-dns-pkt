@@ -83,26 +83,29 @@ struct dns_record {
 
 // Required functions
 int parse_dns_header(const uint8_t *buf, size_t len, struct dns_header *hdr);
-
 int parse_dns_name(
     const uint8_t *pkt, size_t pkt_len, 
     size_t offset, char *out, size_t out_len, 
     size_t *bytes_consumed);
-
 int validate_dns_packet(const uint8_t *pkt, size_t len, char *error_msg);
 
-// helper api
-const char *rcode_tostr(int rcode, const char *def_str);
 
-// 4.1.2. Question section format
+
+/*  
+  A simple DNS message api
+
+ */
+const char *rcode_tostr(int rcode, const char *def_str);
+const char *dns_class_tostr(int ec, const char *def);
+const char *dns_type_tostr(int ec, const char *def);
+
 struct dns_quest {
     const char *qname;
     uint16_t qtype;
     uint16_t qclass;
 };
 
-
-// 4.1.3. Resource record format
+// A record wrapper using union wrappers around RDATA
 struct dns_rec {
     const char *name;
     uint16_t type;
@@ -156,6 +159,10 @@ struct dns_sect {
     struct dns_rec rec[DNS_MAX_REC];
 };
 
+// convert dns record to a readable string
+int dns_rec_tostr(char *buf, size_t buf_len, struct dns_rec *rec);
+
+// DNS message
 struct dns_msg {
     struct dns_header hdr;
     char names[DNS_MAX_PDUSIZE];
@@ -167,22 +174,34 @@ struct dns_msg {
     struct dns_sect add;
 };
 
-int dns_decode_msg(struct dns_msg *msg, uint8_t *buf, size_t len);
+// decode/encode a DNS message
+ssize_t dns_decode_msg(struct dns_msg *msg, uint8_t *buf, size_t len);
+ssize_t dns_encode_msg(struct dns_msg *msg, uint8_t *buf, size_t len);
 
-const char *dns_class_tostr(int ec, const char *def);
-const char *dns_type_tostr(int ec, const char *def);
-int dns_rec_tostr(char *buf, size_t buf_len, struct dns_rec *rec);
+static inline void dns_msg_set_id_flags(struct dns_msg *msg, uint16_t id, uint16_t flags)
+{
+    msg->hdr.id = id;
+    msg->hdr.flags = flags;
+}
 
-// A simple dns pkt encoder
-struct dns_enc {
-    struct dns_header hdr;
-    uint8_t *pkt_buf;
-    size_t pkt_max;
-    size_t pkt_len;
-};
+int dns_msg_add_quest(struct dns_msg *msg, const char *name, uint16_t qtype,  uint16_t qclass);
+int dns_msg_add_ans(struct dns_msg *msg, struct dns_rec *ans);
+int dns_msg_add_auth(struct dns_msg *msg, struct dns_rec *ans);
+int dns_msg_add_add(struct dns_msg *msg, struct dns_rec *ans);
 
-int dns_enc_start(struct dns_enc *enc, uint16_t tid, uint16_t flags);
-int dns_enc_end(struct dns_enc *enc);
-int dns_enc_add_quest(struct dns_enc *enc, const char *name, uint16_t qtype,  uint16_t qclass);
+static inline int dns_msg_num_ans(struct dns_msg *msg)
+{
+    return msg->ans.num_rec;
+}
+
+static inline int dns_msg_num_auth(struct dns_msg *msg)
+{
+    return msg->auth.num_rec;
+}
+
+static inline int dns_msg_num_add(struct dns_msg *msg)
+{
+    return msg->add.num_rec;
+}
 
 #endif
