@@ -1525,6 +1525,7 @@ static int dns_msg_add_rec(struct dns_msg *msg, int sc, struct dns_sect *sect, s
     }
     rec->type = src_rec->type;
     rec->class = src_rec->class;
+    rec->ttl = src_rec->ttl;
 
     // store rdata
     switch(rec->type) {

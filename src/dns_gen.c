@@ -50,6 +50,7 @@ struct dns_gen {
     uint16_t dns_flags;
     char *serv_addr;
     uint16_t id;
+    uint32_t ttl;
     char *output;
     struct pcap_file *pcap;
     struct dns_msg send_msg;
@@ -194,7 +195,6 @@ static int get_dns_flag(struct str_slice str)
 int ipaddrstr_toraw(void *addr, size_t len, struct str_slice str)
 {
     char addrstr[INET6_ADDRSTRLEN];
-
 
     memcpy(addrstr, str.ptr, str.len);
     addrstr[str.len] = '\0';
@@ -419,12 +419,7 @@ static int gen_recv_resp(struct dns_gen *gen)
 /*
  * Figure out the answer
  * =====================
- *  addr =  ip4addr|ip6addr|regname 
- *  ip4addr -> name=<dns-name> type=<A> class=<IN> rdata=<ip4addr>
- *  ip6addr -> name=<dns-name> type=<AAAA> class=<IN> rdata=<ip6addr>
- *  regname -> name=<dns-name> type=><CNAME> class=IN rdata=<regname>
- * e.g
- *  172.0.0.1 -> name=<dns-name> type=A class=IN rdata=172.0.0.1
+ *  addr =  ip4addr|ip6addr|regname [<ttl>] [class=IN|CS|CH|HS]
  */
 static int gen_add_answer(struct dns_gen *gen, struct str_slice ans_str)
 {
@@ -444,7 +439,8 @@ static int gen_add_answer(struct dns_gen *gen, struct str_slice ans_str)
     uint8_t addr_raw[DNS_NAME_MAXLEN];
     struct dns_rec ans = {
         .name = gen->dns_name,
-        .class = DNS_CLASS_IN 
+        .class = gen->dns_class,
+        .ttl = gen->ttl
     };
 
     // parse addr_str (ip4|ip6|name)
@@ -462,6 +458,19 @@ static int gen_add_answer(struct dns_gen *gen, struct str_slice ans_str)
         // regname
         ans.type = DNS_TYPE_CNAME;
         ans.data.cname = addr_str;
+    }
+    
+    // look for remaining attrs
+    while (ans_str.len) {
+        struct str_slice attr = slice_split(&ans_str, ' ');
+        slice_trim(&attr);
+        int dns_class = get_dns_class(attr);
+        if (dns_class != 0) {
+            ans.class = dns_class;
+        }
+        else if (slice_isnumeric(attr)) {
+            ans.ttl = atol(attr.ptr);
+        }
     }
 
     return dns_msg_add_ans(&gen->send_msg, &ans);
@@ -568,7 +577,7 @@ static int gen_setup_resp(void *state, int narg, struct str_slice args[])
             }
             struct str_slice val = args[++i];
             if (!val.len) return log_cmd_err(cmd, "--id <id>", "cannot be blank");
-            gen->id = (uint16_t) strtol(val.ptr, NULL, 16);
+            gen->id = (uint16_t) strtol(val.ptr, NULL, 0);
         }
         else if (slice_cmp_cstr(opt,  STR_LIT("--name"))) {
             if (i == narg - 1) {
@@ -587,6 +596,14 @@ static int gen_setup_resp(void *state, int narg, struct str_slice args[])
             struct str_slice val = args[++i];
             if (!val.len) return log_cmd_err(cmd, "--answer <answer>", "cannot be blank");
             if (gen_add_answer(gen, val) != 0) return log_cmd_err(cmd, "--answer <answer>", "Bad format");
+        }
+        else if (slice_cmp_cstr(opt,  STR_LIT("--ttl"))) {
+            if (i == narg - 1) {
+                return log_cmd_err(cmd, "--ttl <ttl>", "requires an argument");
+            }
+            struct str_slice val = args[++i];
+            if (!val.len) return log_cmd_err(cmd, "--ttl <id>", "cannot be blank");
+            gen->ttl = (uint32_t) strtol(val.ptr, NULL, 16);
         }
         else if (slice_cmp_cstr(opt,  STR_LIT("--flags"))) {
             if (i == narg - 1) return log_cmd_err(cmd, "--class <dns-class>", "requires an argument");
@@ -627,6 +644,7 @@ static int gen_setup_query(void *state, int narg, struct str_slice args[])
 
     gen->mode = MODE_QUERY;
     gen->dns_flags = DNS_FLAGS_RD;
+    gen->dns_class = DNS_CLASS_IN;
 
     for (int i = 0; i < narg; i++) {
         struct str_slice opt = args[i];
