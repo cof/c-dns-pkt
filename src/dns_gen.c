@@ -45,8 +45,8 @@ struct dns_gen {
     uint16_t dns_flags;
     char *serv_addr;
     char *id;
-    char *answer;
     char *output;
+    struct dns_msg send_msg;
     uint32_t recv_timeout;
     uint8_t pkt_buf[DNS_MAX_PDUSIZE];
     char emsg[DNS_EMSG_MAXLEN];
@@ -159,9 +159,6 @@ int ipaddrstr_toraw(void *addr, size_t len, struct str_slice str)
 {
     char addrstr[INET6_ADDRSTRLEN];
 
-    if (str.len > sizeof(addrstr)) {
-        return log_error_rf("<ip-addr> string too big");
-    }
 
     memcpy(addrstr, str.ptr, str.len);
     addrstr[str.len] = '\0';
@@ -291,34 +288,35 @@ static int recv_dns_pdu(struct dns_gen *gen)
 
 static int gen_send_query(struct dns_gen *gen, const char *name, uint16_t qclass, uint16_t qtype) 
 {
-    struct dns_enc enc = {
-        .pkt_buf = gen->pkt_buf,
-        .pkt_max = sizeof(gen->pkt_buf),
-    };
-
     // next tid
     uint16_t tid = rand() % 65536;
-    qtype = qtype  ?: DNS_TYPE_A;
-    qclass = qclass ?: DNS_CLASS_IN;
-    uint16_t flags = gen->dns_flags;
 
-    // encode PDU
-    int rc = dns_enc_start(&enc, tid, flags);
-    dns_enc_add_quest(&enc, name, qtype, qclass);
-    dns_enc_end(&enc);
+    // load DNS msg
+    struct dns_msg *msg = &gen->send_msg;
+    dns_msg_set_id_flags(msg, tid, gen->dns_flags);
+    int rc = dns_msg_add_quest(msg, name, qtype, qclass);
+    if (rc) return rc;
+
+    // encode DNS msg
+    ssize_t pkt_len = dns_encode_msg(msg, gen->pkt_buf, sizeof(gen->pkt_buf));
+    if (pkt_len <= 0) return -1;
 
     // check message is valid before we send
     if (gen->log_msg) {
-        rc = validate_dns_packet(enc.pkt_buf, enc.pkt_len, gen->emsg);
+        rc = validate_dns_packet(gen->pkt_buf, pkt_len, gen->emsg);
         log_msg(gen->emsg);
         if (rc) return rc;
     }
 
-    log_info("dns-gen", "Send query ID:0x%04x for %s %s %s", tid, name,
-        dns_class_tostr(qclass, NULL), dns_type_tostr(qtype, NULL));
+    // log it (ensure no hidden fields)
+    char num[2][10];
+    const char *quest_name = name && *name ? name : "<null>";
+    const char *class_str = dns_class_tostr(qclass, itoa(num[0], 10, qclass));
+    const char *type_str = dns_type_tostr(qtype, itoa(num[1], 10, qtype));
+    log_info("dns-gen", "Send query ID:0x%04x for %s %s %s", tid, quest_name, class_str, type_str);
 
     // send it
-    rc = send_dns_pdu(gen, enc.pkt_buf, enc.pkt_len);
+    rc = send_dns_pdu(gen, gen->pkt_buf, pkt_len);
     if (rc) return rc;
 
     // msg sent  as far as we know
@@ -358,9 +356,8 @@ static int gen_recv_resp(struct dns_gen *gen)
     int rcode = hdr->flags & DNS_FLAGS_RCODE;
     if (rcode != DNS_RCODE_NOERROR) {
         char num[10];
-        itoa(num, 10, rcode);
-        return log_info_rz("dng-gen",
-            "Response ID 0x%04x failed with error %s", hdr->id, rcode_tostr(rcode, num));
+        const char *rcode_str = rcode_tostr(rcode, itoa(num, 10, rcode));
+        return log_info_rz("dng-gen", "Response ID 0x%04x failed with error %s", hdr->id, rcode_str);
     }
 
     double delta_ms = time_diff_ms(&gen->ts_sent, &gen->ts_recv);
@@ -412,20 +409,52 @@ static int gen_do_resp(struct dns_gen *gen)
     return -1;
 }
 
+
+/*
+ * Figure out the answer
+ * =====================
+ *  addr =  ip4addr|ip6addr|regname
+ *  ip4addr -> name=<dns-name> type=<A> class=<IN> rdata=<ip4addr>
+ *  ip6addr -> name=<dns-name> type=<AAAA> class=<IN> rdata=<ip6addr>
+ *  regname -> name=<dns-name> type=><CNAME> class=IN rdata=<regname>
+ * e.g
+ *  172.0.0.1 -> name=<dns-name> type=A class=IN rdata=172.0.0.1
+ */
 static int gen_add_answer(struct dns_gen *gen, struct str_slice ans_str)
 {
-    uint8_t addr_buf[sizeof(struct in6_addr)];
-
-    struct str_slice addr_str = slice_split(&ans_str, ' ');
-    slice_trim(&addr_str);
-
-    int rc = ipaddrstr_toraw(addr_buf, sizeof(addr_buf), addr_str);;
-    if (rc != 4 && rc != 6) {
-        // not ip4 or ip6
-        return -1;
+    // get addr
+    struct str_slice addr = slice_split(&ans_str, ' ');
+    slice_trim(&addr);
+    if (addr.len > DNS_NAME_MAXSTR) {
+        return log_error_rf("<addr> string len %zu bigger than max %d", addr.len, DNS_NAME_MAXSTR);
     }
 
-    return 0;
+    // need a copy for inet_pton call
+    char addr_str[DNS_NAME_MAXLEN];
+    memcpy(addr_str, addr.ptr, addr.len);
+    addr_str[addr.len] = '\0';
+
+    // parse addr_str (ip4|ip6|name)
+    uint8_t addr_raw[DNS_NAME_MAXLEN];
+    struct dns_rec ans = { .class = DNS_CLASS_IN } ;
+
+    if (inet_pton(AF_INET, addr_str, addr_raw) == 1) {
+        // IPv4
+        ans.type = DNS_TYPE_A;
+        memcpy(ans.data.a, addr_raw, 4);
+    }
+    else if (inet_pton(AF_INET6, addr_str, addr_raw) == 1) {
+        // IPv6
+        ans.type = DNS_TYPE_AAAA;
+        memcpy(ans.data.aaaa, addr_raw, 16);
+    }
+    else {
+        // regname
+        ans.type = DNS_TYPE_CNAME;
+        ans.data.cname = addr_str;
+    }
+
+    return dns_msg_add_ans(&gen->send_msg, &ans);
 }
 
 static int gen_setup_resp(void *state, int narg, struct str_slice args[])
@@ -480,7 +509,7 @@ static int gen_setup_resp(void *state, int narg, struct str_slice args[])
     }
 
     if (!*gen->dns_name)  return log_cmd_err(cmd, "--name <dns-name>", "is required");
-    if (!gen->answer) return log_cmd_err(cmd, "--answer <answer>", "is required");
+    if (!dns_msg_num_ans(&gen->send_msg)) return log_cmd_err(cmd, "--answer <answer>", "is required");
     if (!gen->output) return log_cmd_err(cmd, "--output <file>", "is required");
 
     return -1;

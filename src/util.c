@@ -108,8 +108,11 @@ char *slice_strdup(const struct str_slice str)
 
 char *itoa(char *buf, int len, int val)
 {
-    char *str = buf + len -1;
+    if (!buf || len == 0) {
+        return buf;
+    }
 
+    char *str = &buf[len -1];
     *str = '\0';
     if (val == 0) *--str = '0';
 
