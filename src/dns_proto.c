@@ -1114,11 +1114,12 @@ int validate_dns_packet(const uint8_t *pkt_buf, size_t pkt_len, char *emsg)
         .pkt_len = pkt_len,
         .udp_size = DNS_MAX_UDP,
         .need_emsg = 1,
-        .load_msg = 0,
         .emsg = RWBUF_INIT(emsg, DNS_EMSG_MAXLEN)
     };
 
     struct dns_msg msg = { 0 };
+
+    if (emsg) *emsg = '\0';
 
     int rc = decode_msg(&dec, &msg);
 
