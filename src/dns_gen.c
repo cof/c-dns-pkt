@@ -18,9 +18,9 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <arpa/inet.h>
 #include <netdb.h> 
 #include <unistd.h>
-#include <sys/epoll.h>
 #include <errno.h>
 
 #include "util.h"
@@ -111,6 +111,7 @@ int gen_signals(struct dns_gen *gen)
     return 0;
 }
 
+// util funcs
 static double time_diff_ms(struct timespec *begin, struct timespec *end)
 {
     double diff_sec = end->tv_sec  - begin->tv_sec;
@@ -154,6 +155,22 @@ static int get_dns_flag(struct str_slice str)
     return 0;
 }
 
+int ipaddrstr_toraw(void *addr, size_t len, struct str_slice str)
+{
+    char addrstr[INET6_ADDRSTRLEN];
+
+    if (str.len > sizeof(addrstr)) {
+        return log_error_rf("<ip-addr> string too big");
+    }
+
+    memcpy(addrstr, str.ptr, str.len);
+    addrstr[str.len] = '\0';
+
+    if (inet_pton(AF_INET, addrstr, addr) == 1) return 4;
+    if (inet_pton(AF_INET6, addrstr, addr) == 1) return 6;
+
+    return -1;
+}
 
 static uint16_t get_dns_flags(uint16_t flags, struct str_slice flags_str)
 {
@@ -175,7 +192,6 @@ static uint16_t get_dns_flags(uint16_t flags, struct str_slice flags_str)
 
     return flags;
 }
-
 
 static int gen_connect(struct dns_gen *gen)
 {
@@ -398,7 +414,18 @@ static int gen_do_resp(struct dns_gen *gen)
 
 static int gen_add_answer(struct dns_gen *gen, struct str_slice ans_str)
 {
-    return -1;
+    uint8_t addr_buf[sizeof(struct in6_addr)];
+
+    struct str_slice addr_str = slice_split(&ans_str, ' ');
+    slice_trim(&addr_str);
+
+    int rc = ipaddrstr_toraw(addr_buf, sizeof(addr_buf), addr_str);;
+    if (rc != 4 && rc != 6) {
+        // not ip4 or ip6
+        return -1;
+    }
+
+    return 0;
 }
 
 static int gen_setup_resp(void *state, int narg, struct str_slice args[])
