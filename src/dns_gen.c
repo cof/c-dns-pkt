@@ -36,7 +36,7 @@
 struct dns_gen {
     // config
     pid_t pid;
-	//  state
+    //  state
     int mode;
     // cmd options
     char dns_name[256];
@@ -44,6 +44,9 @@ struct dns_gen {
     uint16_t dns_class;
     uint16_t dns_flags;
     char *serv_addr;
+    char *id;
+    char *answer;
+    char *output;
     uint32_t recv_timeout;
     uint8_t pkt_buf[DNS_MAX_PDUSIZE];
     char emsg[DNS_EMSG_MAXLEN];
@@ -110,8 +113,8 @@ int gen_signals(struct dns_gen *gen)
 
 static double time_diff_ms(struct timespec *begin, struct timespec *end)
 {
-	double diff_sec = end->tv_sec  - begin->tv_sec;
-	double diff_nsec = end->tv_nsec - begin->tv_nsec;
+    double diff_sec = end->tv_sec  - begin->tv_sec;
+    double diff_nsec = end->tv_nsec - begin->tv_nsec;
     return (diff_sec * 1000.0) + (diff_nsec / 1000000.0);
 }
 
@@ -171,26 +174,6 @@ static uint16_t get_dns_flags(uint16_t flags, struct str_slice flags_str)
     }
 
     return flags;
-}
-
-static int gen_do_fuzz(struct dns_gen *gen)
-{
-    return -1;
-}
-
-static int gen_setup_fuzz(void *state, int narg, struct str_slice args[])
-{
-    return -1;
-}
-
-static int gen_do_resp(struct dns_gen *gen)
-{
-    return -1;
-}
-
-static int gen_setup_resp(void *state, int narg, struct str_slice args[])
-{
-    return -1;
 }
 
 
@@ -285,7 +268,7 @@ static int recv_dns_pdu(struct dns_gen *gen)
     if (clock_gettime(CLOCK_MONOTONIC, &gen->ts_recv) != 0) {
         log_errno("clock_gettime ts_recv failed");
         // keep going ?
-	}
+    }
 
     return 0;
 }
@@ -397,6 +380,85 @@ static int gen_do_query(struct dns_gen *gen)
 
     return 0;
 }
+
+static int gen_do_fuzz(struct dns_gen *gen)
+{
+    return -1;
+}
+
+static int gen_setup_fuzz(void *state, int narg, struct str_slice args[])
+{
+    return -1;
+}
+
+static int gen_do_resp(struct dns_gen *gen)
+{
+    return -1;
+}
+
+static int gen_add_answer(struct dns_gen *gen, struct str_slice ans_str)
+{
+    return -1;
+}
+
+static int gen_setup_resp(void *state, int narg, struct str_slice args[])
+{
+    struct dns_gen *gen = state;
+    const char *cmd = "query";
+
+    gen->mode = MODE_RESP;
+
+    for (int i = 0; i < narg; i++) {
+        struct str_slice opt = args[i];
+        if (slice_cmp_cstr(opt,  STR_LIT("--id"))) {
+            if (i == narg - 1) {
+                return log_cmd_err(cmd, "--id <id>", "requires an argument");
+            }
+            struct str_slice val = args[++i];
+            if (!val.len) return log_cmd_err(cmd, "--id <id>", "cannot be blank");
+        }
+        else if (slice_cmp_cstr(opt,  STR_LIT("--name"))) {
+            if (i == narg - 1) {
+                return log_cmd_err(cmd, "--name <dns-name>", "requires an argument");
+            }
+            struct str_slice val = args[++i];
+            if (!val.len) return log_cmd_err(cmd, "--name <dns-name>", "cannot be blank");
+            if (val.len > DNS_NAME_MAXSTR) return log_cmd_err(cmd, "--name <dns-name>", "name too big");
+            memcpy(gen->dns_name, val.ptr, val.len);
+            gen->dns_name[val.len] = '\0';
+        }
+        else if (slice_cmp_cstr(opt,  STR_LIT("--answer"))) {
+            if (i == narg - 1) {
+                return log_cmd_err(cmd, "--answer <answer>", "requires an argument");
+            }
+            struct str_slice val = args[++i];
+            if (!val.len) return log_cmd_err(cmd, "--answer <answer>", "cannot be blank");
+            if (gen_add_answer(gen, val) != 0) return log_cmd_err(cmd, "--answer <answer>", "Bad format");
+        }
+        else if (slice_cmp_cstr(opt,  STR_LIT("--output"))) {
+            if (i == narg - 1) {
+                return log_cmd_err(cmd, "--name <dns-name>", "requires an argument");
+            }
+            struct str_slice val = args[++i];
+            if (!val.len) return log_cmd_err(cmd, "--name <dns-name>", "cannot be blank");
+            if (gen->output) free(gen->output);
+            gen->output = slice_strdup(val);
+            if (!gen->output) {
+                return log_errno_rf("strdup failed for --output");
+            }
+        }
+        else {
+            return log_cmd_err(cmd, "unknown option", "%.*s", SLICE(opt));
+        }
+    }
+
+    if (!*gen->dns_name)  return log_cmd_err(cmd, "--name <dns-name>", "is required");
+    if (!gen->answer) return log_cmd_err(cmd, "--answer <answer>", "is required");
+    if (!gen->output) return log_cmd_err(cmd, "--output <file>", "is required");
+
+    return -1;
+}
+
 
 static int gen_setup_query(void *state, int narg, struct str_slice args[])
 {
