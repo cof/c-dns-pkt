@@ -35,11 +35,14 @@
 #include <stdint.h>
 
 // File Endian Information
+
+// pcap legacy
 #define PCAP_MAGIC_LE_USEC 0xA1B2C3D4
-#define PCAP_MAGIC_LE_NSEC 0x1A2B3C4D
+#define PCAP_MAGIC_LE_NSEC 0xA1B23C4D
 #define PCAP_MAGIC_BE_USEC 0xD4C3B2A1 
 #define PCAP_MAGIC_BE_NSEC 0x4D3C2B1A
 
+// pcap-ng
 #define PCAP_SHB_TYPE    0x0A0D0D0A 
 #define PCAP_IDB_TYPE 	 0x00000001
 #define PCAP_EPB_TYPE 	 0x00000006
@@ -119,7 +122,10 @@ struct pcap_file {
     int fmt; // PCAP_FMTLEG, PCAP_FMTNG
     int (*read_hdr)(struct pcap_file *file);
     size_t (*read_pkt)(struct pcap_file *file, void *buf, size_t len);
+    int (*write_hdr)(struct pcap_file *file);
+    int (*write_pkt)(struct pcap_file *file, void *buf, size_t len);
     int sys_errno; // saved errno
+    struct timespec ts_now; // for writing
     unsigned int is_reader : 1; // we read pcap
     unsigned int must_swap : 1; // need to swap endian
     unsigned int have_idb  : 1; // loaded a idb
@@ -176,8 +182,9 @@ static int inline pcapng_isnative(uint32_t magic)
 
 // API
 struct pcap_file *pcap_open(const char *path, int mode);
-void pcap_close(struct pcap_file *pf);
+int pcap_close(struct pcap_file *pf);
 size_t pcap_read(struct pcap_file *pf, void *buf, size_t len);
+int pcap_write(struct pcap_file *pf, void *buf, size_t len);
 
 
 #endif

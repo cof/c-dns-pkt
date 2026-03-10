@@ -175,8 +175,8 @@ struct dns_msg {
 };
 
 // decode/encode a DNS message
-ssize_t dns_decode_msg(struct dns_msg *msg, uint8_t *buf, size_t len);
-ssize_t dns_encode_msg(struct dns_msg *msg, uint8_t *buf, size_t len);
+ssize_t dns_msg_decode(struct dns_msg *msg, uint8_t *buf, size_t len);
+ssize_t dns_msg_encode(struct dns_msg *msg, uint8_t *buf, size_t len);
 
 static inline void dns_msg_set_id_flags(struct dns_msg *msg, uint16_t id, uint16_t flags)
 {
