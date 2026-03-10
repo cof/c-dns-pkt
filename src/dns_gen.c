@@ -338,7 +338,7 @@ static int gen_recv_resp(struct dns_gen *gen)
     rc = dns_decode_msg(&msg, gen->pkt_buf, gen->recv_len);
     if (rc) return rc;
 
-    // check response
+    // check msg is response
     struct dns_header *hdr = &msg.hdr;
     if (!(hdr->flags & DNS_FLAGS_QR)) {
         return log_info_rz("dns-gen", 

@@ -1212,6 +1212,7 @@ static uint8_t *enc_name(uint8_t *wptr, const char *name)
     return wptr;
 }
 
+// return space back to buffer
 static inline int dns_enc_retspace(struct dns_enc *enc, size_t len)
 {
     if (len > enc->pkt_len) {
@@ -1223,6 +1224,7 @@ static inline int dns_enc_retspace(struct dns_enc *enc, size_t len)
     return 0;
 }
 
+// reserve space in buffer
 static inline uint8_t *dns_enc_mkspace(struct dns_enc *enc, size_t len)
 {
     if (enc->pkt_len + len > enc->pkt_max) {
@@ -1230,6 +1232,7 @@ static inline uint8_t *dns_enc_mkspace(struct dns_enc *enc, size_t len)
     }
 
     uint8_t *buf = enc->pkt_buf + enc->pkt_len;
+    enc->pkt_len += len;
 
     return buf;
 }
@@ -1266,9 +1269,7 @@ static int dns_enc_quest(struct dns_enc *enc, struct dns_quest *quest)
     wptr = enc_u16(wptr, quest->qclass);
     size_t used = wptr - wbuf;
     int rc = dns_enc_retspace(enc, len - used);
-    if (!rc) return rc;
-
-    enc->pkt_len += used;
+    if (rc) return rc;
 
     return 0;
 }
@@ -1283,9 +1284,6 @@ static int dns_enc_name(struct dns_enc *enc, const char *name, int sc, int type)
     wptr = enc_name(wptr, name);
     size_t used = wptr - wbuf;
     int rc = dns_enc_retspace(enc, len - used);
-    if (rc) return rc;
-
-    enc->pkt_len += used;
 
     return rc;
 }
@@ -1297,9 +1295,6 @@ static int dns_enc_raw(struct dns_enc *enc, void *raw, int raw_len, int sc, int 
 
     uint8_t *wptr = wbuf;
     wptr = enc_raw(wptr, raw, raw_len);
-    size_t used = wptr - wbuf;
-
-    enc->pkt_len += used;
 
     return 0;
 }
@@ -1320,7 +1315,6 @@ static int encode_record(struct dns_enc *enc, struct dns_rec *rec, int sc)
     size_t used = wptr - wbuf;
     int rc = dns_enc_retspace(enc, len - used);
     if (rc) return rc;
-    enc->pkt_len += used;
 
     // add data
     switch(rec->type) {
@@ -1351,7 +1345,6 @@ static int encode_record(struct dns_enc *enc, struct dns_rec *rec, int sc)
         wptr = enc_u32(wptr, rec->data.soa.retry);
         wptr = enc_u32(wptr, rec->data.soa.expire);
         wptr = enc_u32(wptr, rec->data.soa.min);
-        enc->pkt_len += len;
         break;
     case DNS_TYPE_PTR: // Domain Name Pointer (Reverse DNS)
         rc = dns_enc_name(enc, rec->data.ptr_name, sc, rec->type);
@@ -1364,14 +1357,12 @@ static int encode_record(struct dns_enc *enc, struct dns_rec *rec, int sc)
         *wptr++ = rec->data.hinfo.cpu_len;
         *wptr++ = rec->data.hinfo.os_offset;
         *wptr++ = rec->data.hinfo.os_len;
-        enc->pkt_len += len;
         break;
     case DNS_TYPE_MX: // Mail Exchange 
         len = sizeof(uint32_t);
         wptr = enc_fld_mkspace(enc, len, sc, rec->type);
         if (!wptr) return -1;
         wptr = enc_u16(wptr, rec->data.mx.pref);
-        enc->pkt_len += len;
         rc = dns_enc_name(enc, rec->data.mx.name, sc, rec->type);
         if (rc) return rc;
         break;
@@ -1392,7 +1383,6 @@ static int encode_record(struct dns_enc *enc, struct dns_rec *rec, int sc)
         wptr = enc_u16(wptr, rec->data.srv.prior);
         wptr = enc_u16(wptr, rec->data.srv.weight);
         wptr = enc_u16(wptr, rec->data.srv.port);
-        enc->pkt_len += len;
         rc = dns_enc_name(enc, rec->data.srv.name, sc, rec->type);
         if (rc) return rc;
         break;
@@ -1464,10 +1454,6 @@ static int encode_header(struct dns_enc *enc, struct dns_msg *msg)
     wptr = enc_u16(wptr, hdr->an_count);
     wptr = enc_u16(wptr, hdr->ns_count);
     wptr = enc_u16(wptr, hdr->ar_count);
-    size_t used = wptr - wbuf;
-
-    // encoded
-    enc->pkt_len += used;
 
     return 0;
 }
