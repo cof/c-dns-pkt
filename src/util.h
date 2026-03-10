@@ -128,7 +128,8 @@ static inline char *rwbuf_strcat_sep(struct rwbuf *buf, int ch, const char *str,
     return wptr;
 }
 
-char *itoa(char *buf, int len, int val);
+
+
 
 // logger
 void log_msg(const char *msg);
@@ -334,9 +335,37 @@ static inline void str_toupper(char *str, size_t len)
     }
 }
 
+char *itoa(char *buf, int len, int val);
+
 static inline int iswhite(int ch) 
 {
     return ch == ' ' || ch == '\t' || ch == '\v' || ch == '\r' || ch == '\t' ? 1 : 0;
+}
+
+static inline int is_numeral(int ch) 
+{
+    return ch >= '0' && ch <= '9' ? 1 : 0;
+}
+
+
+static inline int str_isnumeric(const char *str, size_t len)
+{
+	if (!len) return 0;
+    
+    const char *end = str + len;
+
+    while (str < end) {
+        if (!is_numeral(*str)) return 0;
+        str++;
+    }
+
+    return 1;
+}
+
+static inline int slice_isnumeric(struct str_slice str)
+{
+    return str_isnumeric(str.ptr, str.len);
+
 }
 
 static inline struct str_slice *slice_ltrim(struct str_slice *str)
