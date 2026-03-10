@@ -61,7 +61,7 @@ $(DNS_INSPECT): $(DNS_INSPECT_OBJS) | $(BUILD_DIR)
 	$(cmd_LD) $(LDFLAGS) $(DNS_INSPECT_OBJS) -o $@
 
 # dns-gen
-DNS_GEN_SRCS = src/util.c src/dns_proto.c src/dns_gen.c
+DNS_GEN_SRCS = src/util.c src/pcap.c src/dns_proto.c  src/dns_gen.c
 DNS_GEN_OBJS = $(DNS_GEN_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 DNS_GEN_DEPS = $(DNS_GEN_OBJS:.o=.d)
 -include $(DNS_GEN_DEPS)

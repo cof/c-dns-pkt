@@ -1136,7 +1136,7 @@ int validate_dns_packet(const uint8_t *pkt_buf, size_t pkt_len, char *emsg)
     return rc;
 }
 
-ssize_t dns_decode_msg(struct dns_msg *msg, uint8_t *buf, size_t len)
+ssize_t dns_msg_decode(struct dns_msg *msg, uint8_t *buf, size_t len)
 {
     struct dns_dec dec = {
         .pkt_buf = buf,
@@ -1153,7 +1153,6 @@ ssize_t dns_decode_msg(struct dns_msg *msg, uint8_t *buf, size_t len)
 
 // DNS encoder 
 struct dns_enc {
-    struct dns_header hdr;
     uint8_t *pkt_buf;
     size_t pkt_max;
     size_t pkt_len;
@@ -1302,19 +1301,22 @@ static int dns_enc_raw(struct dns_enc *enc, void *raw, int raw_len, int sc, int 
 // encode an RR record into packet buffer
 static int encode_record(struct dns_enc *enc, struct dns_rec *rec, int sc)
 {
-    // add header
-    int len = DNS_NAME_MAXLEN + 4;
+    // add hdr (name|type|class|ttl|rdlength
+    int len = DNS_NAME_MAXLEN + 2 + 2 + 4 + 2;
     uint8_t *wbuf = enc_fld_mkspace(enc, len, sc, 0);
     if (!wbuf) return -1;
 
-    // encode header
     uint8_t *wptr = wbuf;
     wptr = enc_name(wptr, rec->name);
     wptr = enc_u16(wptr,  rec->type);
     wptr = enc_u16(wptr,  rec->class);
+    wptr = enc_u32(wptr,  rec->ttl);
+    uint8_t *rdlen_ptr = wptr;
+    wptr = enc_u16(wptr,  0);
     size_t used = wptr - wbuf;
     int rc = dns_enc_retspace(enc, len - used);
     if (rc) return rc;
+    uint16_t pkt_len = enc->pkt_len;
 
     // add data
     switch(rec->type) {
@@ -1392,6 +1394,9 @@ static int encode_record(struct dns_enc *enc, struct dns_rec *rec, int sc)
         break;
     }
 
+    uint16_t rdlen = enc->pkt_len - pkt_len;
+    enc_u16(rdlen_ptr,rdlen);
+
     // all done
     return 0;
 }
@@ -1408,12 +1413,12 @@ static int dns_enc_sect(struct dns_enc *enc, int nrec, int sc, struct dns_sect *
 
 static int encode_additional(struct dns_enc *enc, struct dns_msg *msg)
 {
-    return dns_enc_sect(enc, msg->hdr.an_count, DNS_DEC_ADDITIONAL, &msg->ans);
+    return dns_enc_sect(enc, msg->hdr.ar_count, DNS_DEC_ADDITIONAL, &msg->add);
 }
 
 static int encode_authority(struct dns_enc *enc, struct dns_msg *msg)
 {
-    return dns_enc_sect(enc, msg->hdr.an_count, DNS_DEC_AUTHORITY, &msg->ans);
+    return dns_enc_sect(enc, msg->hdr.ns_count, DNS_DEC_AUTHORITY, &msg->auth);
 }
 
 static int encode_answer(struct dns_enc *enc, struct dns_msg *msg)
@@ -1477,7 +1482,8 @@ static int encode_msg(struct dns_enc *enc, struct dns_msg *msg)
     return rc;
 }
 
-ssize_t dns_encode_msg(struct dns_msg *msg, uint8_t *buf, size_t len)
+
+ssize_t dns_msg_encode(struct dns_msg *msg, uint8_t *buf, size_t len)
 {
     struct dns_enc enc =  {
         .pkt_buf = buf,
@@ -1492,12 +1498,20 @@ ssize_t dns_encode_msg(struct dns_msg *msg, uint8_t *buf, size_t len)
 
 static int dns_msg_add_rec(struct dns_msg *msg, int sc, struct dns_sect *sect, struct dns_rec *src_rec)
 {
+    if (!src_rec) {
+        return log_error_rf("Store %s record is <null>", sect_code_tostr(sc));
+    }
+
     // space for record ?
     struct dns_rec *rec;
     if (sect->num_rec >= ARR_LEN(sect->rec)) {
         return log_error_rf("No space to store %s record", sect_code_tostr(sc));
     }
     rec = &sect->rec[sect->num_rec];
+
+    if (!src_rec->name) {
+        return log_error_rf("Store %s record name is <null>", sect_code_tostr(sc));
+    }
 
     // store name
     int len = strlen(src_rec->name);

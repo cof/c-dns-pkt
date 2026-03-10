@@ -1,14 +1,19 @@
 /*
- * PCAP - A packet capture file reader 
+ * PCAP - A packet capture file reader and writer
+ *
+ * Supports read and writing clasic pcap fmt
+ * Supports reading pcapg fmt
  *
  * API
  * ---
- * - pcap_open_read : open file
- * - pcap_read      : read a packet
- * - pcap_close     : close file
+ * - pcap_open  : open file (path, mode)
+ * - pcap_read  : read a packet
+ * - pcap_write : write a packet
+ * - pcap_close : close file
  */
 
 #include <stdlib.h>
+#include <time.h>
 
 #include "util.h"
 #include "pcap.h"
@@ -70,8 +75,36 @@ static int pcap_read_data(struct pcap_file *file, const char *name, void *data, 
 // read strt of a new block/record
 static int pcap_read_block(struct pcap_file *file, const char *name, void *block, size_t len)
 {
-    int nr = pcap_read_data(file, name, block, len);
-    if (nr != 0) return nr;
+    int rc = pcap_read_data(file, name, block, len);
+    if (rc) return rc;
+
+    file->rec_cnt++;
+
+    return 0;
+}
+
+
+// wrapper around fwrite call - track/log errors
+static int pcap_write_data(struct pcap_file *file, const char *name, void *data, size_t len)
+{
+    size_t nwrite = fwrite(data, 1, len, file->fp);
+
+    if (nwrite != len) {
+        if (ferror(file->fp)) {
+            return pcap_log_errno_rf(file, "pcap: write %s #%lu size %zu failed", name, file->rec_cnt + 1,  len);
+        }
+        // should never happen
+        file->sys_errno = EIO;
+        return PCAP_FAIL;
+    }
+
+    return 0;
+}
+
+static int pcap_write_block(struct pcap_file *file, const char *name, void *block, size_t len)
+{
+    int rc = pcap_write_data(file, name, block, len);
+    if (rc) return rc;
 
     file->rec_cnt++;
 
@@ -177,14 +210,73 @@ static size_t pcap_read_pkt(struct pcap_file *file, void *buf, size_t len)
     }
 
     // read the packet data
-    if (pcap_read_data(file, "pcap-rec", buf, rec.incl_len) != 0) {
-        return -1;
-    }
+    rc = pcap_read_data(file, "pcap-rec", buf, rec.incl_len);
+    if (rc) return rc;
 
     // packet len
     return rec.incl_len;
 }
 
+static int pcap_write_hdr(struct pcap_file *file)
+{
+    struct pcap_hdr *hdr = &file->hdr.pcap;
+
+    // set header
+    hdr->magic_num = PCAP_MAGIC_LE_NSEC;
+    hdr->major_ver = 2;
+    hdr->minor_ver = 4;
+    hdr->rsvd1 = 0;
+    hdr->rsvd2 = 0;
+    hdr->snap_len = 65535;
+    hdr->link_type = 1;
+
+    int rc = pcap_write_data(file, "pcap-hdr", hdr, sizeof(*hdr));
+    if (rc) return rc;
+    
+    if (file->trace_rec) {
+        pcap_log("PCAP-HDR",
+            "magic=0x%08x major=%d minor=%d resv1=%u resv2=%u snap_len=%u link_type=%u", 
+            hdr->magic_num,
+            hdr->major_ver, hdr->minor_ver, 
+            hdr->rsvd1, hdr->rsvd2,
+            hdr->snap_len, hdr->link_type);
+    }
+
+    return 0;
+}
+
+static int pcap_write_pkt(struct pcap_file *file, void *buf, size_t len)
+{
+    // timestamp
+    if (clock_gettime(CLOCK_MONOTONIC, &file->ts_now) != 0) {
+        return log_errno_rf("clock_gettime MONOTTONIC failed");
+    }
+
+    // setup record
+    struct pcap_rec rec = {
+        .ts_sec = file->ts_now.tv_sec,
+        .ts_usec = file->ts_now.tv_nsec,
+        .incl_len = len,
+        .orig_len = len
+    };
+
+    int rc = pcap_write_block(file, "pcap-rec", &rec, sizeof(rec));
+    if (rc) return rc;
+
+    if (file->trace_rec) {
+        pcap_log("PCAP-REC",
+            "rec=%lu ts_sec=%u ts_usec=%u inc_len=%u orig_len=%u",
+            file->rec_cnt, 
+            rec.ts_sec, rec.ts_usec, rec.incl_len, rec.orig_len);
+    }
+
+    // write the packet data
+    rc = pcap_write_data(file, "pcap-rec", buf, len);
+    if (rc) return rc;
+
+    // all done
+    return 0;
+}
 
 static int pcap_read_shb(struct pcap_file *file)
 {
@@ -414,12 +506,20 @@ static size_t pcapng_read_pkt(struct pcap_file *file, void *buf, size_t len)
 
 static int pcap_setup_fmt(struct pcap_file *file)
 {
-    file->fmt = pcap_detect_fmt(file);
+    if (!file->fmt) {
+        // select a file fmt
+        file->fmt = file->is_reader 
+            ? pcap_detect_fmt(file)
+            : PCAP_FMTLEG;
+    }
 
+    // set up func ptrs
     switch(file->fmt) {
     case PCAP_FMTLEG:
         file->read_hdr = pcap_read_hdr;
         file->read_pkt = pcap_read_pkt;
+        file->write_hdr = pcap_write_hdr;
+        file->write_pkt = pcap_write_pkt;
         break;
     case PCAP_FMTNG: 
         file->read_hdr = pcap_read_shb;
@@ -432,6 +532,13 @@ static int pcap_setup_fmt(struct pcap_file *file)
     return 0;
 }
 
+static int pcap_setup_hdr(struct pcap_file *file)
+{
+    return file->is_reader
+        ? (file->read_hdr)(file)
+        : (file->write_hdr)(file);
+}
+
 struct pcap_file *pcap_open(const char *path_name, int flags)
 {
     struct pcap_file *file;
@@ -439,7 +546,12 @@ struct pcap_file *pcap_open(const char *path_name, int flags)
     // check flags 
     int mode = flags & (PCAP_READ | PCAP_WRITE);
     if (mode == 0 || mode == (PCAP_READ | PCAP_WRITE)) {
-        return log_error_rn("Read or Write flag must be set");
+        return log_error_rn("Mode must be ether Read or Write");
+    }
+
+    int fmt = flags & (PCAP_FMTLEG | PCAP_FMTNG);
+    if (fmt != 0 && fmt == (PCAP_FMTLEG | PCAP_FMTNG)) {
+        return log_error_rn("pcap Format must be either legacy or ng");
     }
 
     file = malloc(sizeof(*file));
@@ -449,12 +561,13 @@ struct pcap_file *pcap_open(const char *path_name, int flags)
 
     // init
     memset(file, 0, sizeof(*file));
+    file->fmt = fmt;
     if (flags & PCAP_TRACE) file->trace_rec = 1;
     if (flags & PCAP_READ) file->is_reader = 1;
 
     if (pcap_open_file(file, path_name) != 0) goto err;
     if (pcap_setup_fmt(file) != 0) goto err;
-    if (file->read_hdr(file) != 0) goto err;
+    if (pcap_setup_hdr(file) != 0) goto err;
 
     // all done
     return file;
@@ -464,11 +577,14 @@ err:
     return NULL;
 }
 
-void pcap_close(struct pcap_file *file)
+int pcap_close(struct pcap_file *file)
 {
+    int rc = 0;
+
     if (file->fp) {
         if (fclose(file->fp) != 0) {
             log_errno("fclose failed");
+            rc = -1;
         }
     }
 
@@ -478,6 +594,8 @@ void pcap_close(struct pcap_file *file)
     }
 
     free(file);
+
+    return rc;
 }
 
 
@@ -496,4 +614,18 @@ size_t pcap_read(struct pcap_file *file, void *buf, size_t len)
 
     // all done
     return nread;
+}
+
+int pcap_write(struct pcap_file *file, void *buf, size_t len)
+{
+    if (file->sys_err) {
+        return  -1;
+    }
+
+    int rc = file->write_pkt(file, buf, len);
+    if (rc) return rc;
+
+    file->pkt_cnt++;
+
+    return 0;
 }
