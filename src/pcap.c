@@ -389,23 +389,23 @@ static int pcap_peek_block(struct pcap_file *file)
 
 static size_t pcapng_read_pkt(struct pcap_file *file, void *buf, size_t len)
 {
-	int block_type;
+    int block_type;
 
-	while ((block_type = pcap_peek_block(file)) >= 0) {
-		switch(block_type) {
-		case PCAP_SHB_TYPE: 
+    while ((block_type = pcap_peek_block(file)) >= 0) {
+        switch(block_type) {
+        case PCAP_SHB_TYPE: 
             if (pcap_read_shb(file) != 0) return -1;
             break;
-		case PCAP_IDB_TYPE: 
+        case PCAP_IDB_TYPE: 
             if (pcap_read_idb(file) != 0) return -1; 
             break;
-		case PCAP_EPB_TYPE: 
+        case PCAP_EPB_TYPE: 
             return pcap_read_epb(file, buf, len);
-		case PCAP_SPB_TYPE: 
+        case PCAP_SPB_TYPE: 
             return pcap_read_spb(file, buf, len);
         default: 
             if (pcap_skip_block(file) != 0) return -1;
-	    }
+        }
     }
 
     // eof or error

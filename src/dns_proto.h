@@ -104,7 +104,7 @@ struct dns_quest {
 
 // 4.1.3. Resource record format
 struct dns_rec {
-    char *name;
+    const char *name;
     uint16_t type;
     uint16_t class;
     uint32_t ttl; 
@@ -147,7 +147,7 @@ struct dns_rec {
             uint8_t edns_ver;
             uint8_t do_bit;
         } opt; // 41
-        uint8_t *raw;
+        const uint8_t *raw;
     } data;
 };
 
