@@ -160,22 +160,22 @@ struct dns_sect {
 };
 
 // convert dns record to a readable string
-int dns_rec_tostr(char *buf, size_t buf_len, struct dns_rec *rec);
+int dns_rec_tostr(struct dns_rec *rec, char *buf, size_t buf_len);
 
 // DNS message
 struct dns_msg {
     struct dns_header hdr;
     char names[DNS_MAX_PDUSIZE];
     int names_len;
-    int num_quest;
-    struct dns_quest quest[DNS_MAX_REC];
-    struct dns_sect ans;
-    struct dns_sect auth;
-    struct dns_sect add;
+    int num_qd;
+    struct dns_quest qd_recs[DNS_MAX_REC];
+    struct dns_sect an_recs;
+    struct dns_sect ns_recs;
+    struct dns_sect ar_recs;
 };
 
 // decode/encode a DNS message
-ssize_t dns_msg_decode(struct dns_msg *msg, uint8_t *buf, size_t len);
+int dns_msg_decode(struct dns_msg *msg, uint8_t *buf, size_t len);
 ssize_t dns_msg_encode(struct dns_msg *msg, uint8_t *buf, size_t len);
 
 static inline void dns_msg_set_id_flags(struct dns_msg *msg, uint16_t id, uint16_t flags)
@@ -184,24 +184,37 @@ static inline void dns_msg_set_id_flags(struct dns_msg *msg, uint16_t id, uint16
     msg->hdr.flags = flags;
 }
 
-int dns_msg_add_quest(struct dns_msg *msg, const char *name, uint16_t qtype,  uint16_t qclass);
-int dns_msg_add_ans(struct dns_msg *msg, struct dns_rec *ans);
-int dns_msg_add_auth(struct dns_msg *msg, struct dns_rec *ans);
-int dns_msg_add_add(struct dns_msg *msg, struct dns_rec *ans);
+int dns_msg_add_qd(struct dns_msg *msg, const char *name, uint16_t qtype,  uint16_t qclass);
+int dns_msg_add_an(struct dns_msg *msg, struct dns_rec *ans);
+int dns_msg_add_ns(struct dns_msg *msg, struct dns_rec *ans);
+int dns_msg_add_ar(struct dns_msg *msg, struct dns_rec *ans);
 
-static inline int dns_msg_num_ans(struct dns_msg *msg)
+static inline int dns_msg_num_an(struct dns_msg *msg)
 {
-    return msg->ans.num_rec;
+    return msg->an_recs.num_rec;
 }
 
-static inline int dns_msg_num_auth(struct dns_msg *msg)
+static inline int dns_msg_num_ns(struct dns_msg *msg)
 {
-    return msg->auth.num_rec;
+    return msg->ns_recs.num_rec;
 }
 
-static inline int dns_msg_num_add(struct dns_msg *msg)
+static inline int dns_msg_num_ar(struct dns_msg *msg)
 {
-    return msg->add.num_rec;
+    return msg->ar_recs.num_rec;
 }
+
+static inline int dns_msg_cnt_rec(struct dns_msg *msg)
+{
+    int nrec = 0;
+
+    nrec += dns_msg_num_an(msg);
+    nrec += dns_msg_num_ns(msg);
+    nrec += dns_msg_num_ar(msg);
+
+    return nrec;
+}
+
+struct dns_rec *dns_msg_get_rec(struct dns_msg *msg);
 
 #endif

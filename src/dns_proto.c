@@ -382,7 +382,7 @@ int parse_dns_name(
     return 0;
 }
 
-int dns_rec_tostr(char *buf, size_t buf_len, struct dns_rec *rec)
+int dns_rec_tostr(struct dns_rec *rec, char *buf, size_t buf_len)
 {
     // ensure no hidden fields
     char num[2][10];
@@ -473,7 +473,7 @@ int dns_rec_tostr(char *buf, size_t buf_len, struct dns_rec *rec)
     }
 
     // suffix
-    wptr += snprintf(wptr, wptr_end - wptr, "  %s\n", desc);
+    wptr += snprintf(wptr, wptr_end - wptr, "  %s", desc);
 
     // bytes written
     return wptr - buf;
@@ -908,10 +908,10 @@ static int parse_question(struct dns_dec *dec, struct dns_msg *msg)
     // grab next section quest
     struct dns_quest *quest = NULL;
     if (dec->load_msg) {
-        if (msg->num_quest >= ARR_LEN(msg->quest)) {
+        if (msg->num_qd >= ARR_LEN(msg->qd_recs)) {
             return log_error_rf("No space to store question");
         }
-        quest = &msg->quest[msg->num_quest];
+        quest = &msg->qd_recs[msg->num_qd];
     }
 
     char *wptr = dec->msg;
@@ -943,7 +943,7 @@ static int parse_question(struct dns_dec *dec, struct dns_msg *msg)
         if (!quest->qname) {
             return log_errno_rf("No space to store question name");
         }
-        msg->num_quest++;
+        msg->num_qd++;
     }
 
     if (dec->need_emsg) {
@@ -977,17 +977,17 @@ static int dns_dec_sect(struct dns_dec *dec, struct dns_msg *msg,
 
 static int decode_additional(struct dns_dec *dec, struct dns_msg *msg)
 {
-    return dns_dec_sect(dec, msg, msg->hdr.ar_count, DNS_DEC_ADDITIONAL, &msg->add);
+    return dns_dec_sect(dec, msg, msg->hdr.ar_count, DNS_DEC_ADDITIONAL, &msg->ar_recs);
 }
 
 static int decode_authority(struct dns_dec *dec, struct dns_msg *msg)
 {
-    return dns_dec_sect(dec, msg, msg->hdr.ns_count, DNS_DEC_AUTHORITY, &msg->auth);
+    return dns_dec_sect(dec, msg, msg->hdr.ns_count, DNS_DEC_AUTHORITY, &msg->ns_recs);
 }
 
 static int decode_answer(struct dns_dec *dec, struct dns_msg *msg)
 {
-    return dns_dec_sect(dec, msg, msg->hdr.an_count, DNS_DEC_ANSWER, &msg->ans);
+    return dns_dec_sect(dec, msg, msg->hdr.an_count, DNS_DEC_ANSWER, &msg->an_recs);
 }
 
 static int decode_question(struct dns_dec *dec, struct dns_msg *msg)
@@ -1136,7 +1136,7 @@ int validate_dns_packet(const uint8_t *pkt_buf, size_t pkt_len, char *emsg)
     return rc;
 }
 
-ssize_t dns_msg_decode(struct dns_msg *msg, uint8_t *buf, size_t len)
+int dns_msg_decode(struct dns_msg *msg, uint8_t *buf, size_t len)
 {
     struct dns_dec dec = {
         .pkt_buf = buf,
@@ -1148,7 +1148,7 @@ ssize_t dns_msg_decode(struct dns_msg *msg, uint8_t *buf, size_t len)
     int rc = decode_msg(&dec, msg);
     if (rc) return -1;
 
-    return dec.pkt_len;
+    return 0;
 }
 
 // DNS encoder 
@@ -1413,23 +1413,23 @@ static int dns_enc_sect(struct dns_enc *enc, int nrec, int sc, struct dns_sect *
 
 static int encode_additional(struct dns_enc *enc, struct dns_msg *msg)
 {
-    return dns_enc_sect(enc, msg->hdr.ar_count, DNS_DEC_ADDITIONAL, &msg->add);
+    return dns_enc_sect(enc, msg->hdr.ar_count, DNS_DEC_ADDITIONAL, &msg->ar_recs);
 }
 
 static int encode_authority(struct dns_enc *enc, struct dns_msg *msg)
 {
-    return dns_enc_sect(enc, msg->hdr.ns_count, DNS_DEC_AUTHORITY, &msg->auth);
+    return dns_enc_sect(enc, msg->hdr.ns_count, DNS_DEC_AUTHORITY, &msg->ns_recs);
 }
 
 static int encode_answer(struct dns_enc *enc, struct dns_msg *msg)
 {
-    return dns_enc_sect(enc, msg->hdr.an_count, DNS_DEC_ANSWER, &msg->ans);
+    return dns_enc_sect(enc, msg->hdr.an_count, DNS_DEC_ANSWER, &msg->an_recs);
 }
 
 static int encode_question(struct dns_enc *enc, struct dns_msg *msg)
 {
     for (int i = 0; i < msg->hdr.qd_count; i++) {
-        int rc = dns_enc_quest(enc, &msg->quest[i]);
+        int rc = dns_enc_quest(enc, &msg->qd_recs[i]);
         if (rc) return rc;
     }
 
@@ -1440,10 +1440,10 @@ static int encode_header(struct dns_enc *enc, struct dns_msg *msg)
 {
     // sync hdr
     struct dns_header *hdr = &msg->hdr;
-    hdr->qd_count = msg->num_quest;
-    hdr->an_count = msg->ans.num_rec;
-    hdr->ns_count = msg->auth.num_rec;
-    hdr->ar_count = msg->add.num_rec;
+    hdr->qd_count = msg->num_qd;
+    hdr->an_count = msg->an_recs.num_rec;
+    hdr->ns_count = msg->ns_recs.num_rec;
+    hdr->ar_count = msg->ar_recs.num_rec;
 
     // make space
     uint8_t *wbuf = dns_enc_mkspace(enc, DNS_HDR_LEN);
@@ -1611,13 +1611,13 @@ static int dns_msg_add_rec(struct dns_msg *msg, int sc, struct dns_sect *sect, s
     return 0;
 }
 
-int dns_msg_add_quest(struct dns_msg *msg, const char *name, uint16_t qtype,  uint16_t qclass)
+int dns_msg_add_qd(struct dns_msg *msg, const char *name, uint16_t qtype,  uint16_t qclass)
 {
     struct dns_quest *quest;
-    if (msg->num_quest >= ARR_LEN(msg->quest)) {
+    if (msg->num_qd >= ARR_LEN(msg->qd_recs)) {
         return log_error_rf("No space to store %s record", sect_code_tostr(DNS_DEC_QUESTION));
     }
-    quest = &msg->quest[msg->num_quest];
+    quest = &msg->qd_recs[msg->num_qd];
 
     int len = strlen(name);
     if (len > DNS_NAME_MAXSTR) {
@@ -1631,23 +1631,33 @@ int dns_msg_add_quest(struct dns_msg *msg, const char *name, uint16_t qtype,  ui
         return log_error_rf("No room to store %s name", sect_code_tostr(DNS_DEC_QUESTION));
     }
 
-    // quest added
-    msg->num_quest++;
+    // question added
+    msg->num_qd++;
 
     return 0;
 }
 
-int dns_msg_add_ans(struct dns_msg *msg, struct dns_rec *ans)
+int dns_msg_add_an(struct dns_msg *msg, struct dns_rec *ans_rec)
 {
-    return dns_msg_add_rec(msg, DNS_DEC_ANSWER, &msg->ans, ans);
+    return dns_msg_add_rec(msg, DNS_DEC_ANSWER, &msg->an_recs, ans_rec);
 }
 
-int dns_msg_add_auth(struct dns_msg *msg, struct dns_rec *ans)
+int dns_msg_add_ns(struct dns_msg *msg, struct dns_rec *ns_rec)
 {
-    return dns_msg_add_rec(msg, DNS_DEC_AUTHORITY, &msg->ans, ans);
+    return dns_msg_add_rec(msg, DNS_DEC_AUTHORITY, &msg->ns_recs, ns_rec);
 }
 
-int dns_msg_add_add(struct dns_msg *msg, struct dns_rec *ans)
+int dns_msg_add_ar(struct dns_msg *msg, struct dns_rec *ar_rec)
 {
-    return dns_msg_add_rec(msg, DNS_DEC_ADDITIONAL, &msg->ans, ans);
+    return dns_msg_add_rec(msg, DNS_DEC_ADDITIONAL, &msg->ar_recs, ar_rec);
+}
+
+struct dns_rec *dns_msg_get_rec(struct dns_msg *msg)
+{
+    if (dns_msg_cnt_rec(msg) != 1) return NULL;
+    if (dns_msg_num_an(msg)) return &msg->an_recs.rec[0];
+    if (dns_msg_num_ns(msg)) return &msg->ns_recs.rec[0];
+    if (dns_msg_num_ar(msg)) return &msg->ar_recs.rec[0];
+
+    return NULL;
 }
