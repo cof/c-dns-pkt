@@ -226,216 +226,11 @@ static uint16_t get_dns_flags(uint16_t flags, struct str_slice flags_str)
     return flags;
 }
 
-static int gen_connect(struct dns_gen *gen)
-{
-    // resolve hostname+ port string to list of (ip+port)
-    struct addrinfo hints, *res;
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = gen->use_tcp ? SOCK_STREAM : SOCK_DGRAM;
-    const char *port = "53";
-
-    int rc = getaddrinfo(gen->serv_addr, port, &hints, &res);
-    if (rc != 0) {
-        return log_error_rf("getaddrinfo(%s,%s) : %s\n", gen->serv_addr, port, gai_strerror(rc));
-    }
-
-    // get a UDP or TCP connection
-    int sock_fd = -1;
-    for (struct addrinfo *ai = res; ai; ai = ai->ai_next) {
-        sock_fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
-        if (sock_fd == -1) continue;
-        if (!gen->use_tcp) break;
-        rc = connect(sock_fd, ai->ai_addr, ai->ai_addrlen);
-        if (rc != -1) break;
-        log_errno("connect(%s:%s) failed", gen->serv_addr, port);
-        close(sock_fd);
-        sock_fd = -1;
-    }
-
-    // connect failed
-    if (sock_fd == -1) {
-        freeaddrinfo(res);
-        return log_error_rf("Connect to %s:%s failed", gen->serv_addr, port);
-    }
-
-    // connected
-    memcpy(&gen->dst_addr, res->ai_addr, res->ai_addrlen);
-    gen->dst_addr_len = res->ai_addrlen;
-    gen->sock_fd = sock_fd;
-    freeaddrinfo(res);
-
-    // set recv timeout
-    struct timeval tv;
-    tv.tv_sec = gen->recv_timeout;
-    tv.tv_usec = 0;
-    if (setsockopt(gen->sock_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) == -1) {
-        return log_errno_rf("setsockopt SO_RCVTIMEO on %d failed", gen->sock_fd);
-    }
-
-    printf("Connected to %s\n", gen->serv_addr);
-
-    // all done
-    return 0;
-}
-    
-static int send_dns_pdu(struct dns_gen *gen, uint8_t *pkt, size_t len)
-{
-    ssize_t nsent = sendto(gen->sock_fd, 
-        pkt, len, 0,
-        (struct sockaddr *) &gen->dst_addr, gen->dst_addr_len
-    );
-
-    if (nsent == -1) {
-        return log_errno_rf("sendto failed to send %zu bytes", len);
-    }
-
-    if (nsent != len) {
-        return log_error_rf("sendto truncated: %zd/%zu bytes", nsent, len);
-    }
-
-    return 0;
-}
-
-static int recv_dns_pdu(struct dns_gen *gen)
-{
-    struct sockaddr_storage from_addr;
-    socklen_t from_len = sizeof(from_addr);
-
-    ssize_t nread = recvfrom(
-        gen->sock_fd, 
-        gen->pkt_buf, sizeof(gen->pkt_buf), 0, 
-        (struct sockaddr *)&from_addr, &from_len
-    );
-
-    if (nread < 0) {
-        if (errno == EINTR) return -2;
-        if (errno == EAGAIN || errno == EWOULDBLOCK) return -3;
-        gen->sys_err = 1;
-        return -1;
-    }
-
-    gen->recv_len = nread;
-    if (clock_gettime(CLOCK_MONOTONIC, &gen->ts_recv) != 0) {
-        log_errno("clock_gettime ts_recv failed");
-        // keep going ?
-    }
-
-    return 0;
-}
-
-static int gen_send_query(struct dns_gen *gen)
-{
-    // next tid
-    uint16_t tid = rand() % 65536;
-
-    // load DNS msg
-    struct dns_msg *msg = &gen->send_msg;
-    dns_msg_set_id_flags(msg, tid, gen->dns_flags);
-    int rc = dns_msg_add_qd(msg, gen->dns_name, gen->dns_class, gen->dns_type);
-    if (rc) return rc;
-
-    // encode DNS msg
-    ssize_t pkt_len = dns_msg_encode(msg, gen->pkt_buf, sizeof(gen->pkt_buf));
-    if (pkt_len <= 0) return -1;
-
-    // log/check msg is valid
-    if (gen->log_msg) {
-        rc = validate_dns_packet(gen->pkt_buf, pkt_len, gen->emsg);
-        log_msg(gen->emsg);
-        if (rc) return rc;
-    }
-
-    // update user (ensure no hidden fields)
-    const char *quest_name = gen->dns_name && *gen->dns_name ? gen->dns_name : "<null>";
-    const char *class_str = dns_class_tostr(gen->dns_class);
-    const char *type_str = dns_type_tostr(gen->dns_type);
-    printf("Send query ID:0x%04x for %s %s %s\n", tid, quest_name, class_str, type_str);
-
-    // send DNS msg
-    rc = send_dns_pdu(gen, gen->pkt_buf, pkt_len);
-    if (rc) return rc;
-
-    // msg sent - as far as we know
-    gen->tid_sent = tid;
-    if (clock_gettime(CLOCK_MONOTONIC, &gen->ts_sent) != 0) {
-        log_errno("clock_gettime ts_sent failed");
-        // keep going ?
-    }
-
-    return 0;
-}
-
-static void gen_print_rec(struct dns_gen *gen, struct dns_rec *rec)
-{
-    int nw = dns_rec_tostr(rec, gen->emsg, sizeof(gen->emsg));
-    if (nw) printf("%s\n", gen->emsg);
-}
-
-static void gen_print_recs(struct dns_gen *gen, struct dns_sect *sect)
-{
-    for (int i = 0; i < sect->num_rec; i++) {
-        gen_print_rec(gen, &sect->rec[i]);
-    }
-}
-
-static int gen_recv_resp(struct dns_gen *gen)
-{
-    int rc = recv_dns_pdu(gen);
-    if (rc) return rc;
-
-    struct dns_msg msg = { 0 };
-    rc = dns_msg_decode(&msg, gen->pkt_buf, gen->recv_len);
-    if (rc) return rc;
-
-    // check msg is response
-    struct dns_header *hdr = &msg.hdr;
-    if (!(hdr->flags & DNS_FLAGS_QR)) {
-        return log_info_rz("dns-gen", 
-            "Unexpected DNS message ID: 0x%04x Flags: 0x%04x Len %zu",
-            hdr->id, hdr->flags, gen->recv_len);
-    }
-
-    // check Transaction ID
-    if (hdr->id != gen->tid_sent) {
-        return log_info_rz("dng-gen",
-            "Response ID 0x%04x does not match Request ID 0x%04x", hdr->id, gen->tid_sent);
-    }
-
-    // check Result Code
-    int rcode = hdr->flags & DNS_FLAGS_RCODE;
-    if (rcode != DNS_RCODE_NOERROR) {
-        const char *rcode_str = rcode_tostr(rcode);
-        return log_info_rz("dng-gen", "Response ID 0x%04x failed with error %s", hdr->id, rcode_str);
-    }
-
-    double delta_ms = time_diff_ms(&gen->ts_sent, &gen->ts_recv);
-
-    printf("Received response in %.3fms: ", delta_ms);
-
-    if (dns_msg_cnt_rec(&msg) == 0) {
-        printf("<None>\n");
-    }
-    else if (dns_msg_cnt_rec(&msg) == 1) {
-        gen_print_rec(gen, dns_msg_get_rec(&msg));
-    }
-    else {
-        printf("\n");
-        gen_print_recs(gen, &msg.an_recs);
-        gen_print_recs(gen, &msg.ns_recs);
-        gen_print_recs(gen, &msg.ar_recs);
-    }
-
-    return 0;
-}
-
 /*
- * Figure out the answer
+ * Figure out the record
  * =====================
  *  addr =  ip4addr|ip6addr|regname [<ttl>] [class=IN|CS|CH|HS]
  */
-
-
 static int gen_load_rec(struct dns_gen *gen, struct dns_rec *rec, struct str_slice str)
 {
     // get addr
@@ -521,6 +316,219 @@ static int gen_add_ar(struct dns_gen *gen, struct str_slice str)
 
     return dns_msg_add_ar(&gen->send_msg, &ar_rec);
 }
+
+static void gen_print_rec(struct dns_gen *gen, struct dns_rec *rec)
+{
+    int nw = dns_rec_tostr(rec, gen->emsg, sizeof(gen->emsg));
+    if (nw) printf("%s\n", gen->emsg);
+}
+
+static void gen_print_sect(struct dns_gen *gen, struct dns_sect *sect)
+{
+    for (int i = 0; i < sect->num_rec; i++) {
+        gen_print_rec(gen, &sect->rec[i]);
+    }
+}
+
+static void gen_print_msg(struct dns_gen *gen, struct dns_msg *msg)
+{
+    struct dns_rec *rec = dns_msg_get_rec(msg);
+
+    if (rec) {
+        gen_print_rec(gen, rec);
+    }
+    else if (dns_msg_cnt_rec(msg) == 0) {
+        printf("<None>\n");
+    }
+    else {
+        printf("\n");
+        gen_print_sect(gen, &msg->an_recs);
+        gen_print_sect(gen, &msg->ns_recs);
+        gen_print_sect(gen, &msg->ar_recs);
+    }
+
+}
+
+static int send_dns_pdu(struct dns_gen *gen, uint8_t *pkt, size_t len)
+{
+    ssize_t nsent = sendto(gen->sock_fd, 
+        pkt, len, 0,
+        (struct sockaddr *) &gen->dst_addr, gen->dst_addr_len
+    );
+
+    if (nsent == -1) {
+        return log_errno_rf("sendto failed to send %zu bytes", len);
+    }
+
+    if (nsent != len) {
+        return log_error_rf("sendto truncated: %zd/%zu bytes", nsent, len);
+    }
+
+    return 0;
+}
+
+static int recv_dns_pdu(struct dns_gen *gen)
+{
+    struct sockaddr_storage from_addr;
+    socklen_t from_len = sizeof(from_addr);
+
+    ssize_t nread = recvfrom(
+        gen->sock_fd, 
+        gen->pkt_buf, sizeof(gen->pkt_buf), 0, 
+        (struct sockaddr *)&from_addr, &from_len
+    );
+
+    if (nread < 0) {
+        if (errno == EINTR) return -2;
+        if (errno == EAGAIN || errno == EWOULDBLOCK) return -3;
+        gen->sys_err = 1;
+        return -1;
+    }
+
+    gen->recv_len = nread;
+    if (clock_gettime(CLOCK_MONOTONIC, &gen->ts_recv) != 0) {
+        log_errno("clock_gettime ts_recv failed");
+        // keep going ?
+    }
+
+    return 0;
+}
+
+static int gen_connect(struct dns_gen *gen)
+{
+    // resolve hostname+ port string to list of (ip+port)
+    struct addrinfo hints, *res;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = gen->use_tcp ? SOCK_STREAM : SOCK_DGRAM;
+    const char *port = "53";
+
+    int rc = getaddrinfo(gen->serv_addr, port, &hints, &res);
+    if (rc != 0) {
+        return log_error_rf("getaddrinfo(%s,%s) : %s\n", gen->serv_addr, port, gai_strerror(rc));
+    }
+
+    // get a UDP or TCP connection
+    int sock_fd = -1;
+    for (struct addrinfo *ai = res; ai; ai = ai->ai_next) {
+        sock_fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+        if (sock_fd == -1) continue;
+        if (!gen->use_tcp) break;
+        rc = connect(sock_fd, ai->ai_addr, ai->ai_addrlen);
+        if (rc != -1) break;
+        log_errno("connect(%s:%s) failed", gen->serv_addr, port);
+        close(sock_fd);
+        sock_fd = -1;
+    }
+
+    // connect failed
+    if (sock_fd == -1) {
+        freeaddrinfo(res);
+        return log_error_rf("Connect to %s:%s failed", gen->serv_addr, port);
+    }
+
+    // connected
+    memcpy(&gen->dst_addr, res->ai_addr, res->ai_addrlen);
+    gen->dst_addr_len = res->ai_addrlen;
+    gen->sock_fd = sock_fd;
+    freeaddrinfo(res);
+
+    // set recv timeout
+    struct timeval tv;
+    tv.tv_sec = gen->recv_timeout;
+    tv.tv_usec = 0;
+    if (setsockopt(gen->sock_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) == -1) {
+        return log_errno_rf("setsockopt SO_RCVTIMEO on %d failed", gen->sock_fd);
+    }
+
+    printf("Connected to %s\n", gen->serv_addr);
+
+    // all done
+    return 0;
+}
+
+static int gen_send_query(struct dns_gen *gen)
+{
+    // next tid
+    uint16_t tid = rand() % 65536;
+
+    // load DNS msg
+    struct dns_msg *msg = &gen->send_msg;
+    dns_msg_set_id_flags(msg, tid, gen->dns_flags);
+    int rc = dns_msg_add_qd(msg, gen->dns_name, gen->dns_class, gen->dns_type);
+    if (rc) return rc;
+
+    // encode DNS msg
+    ssize_t pkt_len = dns_msg_encode(msg, gen->pkt_buf, sizeof(gen->pkt_buf));
+    if (pkt_len <= 0) return -1;
+
+    // log/check msg is valid
+    if (gen->log_msg) {
+        rc = validate_dns_packet(gen->pkt_buf, pkt_len, gen->emsg);
+        log_msg(gen->emsg);
+        if (rc) return rc;
+    }
+
+    // update user (ensure no hidden fields)
+    const char *quest_name = str_def(gen->dns_name, "<null>");
+    const char *class_str = dns_class_tostr(gen->dns_class);
+    const char *type_str = dns_type_tostr(gen->dns_type);
+    printf("Send query ID:0x%04x for %s %s %s\n", tid, quest_name, class_str, type_str);
+
+    // send DNS msg
+    rc = send_dns_pdu(gen, gen->pkt_buf, pkt_len);
+    if (rc) return rc;
+
+    // msg sent - as far as we know
+    gen->tid_sent = tid;
+    if (clock_gettime(CLOCK_MONOTONIC, &gen->ts_sent) != 0) {
+        log_errno("clock_gettime ts_sent failed");
+        // keep going ?
+    }
+
+    return 0;
+}
+
+
+static int gen_recv_resp(struct dns_gen *gen)
+{
+    int rc = recv_dns_pdu(gen);
+    if (rc) return rc;
+
+    struct dns_msg msg = { 0 };
+    rc = dns_msg_decode(&msg, gen->pkt_buf, gen->recv_len);
+    if (rc) return rc;
+
+    // check msg is response
+    struct dns_header *hdr = &msg.hdr;
+    if (!(hdr->flags & DNS_FLAGS_QR)) {
+        return log_info_rz("dns-gen", 
+            "Unexpected DNS message ID: 0x%04x Flags: 0x%04x Len %zu",
+            hdr->id, hdr->flags, gen->recv_len);
+    }
+
+    // check Transaction ID
+    if (hdr->id != gen->tid_sent) {
+        return log_info_rz("dng-gen",
+            "Response ID 0x%04x does not match Request ID 0x%04x", hdr->id, gen->tid_sent);
+    }
+
+    // check Result Code
+    int rcode = hdr->flags & DNS_FLAGS_RCODE;
+    if (rcode != DNS_RCODE_NOERROR) {
+        const char *rcode_str = rcode_tostr(rcode);
+        return log_info_rz("dng-gen", "Response ID 0x%04x failed with error %s", hdr->id, rcode_str);
+    }
+
+    double delta_ms = time_diff_ms(&gen->ts_sent, &gen->ts_recv);
+
+    printf("Received response in %ums: ", (uint32_t) delta_ms);
+
+    gen_print_msg(gen, &msg);
+
+    return 0;
+}
+
 
 
 static int gen_do_query(struct dns_gen *gen)

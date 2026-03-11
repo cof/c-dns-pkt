@@ -26,6 +26,11 @@
 #define XSTR(a) #a
 #define STR(a) XSTR(a)
 
+// return str if set else use default
+static inline const char *str_def(const char *str, const char *def_str)
+{
+    return str && *str ? str : def_str;
+}
 
 static inline size_t max(size_t x, size_t y)
 {
