@@ -336,6 +336,7 @@ static inline void str_toupper(char *str, size_t len)
 }
 
 char *itoa(char *buf, int len, int val);
+char *int_tostr(int val);
 
 static inline int iswhite(int ch) 
 {

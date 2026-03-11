@@ -64,7 +64,7 @@ struct dns_gen {
     struct timespec ts_recv;
     // connetion
     struct sockaddr_storage dst_addr;
-    socklen_t dst_len;
+    socklen_t dst_addr_len;
     int sock_fd;
     // flags
     unsigned int use_tcp : 1;
@@ -240,7 +240,7 @@ static int gen_connect(struct dns_gen *gen)
         return log_error_rf("getaddrinfo(%s,%s) : %s\n", gen->serv_addr, port, gai_strerror(rc));
     }
 
-    // get udp or tcp socket
+    // get a UDP or TCP connection
     int sock_fd = -1;
     for (struct addrinfo *ai = res; ai; ai = ai->ai_next) {
         sock_fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
@@ -253,15 +253,17 @@ static int gen_connect(struct dns_gen *gen)
         sock_fd = -1;
     }
 
+    // connect failed
     if (sock_fd == -1) {
         freeaddrinfo(res);
         return log_error_rf("Connect to %s:%s failed", gen->serv_addr, port);
     }
 
+    // connected
     memcpy(&gen->dst_addr, res->ai_addr, res->ai_addrlen);
-    freeaddrinfo(res);
-    gen->dst_len = res->ai_addrlen;
+    gen->dst_addr_len = res->ai_addrlen;
     gen->sock_fd = sock_fd;
+    freeaddrinfo(res);
 
     // set recv timeout
     struct timeval tv;
@@ -281,7 +283,7 @@ static int send_dns_pdu(struct dns_gen *gen, uint8_t *pkt, size_t len)
 {
     ssize_t nsent = sendto(gen->sock_fd, 
         pkt, len, 0,
-        (struct sockaddr *) &gen->dst_addr, gen->dst_len
+        (struct sockaddr *) &gen->dst_addr, gen->dst_addr_len
     );
 
     if (nsent == -1) {
@@ -322,7 +324,7 @@ static int recv_dns_pdu(struct dns_gen *gen)
     return 0;
 }
 
-static int gen_send_query(struct dns_gen *gen, const char *name, uint16_t qclass, uint16_t qtype) 
+static int gen_send_query(struct dns_gen *gen)
 {
     // next tid
     uint16_t tid = rand() % 65536;
@@ -330,32 +332,31 @@ static int gen_send_query(struct dns_gen *gen, const char *name, uint16_t qclass
     // load DNS msg
     struct dns_msg *msg = &gen->send_msg;
     dns_msg_set_id_flags(msg, tid, gen->dns_flags);
-    int rc = dns_msg_add_qd(msg, name, qtype, qclass);
+    int rc = dns_msg_add_qd(msg, gen->dns_name, gen->dns_class, gen->dns_type);
     if (rc) return rc;
 
     // encode DNS msg
     ssize_t pkt_len = dns_msg_encode(msg, gen->pkt_buf, sizeof(gen->pkt_buf));
     if (pkt_len <= 0) return -1;
 
-    // check message is valid before we send
+    // log/check msg is valid
     if (gen->log_msg) {
         rc = validate_dns_packet(gen->pkt_buf, pkt_len, gen->emsg);
         log_msg(gen->emsg);
         if (rc) return rc;
     }
 
-    // log it (ensure no hidden fields)
-    char num[2][10];
-    const char *quest_name = name && *name ? name : "<null>";
-    const char *class_str = dns_class_tostr(qclass, itoa(num[0], 10, qclass));
-    const char *type_str = dns_type_tostr(qtype, itoa(num[1], 10, qtype));
+    // update user (ensure no hidden fields)
+    const char *quest_name = gen->dns_name && *gen->dns_name ? gen->dns_name : "<null>";
+    const char *class_str = dns_class_tostr(gen->dns_class);
+    const char *type_str = dns_type_tostr(gen->dns_type);
     printf("Send query ID:0x%04x for %s %s %s\n", tid, quest_name, class_str, type_str);
 
-    // send it
+    // send DNS msg
     rc = send_dns_pdu(gen, gen->pkt_buf, pkt_len);
     if (rc) return rc;
 
-    // msg sent  as far as we know
+    // msg sent - as far as we know
     gen->tid_sent = tid;
     if (clock_gettime(CLOCK_MONOTONIC, &gen->ts_sent) != 0) {
         log_errno("clock_gettime ts_sent failed");
@@ -404,8 +405,7 @@ static int gen_recv_resp(struct dns_gen *gen)
     // check Result Code
     int rcode = hdr->flags & DNS_FLAGS_RCODE;
     if (rcode != DNS_RCODE_NOERROR) {
-        char num[10];
-        const char *rcode_str = rcode_tostr(rcode, itoa(num, 10, rcode));
+        const char *rcode_str = rcode_tostr(rcode);
         return log_info_rz("dng-gen", "Response ID 0x%04x failed with error %s", hdr->id, rcode_str);
     }
 
@@ -528,7 +528,7 @@ static int gen_do_query(struct dns_gen *gen)
     int rc = gen_connect(gen);
     if (rc) return rc;
 
-    rc = gen_send_query(gen, gen->dns_name, gen->dns_class, gen->dns_type);
+    rc = gen_send_query(gen);
     if (rc) return rc;
 
     rc = gen_recv_resp(gen);

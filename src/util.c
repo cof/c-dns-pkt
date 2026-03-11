@@ -124,6 +124,19 @@ char *itoa(char *buf, int len, int val)
     return str; 
 }
 
+char *int_tostr(int val) 
+{
+    static char bufs[16][10];
+    static int idx;
+
+    char *str = bufs[idx];
+    idx = (idx + 1) & 15;
+
+    return itoa(str, sizeof(bufs[0][0]), val);
+}
+
+
+
 static int find_cmd(struct str_slice cmd, int ncmd, struct util_cmd cmds[ncmd])
 {
     cmd = slice_tolower(cmd);
