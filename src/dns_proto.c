@@ -30,8 +30,9 @@
 #define DNS_NAME_SIZE 256
 #define DNS_MSG_SIZE (256 + 256 + 100) // big enough for 2 names + some extra
 
-#define DNS_MAX_JMP 10 // max number of compression ptr jmps
-#define DNS_MAX_UDP 512 // rfc1035 - can be overriden by EDNS0
+#define DNS_MAX_JMP 16  // max number of compression ptr jmps
+#define DNS_MAX_UDP 513 // rfc1035 - can be overriden by EDNS
+#define DNS_MAX_SUFF 32 // max number of compress suffiX
 
 struct dns_err {
     int group;
@@ -1165,11 +1166,19 @@ int dns_msg_decode(struct dns_msg *msg, uint8_t *buf, size_t len)
     return 0;
 }
 
+struct dns_suffix {
+    const char *name;
+    uint8_t len;
+    uint16_t offset;
+};
+
 // DNS encoder 
 struct dns_enc {
     uint8_t *pkt_buf;
     size_t pkt_max;
     size_t pkt_len;
+    int num_suffix;
+    struct dns_suffix suffix[DNS_MAX_SUFF];
 };
 
 static inline uint8_t *enc_u32(uint8_t *wptr, uint32_t value)
@@ -1199,27 +1208,41 @@ static inline uint8_t *enc_raw(uint8_t *wptr, uint8_t *raw, uint16_t len)
 }
 
 // TODO add compression support
-static uint8_t *enc_name(uint8_t *wptr, const char *name)
+static uint8_t *enc_name(struct dns_enc *enc, uint8_t *wptr, const char *name)
 {
-    uint8_t *len_pos = wptr++;
-    int len = 0;
+    int offset = wptr - enc->pkt_buf;
+    const char *name_end = name + strlen(name);
     
-    while (*name) {
-        if (*name == '.') {
-            *len_pos = len;
-            len_pos = wptr++;
-            len = 0;
+    while (name < name_end) {
+        // scan for suffix match
+        for (int i = 0; i < enc->num_suffix; i++) {
+            if (enc->suffix[i].offset < offset && strcasecmp(enc->suffix[i].name, name) == 0) {
+                // suffix match - drop a 2-byte comp ptr
+                uint16_t comp_ptr = 0xc000 | enc->suffix[i].offset;
+                *wptr++ = comp_ptr >> 8;
+                *wptr++ = comp_ptr;
+                // done
+                return wptr;
+            }
         }
-        else {
-            *wptr++ = *name;
-            len++;
+        if (enc->num_suffix < ARR_LEN(enc->suffix)) {
+            // store new suffix
+            enc->suffix[enc->num_suffix].name = name;
+            enc->suffix[enc->num_suffix].offset = wptr - enc->pkt_buf;
+            enc->num_suffix++;
         }
-        name++;
+
+        // look for next label
+        const char *dot_ptr = strchr(name, '.');
+        uint8_t len = dot_ptr ? dot_ptr - name : name_end - name;
+        *wptr++ = len;
+        wptr = mempcpy(wptr, name, len);
+
+        name = dot_ptr ? dot_ptr + 1 : name_end;
     }
 
     // final label - drop a nul
-    *len_pos = len;
-    *wptr++ = 0;
+    *wptr++ = '\0';
 
     // return wpos
     return wptr;
@@ -1276,7 +1299,7 @@ static int dns_enc_quest(struct dns_enc *enc, struct dns_quest *quest)
 
     // encode
     uint8_t *wptr = wbuf;
-    wptr = enc_name(wptr, quest->qname);
+    wptr = enc_name(enc, wptr, quest->qname);
     wptr = enc_u16(wptr, quest->qtype);
     wptr = enc_u16(wptr, quest->qclass);
     size_t used = wptr - wbuf;
@@ -1293,7 +1316,7 @@ static int dns_enc_name(struct dns_enc *enc, const char *name, int sc, int type)
     if (!wbuf) return -1;
 
     uint8_t *wptr = wbuf;
-    wptr = enc_name(wptr, name);
+    wptr = enc_name(enc, wptr, name);
     size_t used = wptr - wbuf;
     int rc = dns_enc_retspace(enc, len - used);
 
@@ -1320,10 +1343,10 @@ static int encode_record(struct dns_enc *enc, struct dns_rec *rec, int sc)
     if (!wbuf) return -1;
 
     uint8_t *wptr = wbuf;
-    wptr = enc_name(wptr, rec->name);
-    wptr = enc_u16(wptr,  rec->type);
-    wptr = enc_u16(wptr,  rec->class);
-    wptr = enc_u32(wptr,  rec->ttl);
+    wptr = enc_name(enc, wptr, rec->name);
+    wptr = enc_u16(wptr, rec->type);
+    wptr = enc_u16(wptr, rec->class);
+    wptr = enc_u32(wptr, rec->ttl);
     uint8_t *rdlen_ptr = wptr;
     wptr = enc_u16(wptr,  0);
     size_t used = wptr - wbuf;
