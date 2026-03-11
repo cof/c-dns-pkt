@@ -330,7 +330,7 @@ static int gen_send_query(struct dns_gen *gen, const char *name, uint16_t qclass
     // load DNS msg
     struct dns_msg *msg = &gen->send_msg;
     dns_msg_set_id_flags(msg, tid, gen->dns_flags);
-    int rc = dns_msg_add_quest(msg, name, qtype, qclass);
+    int rc = dns_msg_add_qd(msg, name, qtype, qclass);
     if (rc) return rc;
 
     // encode DNS msg
@@ -363,6 +363,19 @@ static int gen_send_query(struct dns_gen *gen, const char *name, uint16_t qclass
     }
 
     return 0;
+}
+
+static void gen_print_rec(struct dns_gen *gen, struct dns_rec *rec)
+{
+    int nw = dns_rec_tostr(rec, gen->emsg, sizeof(gen->emsg));
+    if (nw) printf("%s\n", gen->emsg);
+}
+
+static void gen_print_recs(struct dns_gen *gen, struct dns_sect *sect)
+{
+    for (int i = 0; i < sect->num_rec; i++) {
+        gen_print_rec(gen, &sect->rec[i]);
+    }
 }
 
 static int gen_recv_resp(struct dns_gen *gen)
@@ -398,19 +411,19 @@ static int gen_recv_resp(struct dns_gen *gen)
 
     double delta_ms = time_diff_ms(&gen->ts_sent, &gen->ts_recv);
 
-    char *desc = ""; 
-    gen->emsg[0] = '\0';
-    if (msg.ans.num_rec == 1) {
-        dns_rec_tostr(gen->emsg, sizeof(gen->emsg), &msg.ans.rec[0]);
-        desc = gen->emsg;
-    }
+    printf("Received response in %.3fms: ", delta_ms);
 
-    log_info("dns-gen", "Received response in %.3fms: %s", delta_ms,  desc);
-    for (int i = 0; i < msg.ans.num_rec; i++) {
-        int nw = dns_rec_tostr(gen->emsg, sizeof(gen->emsg), &msg.ans.rec[i]);
-        if (nw) {
-            log_msg(gen->emsg);
-        }
+    if (dns_msg_cnt_rec(&msg) == 0) {
+        printf("<None>\n");
+    }
+    else if (dns_msg_cnt_rec(&msg) == 1) {
+        gen_print_rec(gen, dns_msg_get_rec(&msg));
+    }
+    else {
+        printf("\n");
+        gen_print_recs(gen, &msg.an_recs);
+        gen_print_recs(gen, &msg.ns_recs);
+        gen_print_recs(gen, &msg.ar_recs);
     }
 
     return 0;
@@ -421,10 +434,12 @@ static int gen_recv_resp(struct dns_gen *gen)
  * =====================
  *  addr =  ip4addr|ip6addr|regname [<ttl>] [class=IN|CS|CH|HS]
  */
-static int gen_add_answer(struct dns_gen *gen, struct str_slice ans_str)
+
+
+static int gen_load_rec(struct dns_gen *gen, struct dns_rec *rec, struct str_slice str)
 {
     // get addr
-    struct str_slice addr = slice_split(&ans_str, ' ');
+    struct str_slice addr = slice_split(&str, ' ');
     slice_trim(&addr);
     if (addr.len > DNS_NAME_MAXSTR) {
         return log_error_rf("<addr> string len %zu bigger than max %d", addr.len, DNS_NAME_MAXSTR);
@@ -437,44 +452,76 @@ static int gen_add_answer(struct dns_gen *gen, struct str_slice ans_str)
 
     // start answer
     uint8_t addr_raw[DNS_NAME_MAXLEN];
-    struct dns_rec ans = {
-        .name = gen->dns_name,
-        .class = gen->dns_class,
-        .ttl = gen->ttl
-    };
+
+    // set defaults
+    rec->name = gen->dns_name;
+    rec->class = gen->dns_class;
+    rec->ttl = gen->ttl;
 
     // parse addr_str (ip4|ip6|name)
     if (inet_pton(AF_INET, addr_str, addr_raw) == 1) {
         // IPv4
-        ans.type = DNS_TYPE_A;
-        memcpy(ans.data.a, addr_raw, 4);
+        rec->type = DNS_TYPE_A;
+        memcpy(rec->data.a, addr_raw, 4);
     }
     else if (inet_pton(AF_INET6, addr_str, addr_raw) == 1) {
         // IPv6
-        ans.type = DNS_TYPE_AAAA;
-        memcpy(ans.data.aaaa, addr_raw, 16);
+        rec->type = DNS_TYPE_AAAA;
+        memcpy(rec->data.aaaa, addr_raw, 16);
     }
     else {
         // regname
-        ans.type = DNS_TYPE_CNAME;
-        ans.data.cname = addr_str;
+        rec->type = DNS_TYPE_CNAME;
+        rec->data.cname = addr_str;
     }
     
-    // look for remaining attrs
-    while (ans_str.len) {
-        struct str_slice attr = slice_split(&ans_str, ' ');
+    // look for remaining attrs (e.g 3600 CH)
+    while (str.len) {
+        struct str_slice attr = slice_split(&str, ' ');
         slice_trim(&attr);
         int dns_class = get_dns_class(attr);
         if (dns_class != 0) {
-            ans.class = dns_class;
+            rec->class = dns_class;
         }
         else if (slice_isnumeric(attr)) {
-            ans.ttl = atol(attr.ptr);
+            rec->ttl = atol(attr.ptr);
         }
     }
 
-    return dns_msg_add_ans(&gen->send_msg, &ans);
+    // all done
+    return 0;
 }
+
+static int gen_add_an(struct dns_gen *gen, struct str_slice str)
+{
+    struct dns_rec ans_rec = { 0 };
+
+    int rc = gen_load_rec(gen, &ans_rec, str);
+    if (rc) return rc;
+
+    return dns_msg_add_an(&gen->send_msg, &ans_rec);
+}
+
+static int gen_add_ns(struct dns_gen *gen, struct str_slice str)
+{
+    struct dns_rec auth_rec = { 0 };
+
+    int rc = gen_load_rec(gen, &auth_rec, str);
+    if (rc) return rc;
+
+    return dns_msg_add_ns(&gen->send_msg, &auth_rec);
+}
+
+static int gen_add_ar(struct dns_gen *gen, struct str_slice str)
+{
+    struct dns_rec ar_rec = { 0 };
+
+    int rc = gen_load_rec(gen, &ar_rec, str);
+    if (rc) return rc;
+
+    return dns_msg_add_ar(&gen->send_msg, &ar_rec);
+}
+
 
 static int gen_do_query(struct dns_gen *gen)
 {
@@ -581,7 +628,7 @@ static int gen_setup_resp(void *state, int narg, struct str_slice args[])
         }
         else if (slice_cmp_cstr(opt,  STR_LIT("--name"))) {
             if (i == narg - 1) {
-                return log_cmd_err(cmd, "--name <dns-name>", "requires an argument");
+                return log_cmd_err(cmd, "--name <DNS-name>", "requires an argument");
             }
             struct str_slice val = args[++i];
             if (!val.len) return log_cmd_err(cmd, "--name <dns-name>", "cannot be blank");
@@ -591,11 +638,33 @@ static int gen_setup_resp(void *state, int narg, struct str_slice args[])
         }
         else if (slice_cmp_cstr(opt,  STR_LIT("--answer"))) {
             if (i == narg - 1) {
-                return log_cmd_err(cmd, "--answer <answer>", "requires an argument");
+                return log_cmd_err(cmd, "--answer <Answer>", "requires an argument");
             }
             struct str_slice val = args[++i];
-            if (!val.len) return log_cmd_err(cmd, "--answer <answer>", "cannot be blank");
-            if (gen_add_answer(gen, val) != 0) return log_cmd_err(cmd, "--answer <answer>", "Bad format");
+            if (!val.len) return log_cmd_err(cmd, "--answer <Answer>", "cannot be blank");
+            if (gen_add_an(gen, val) != 0) {
+                return log_cmd_err(cmd, "--answer <answer>", "Bad format");
+            }
+        }
+        else if (slice_cmp_cstr(opt,  STR_LIT("--authority"))) {
+            if (i == narg - 1) {
+                return log_cmd_err(cmd, "--authority <Authority>", "requires an argument");
+            }
+            struct str_slice val = args[++i];
+            if (!val.len) return log_cmd_err(cmd, "--answer <Authority>", "cannot be blank");
+            if (gen_add_ns(gen, val) != 0) {
+                return log_cmd_err(cmd, "--answer <answer>", "Bad format");
+            }
+        }
+        else if (slice_cmp_cstr(opt,  STR_LIT("--additional"))) {
+            if (i == narg - 1) {
+                return log_cmd_err(cmd, "--additional <Additional>", "requires an argument");
+            }
+            struct str_slice val = args[++i];
+            if (!val.len) return log_cmd_err(cmd, "--Additional <Additional>", "cannot be blank");
+            if (gen_add_ar(gen, val) != 0) {
+                return log_cmd_err(cmd, "--additional <Additional>", "Bad format");
+            }
         }
         else if (slice_cmp_cstr(opt,  STR_LIT("--ttl"))) {
             if (i == narg - 1) {
@@ -628,9 +697,16 @@ static int gen_setup_resp(void *state, int narg, struct str_slice args[])
         }
     }
 
-    if (!*gen->dns_name)  return log_cmd_err(cmd, "--name <dns-name>", "is required");
-    if (!dns_msg_num_ans(&gen->send_msg)) return log_cmd_err(cmd, "--answer <answer>", "is required");
-    if (!gen->output) return log_cmd_err(cmd, "--output <file>", "is required");
+    // check required args
+    if (!*gen->dns_name)  {
+        return log_cmd_err(cmd, "--name <dns-name>", "is required");
+    }
+    if (!dns_msg_cnt_rec(&gen->send_msg)) {
+        return log_cmd_err(cmd, "--answer | --authority | --additional", "is required");
+    }
+    if (!gen->output) {
+        return log_cmd_err(cmd, "--output <file>", "is required");
+    }
 
     // all done
     return 0;
