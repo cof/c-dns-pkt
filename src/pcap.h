@@ -1,11 +1,12 @@
 /*
- * PCAP - A packet capture file reader 
+ * PCAP - A packet capture file reader and writer
  *
  * API
  * ---
- * - pcap_open_read - open 
- * - pcap_read
- * - pcap_close
+ *  pcap_open - open pcap file 
+ *  pcap_read - read ethernet packet from the file
+ *  pcap_write - write an ethernet packet to the file
+ *  pcap_close - close pcap file
  *
  * File formats
  * ------------

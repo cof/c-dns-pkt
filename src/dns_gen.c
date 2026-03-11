@@ -1,9 +1,9 @@
 /*
  * dns-gen - a simple DNS packet generator
  *
- * Usage: dns-gen
+ *  dns-gen [mode] [option]
  *
- * Notes:
+ * See usage for more details.
  *
  */
 #include <stdio.h>
@@ -150,7 +150,7 @@ static double time_diff_ms(struct timespec *begin, struct timespec *end)
 static uint16_t ip_checksum(const void *vaddr, size_t count) 
 {
     const uint8_t *addr = vaddr;
-	uint32_t sum = 0;
+    uint32_t sum = 0;
 
     while (count > 1)  {
         // This is the inner loop
@@ -160,17 +160,17 @@ static uint16_t ip_checksum(const void *vaddr, size_t count)
         count -= 2;
     }
 
-	//  Add left-over byte, if any
+    //  Add left-over byte, if any
     if (count > 0) {
-		sum += *((const uint8_t *) addr);;
-	}
+        sum += *((const uint8_t *) addr);;
+    }
 
-	// Fold 32-bit sum to 16 bits
-	while (sum >> 16) {
-		sum = (sum & 0xffff) + (sum >> 16);
-	}
+    // Fold 32-bit sum to 16 bits
+    while (sum >> 16) {
+        sum = (sum & 0xffff) + (sum >> 16);
+    }
 
-	return (uint16_t) ~sum;
+    return (uint16_t) ~sum;
 }
 
 static int get_dns_type(struct str_slice str)

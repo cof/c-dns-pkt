@@ -1,5 +1,10 @@
 /*
- * A DNS protocol decoder
+ * A DNS message decoder and encoder API
+ *
+ * API
+ * ---
+ * dns_msg_decode - decode a buffer into a DNS message
+ * dns_msg_encode - encode a DNS message int a buffer
  *
  * Refs
  * ====

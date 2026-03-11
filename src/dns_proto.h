@@ -1,5 +1,20 @@
 #ifndef __DNS_PROTO_H__
 #define __DNS_PROTO_H__
+/*
+ * A DNS message encoder and decoder.
+ *
+ * General idea is use a dns_msg struture to read/write DNS messages.
+ *   
+ * API
+ * ---
+ * dns_msg_decode - decode a buffer into a DNS message
+ * dns_msg_encode - encode a DNS message int a buffer
+ *
+ * References
+ * ---------
+ * rf1035 - DOMAIN NAMES - IMPLEMENTATION AND SPECIFICATION
+ *
+ */
 
 #define DNS_EMSG_MAXLEN 4096
 #define DNS_MAX_PDUSIZE 2048
