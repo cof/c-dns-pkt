@@ -398,7 +398,7 @@ int parse_dns_name(
 int dns_rec_tostr(struct dns_rec *rec, char *buf, size_t buf_len)
 {
     // ensure no hidden fields
-    const char *name = rec->name && *rec->name ? rec->name : "<null>";
+    const char *name = str_def(rec->name, "<null>");
     const char *class_str = dns_class_tostr(rec->class);
     const char *type_str = dns_type_tostr(rec->type);
 
@@ -898,7 +898,7 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
 
     if (dec->need_emsg) {
         // ensure no hidden fields
-        const char *rec_name = name && *name ? name : "<null>";
+        const char *rec_name = str_def(name, "<null>");
         const char *sect_str = sect_code_tostr(sect_code);
         const char *class_str = dns_class_tostr(rr_class);
         const char *type_str = dns_type_tostr(rr_type);
@@ -959,7 +959,7 @@ static int parse_question(struct dns_dec *dec, struct dns_msg *msg)
 
     if (dec->need_emsg) {
         // ensure no hidden fields
-        const char *quest_name = name && *name ? name : "<null>";
+        const char *quest_name = str_def(name, "<null>");
         const char *class_str = dns_class_tostr(qclass);
         const char *type_str = dns_type_tostr(qtype);
         // desc Question
