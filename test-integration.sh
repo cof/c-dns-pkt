@@ -14,8 +14,17 @@ $CHK_RSP $TEST_PCAP 1>>$TEST_LOG 2>&1
 [[ $? -eq 0 ]] && RESULT="PASS" || RESULT="FAIL"
 echo "[TEST] $TEST_NAME... $RESULT"
 
+TEST_NAME="Response with compression"
+$GEN_RSP --id 0x1234 --name  example.com \
+    --answer www.example.com --answer mail.example.com --answer api.dev.example.com \
+    --output $TEST_PCAP 1>$TEST_LOG 2>&1
+[[ $? -eq 0 ]] && RESULT="PASS" || RESULT="FAIL"
+echo "[TEST] $TEST_NAME... $RESULT"
+
 TEST_NAME="Multiple answers"
 $GEN_RSP --id 0x1234 --name test.local --answer 192.168.1.1 --answer 172.168.0.1 --output $TEST_PCAP 1>$TEST_LOG 2>&1
 $CHK_RSP $TEST_PCAP 1>>$TEST_LOG 2>&1
 [[ $? -eq 0 ]] && RESULT="PASS" || RESULT="FAIL"
 echo "[TEST] $TEST_NAME... $RESULT"
+
+
