@@ -150,10 +150,13 @@ static const char *dec_code_tostr[] = {
 
 static const char *sect_code_tostr(int sect_code)
 {
-    return ec_tostr(ARRAY(dec_code_tostr), sect_code, "???");
+    const char *str = ec_tostr(ARRAY(dec_code_tostr), sect_code, NULL);
+    if (str) return str;
+
+    return int_tostr(sect_code);
 }
 
-const char *dns_class_tostr(int ec, const char *def)
+const char *dns_class_tostr(int ec)
 {
     if (ec == 1) return "IN";
     if (ec == 3) return "CH";
@@ -161,12 +164,12 @@ const char *dns_class_tostr(int ec, const char *def)
     if (ec == 254) return "NONE";
     if (ec == 255) return "*";
 
-    return def ?: "???";
+    return int_tostr(ec);
 };
 
-const char *dns_type_tostr(int ec, const char *def)
+const char *dns_type_tostr(int ec)
 {
-    if (ec == 1) return "A";
+    if (ec == 1)  return "A";
     if (ec == 2)  return "NS";
     if (ec == 5)  return "CNAME";
     if (ec == 6)  return "SOA";
@@ -179,14 +182,13 @@ const char *dns_type_tostr(int ec, const char *def)
     if (ec == 252) return "AXFR";
     if (ec == 255)  return "ANY";
 
-    return def ?: "???";
+    return int_tostr(ec);
 }
 
-static const char *opcode_tostr[] = {
+static const char *opcode_strs[] = {
     [DNS_OPCODE_QUERY]  = "QUERY",
     [DNS_OPCODE_IQUERY] = "IQUERY",
     [DNS_OPCODE_STATUS] = "STATUS",
-    [3] = "3",
     [DNS_OPCODE_NOTIFY] = "NOTIFY",
     [DNS_OPCODE_UPDATE ] = "UPDATE"
 };
@@ -214,9 +216,20 @@ static const char *rcode_strs[] = {
     [22] = "BADTRUC"
 };
 
-const char *rcode_tostr(int rcode, const char *def_str)
+const char *rcode_tostr(int rcode)
 {
-    return ec_tostr(ARRAY(rcode_strs), rcode, def_str);
+    const char *str = ec_tostr(ARRAY(rcode_strs), rcode, NULL);
+    if (str) return str;
+
+    return int_tostr(rcode);
+}
+
+const char *opcode_tostr(int opcode)
+{
+    const char *str = ec_tostr(ARRAY(opcode_strs), opcode, NULL);
+    if (str) return str;
+
+    return int_tostr(opcode);
 }
 
 static char *dns_wmsg(struct dns_dec *dec, const char *fmt, ...) 
@@ -385,10 +398,9 @@ int parse_dns_name(
 int dns_rec_tostr(struct dns_rec *rec, char *buf, size_t buf_len)
 {
     // ensure no hidden fields
-    char num[2][10];
     const char *name = rec->name && *rec->name ? rec->name : "<null>";
-    const char *class_str = dns_class_tostr(rec->class, itoa(num[0], 10, rec->class));
-    const char *type_str = dns_type_tostr(rec->type, itoa(num[1], 10, rec->type));
+    const char *class_str = dns_class_tostr(rec->class);
+    const char *type_str = dns_type_tostr(rec->type);
 
     char *wptr = buf;
     char *wptr_end = wptr + buf_len;
@@ -886,11 +898,10 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
 
     if (dec->need_emsg) {
         // ensure no hidden fields
-        char num[3][10];
         const char *rec_name = name && *name ? name : "<null>";
-        const char *sect_str = ec_tostr(ARRAY(dec_code_tostr), sect_code, itoa(num[0], 10, sect_code));
-        const char *class_str = dns_class_tostr(rr_class, itoa(num[1], 10, rr_class));
-        const char *type_str = dns_type_tostr(rr_type, itoa(num[2], 10, rr_type));
+        const char *sect_str = sect_code_tostr(sect_code);
+        const char *class_str = dns_class_tostr(rr_class);
+        const char *type_str = dns_type_tostr(rr_type);
         // desc Record
         char *res = dns_wmsg(dec, "  %s: %s %s %s %s\n",
             sect_str, rec_name, class_str, type_str,
@@ -948,10 +959,9 @@ static int parse_question(struct dns_dec *dec, struct dns_msg *msg)
 
     if (dec->need_emsg) {
         // ensure no hidden fields
-        char num[2][10];
         const char *quest_name = name && *name ? name : "<null>";
-        const char *class_str = dns_class_tostr(qclass, itoa(num[0], 10, qclass));
-        const char *type_str = dns_type_tostr(qtype, itoa(num[1], 10, qtype));
+        const char *class_str = dns_class_tostr(qclass);
+        const char *type_str = dns_type_tostr(qtype);
         // desc Question
         char *res= dns_wmsg(dec, "  %s: %s %s %s\n",
             "Question", quest_name, class_str, type_str
@@ -1018,11 +1028,10 @@ static int decode_header(struct dns_dec *dec, struct dns_msg *msg)
     dec->hdr = *hdr;
 
     // describe
-    char num[2][10];
     uint16_t flags = hdr->flags;
     int qr = flags & DNS_FLAGS_QR ? 1 : 0;
     int opcode  = (flags & DNS_FLAGS_OPCODE) >> 11;
-    const char *opcode_str = ec_tostr(ARRAY(opcode_tostr), opcode, itoa(num[0], 10, opcode));
+    const char *opcode_str = opcode_tostr(opcode);
     const char *type_str = qr ? "RESPONSE" : "QUERY";
 
     char extra[100];
@@ -1044,7 +1053,7 @@ static int decode_header(struct dns_dec *dec, struct dns_msg *msg)
         if (ra) rwbuf_strcat_sep(&buf, ' ', STR_LIT("RA:1"));
 
         // convert RCODE to str
-        const char *rcode_str = rcode_tostr(rcode, itoa(num[1], 10, rcode));
+        const char *rcode_str = rcode_tostr(rcode);
         rwbuf_strcat_sep(&buf, ' ', STR_LIT("RCODE:"));
         rwbuf_strcat(&buf, rcode_str, strlen(rcode_str));
 
@@ -1243,8 +1252,7 @@ static uint8_t *enc_fld_mkspace(struct dns_enc *enc, size_t len, int sc, int typ
     if (!wbuf) {
         return log_error_rn(
             "No room for %s field %s len %zu", 
-            sect_code_tostr(sc), dns_type_tostr(type, "header"),
-            len
+            sect_code_tostr(sc), dns_type_tostr(type), len
         );
     }
 

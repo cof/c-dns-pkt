@@ -95,9 +95,9 @@ int validate_dns_packet(const uint8_t *pkt, size_t len, char *error_msg);
   A simple DNS message api
 
  */
-const char *rcode_tostr(int rcode, const char *def_str);
-const char *dns_class_tostr(int ec, const char *def);
-const char *dns_type_tostr(int ec, const char *def);
+const char *rcode_tostr(int rcode);
+const char *dns_class_tostr(int ec);
+const char *dns_type_tostr(int ec);
 
 struct dns_quest {
     const char *qname;
