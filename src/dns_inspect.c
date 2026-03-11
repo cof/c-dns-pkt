@@ -1,9 +1,9 @@
 /*
  * dns-inpect - a simple DNS packet sniffer
  *
- * Usage: dns-inspect
+ * Usage: dns-inspect [mode] [options]
  *
- * Notes:
+ * See usage for more details.
  *
  */
 #include <stdio.h>
