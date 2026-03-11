@@ -271,7 +271,7 @@ static int gen_connect(struct dns_gen *gen)
         return log_errno_rf("setsockopt SO_RCVTIMEO on %d failed", gen->sock_fd);
     }
 
-    log_info("dns-gen", "Connected to %s", gen->serv_addr);
+    printf("Connected to %s\n", gen->serv_addr);
 
     // all done
     return 0;
@@ -349,7 +349,7 @@ static int gen_send_query(struct dns_gen *gen, const char *name, uint16_t qclass
     const char *quest_name = name && *name ? name : "<null>";
     const char *class_str = dns_class_tostr(qclass, itoa(num[0], 10, qclass));
     const char *type_str = dns_type_tostr(qtype, itoa(num[1], 10, qtype));
-    log_info("dns-gen", "Send query ID:0x%04x for %s %s %s", tid, quest_name, class_str, type_str);
+    printf("Send query ID:0x%04x for %s %s %s\n", tid, quest_name, class_str, type_str);
 
     // send it
     rc = send_dns_pdu(gen, gen->pkt_buf, pkt_len);
@@ -603,10 +603,9 @@ static int gen_do_resp(struct dns_gen *gen)
     gen->pcap = NULL;
     if (rc) return rc;
 
-    log_info("dns-gen", "Wrote %zu bytes to %s", pkt_len, gen->output);
+    printf("Wrote %zu bytes to %s\n", msg_len, gen->output);
 
     return 0;
-
 }
 
 static int gen_setup_resp(void *state, int narg, struct str_slice args[])
@@ -749,9 +748,9 @@ static int gen_setup_query(void *state, int narg, struct str_slice args[])
             if (!gen->dns_class) return log_cmd_err(cmd, "--type <dns-type>", "Value Must be one of IN|CS|CH|HS|ANY");
         }
         else if (slice_cmp_cstr(opt,  STR_LIT("--flags"))) {
-            if (i == narg - 1) return log_cmd_err(cmd, "--class <dns-class>", "requires an argument");
+            if (i == narg - 1) return log_cmd_err(cmd, "--flags <Flags>", "requires an argument");
             struct str_slice val = args[++i];
-            if (!val.len) return log_cmd_err(cmd, "--flags <dns-flags>", "Must look like AD:0|CD:0|RD:0");
+            if (!val.len) return log_cmd_err(cmd, "--flags <Flags>", "Must look like AD:0|CD:0|RD:0");
             gen->dns_flags = get_dns_flags(gen->dns_flags, slice_toupper(val));
         }
         else if (slice_cmp_cstr(opt,  STR_LIT("--server"))) {
@@ -761,6 +760,12 @@ static int gen_setup_query(void *state, int narg, struct str_slice args[])
             if (gen->serv_addr) free(gen->serv_addr);
             gen->serv_addr = slice_strdup(val); 
             if (!gen->serv_addr) return log_errno_rf("copy ip_add failed");
+        }
+        else if (slice_cmp_cstr(opt,  STR_LIT("--timeout"))) {
+            if (i == narg - 1) return log_cmd_err(cmd, "--timeout <TimeOut>", "requires an argument");
+            struct str_slice val = args[++i];
+            if (!val.len) return log_cmd_err(cmd, "--timeout <TimeOuts>", "Cannot be blank");
+            gen->recv_timeout = (uint16_t) strtol(val.ptr, NULL, 0);
         }
         else if (slice_cmp_cstr(opt,  STR_LIT("--tcp"))) {
             gen->use_tcp = 1;
@@ -788,9 +793,9 @@ static int gen_usage(void *state, struct str_slice prog_name)
     fprintf(out,"Usage: %.*s [MODE] [OPTIONS]\n\n", SLICE(prog_name));
 
     fprintf(out, "MODE:\n");
-    fprintf(out, "  %-*s %s\n", w, "query", "--name <dns-name> --type <rec-type> --server <ip-addr> --flags <flags> --tcp");
+    fprintf(out, "  %-*s %s\n", w, "query", "--name <dns-name> --type <rec-type> --server <ip-addr> --flags <Flags> --timeout <TimeOut> --tcp");
     fprintf(out, "  %-*s %s\n", w, "fuzz", "--type <rec-type> --server <ip-addr>");
-    fprintf(out, "  %-*s %s\n", w, "response", "--id <trans-id> --name <dns-name> --answer <ip-addr> --output <pcap-file>");
+    fprintf(out, "  %-*s %s\n", w, "response", "--id <trans-id> --name <dns-name> --answer <Ans> --output <pcap-file> --authority <Auth>");
 
     fprintf(out, "\nExample:\n");
     fprintf(out, "  %.*s query --name example.com --type A --server 8.8.8.8\n", SLICE(prog_name));
