@@ -74,6 +74,7 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
 .PHONY: test
 test:  $(DNS_INSPECT) $(DNS_GEN)
 	@echo "Starting tests"
+	$(Q)./test-integration.sh
 
 SOURCES = $(wildcard src/*.c src/*.h)
 .PHONY: tags

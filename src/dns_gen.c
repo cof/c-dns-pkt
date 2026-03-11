@@ -31,7 +31,7 @@
 #include "pcap.h"
 #include "dns_proto.h"
 
-#define DNS_RECV_TIMEOUT 5
+#define MSG_TIMEOUT 5
 
 // gen erro codes
 #define SOCK_NONE     0
@@ -45,6 +45,12 @@
 #define MODE_QUERY 1
 #define MODE_RESP  2
 #define MODE_FUZZ  3
+
+#define FUZZ_COMP   1
+#define FUZZ_TRUNC  2
+#define FUZZ_LABELS 3
+#define FUZZ_OPCODE 4
+#define FUZZ_RCODE  5
 
 struct dns_gen {
     // config
@@ -63,6 +69,7 @@ struct dns_gen {
     struct pcap_file *pcap;
     struct dns_msg send_msg; // messge template
     uint32_t timeout; // send / recv message timeout 
+    int fuzz_type;
     uint8_t pkt_buf[DNS_MAX_PDUSIZE];
     char emsg[DNS_EMSG_MAXLEN];
     // last tid sent
@@ -202,6 +209,17 @@ static int get_dns_flag(struct str_slice str)
     return 0;
 }
 
+static int get_fuzz_type(struct str_slice str)
+{
+    if (slice_cmp_cstr(str, STR_LIT("compression-loop"))) return FUZZ_COMP;
+    if (slice_cmp_cstr(str, STR_LIT("trunc")))  return FUZZ_TRUNC;
+    if (slice_cmp_cstr(str, STR_LIT("labels"))) return FUZZ_LABELS;
+    if (slice_cmp_cstr(str, STR_LIT("opcode"))) return FUZZ_OPCODE;
+    if (slice_cmp_cstr(str, STR_LIT("rcode")))  return FUZZ_RCODE;
+
+    return 0;
+}
+
 int ipaddrstr_toraw(void *addr, size_t len, struct str_slice str)
 {
     char addrstr[INET6_ADDRSTRLEN];
@@ -235,6 +253,7 @@ static uint16_t get_dns_flags(uint16_t flags, struct str_slice flags_str)
 
     return flags;
 }
+
 
 /*
  * Figure out the record
@@ -666,7 +685,15 @@ static int gen_recv_resp(struct dns_gen *gen)
     return 0;
 }
 
+static int gen_recv_badmsg(struct dns_gen *gen)
+{
+    return -1;
+}
 
+static int gen_send_badmsg(struct dns_gen *gen)
+{
+    return -1;
+}
 
 static int gen_do_query(struct dns_gen *gen)
 {
@@ -684,12 +711,75 @@ static int gen_do_query(struct dns_gen *gen)
 
 static int gen_do_fuzz(struct dns_gen *gen)
 {
-    return -1;
+    if (gen->output) {
+        gen->pcap = pcap_open(gen->output, PCAP_WRITE);
+        if (!gen->pcap) return -1;
+        pcap_close(gen->pcap);
+        gen->pcap = NULL;
+    }
+    else {
+        int rc = gen_connect(gen);
+        if (rc) return rc;
+        rc = gen_send_badmsg(gen);
+        if (rc) return rc;
+        rc = gen_recv_badmsg(gen);
+        if (rc) return rc;
+    }
+
+    return 0;
 }
 
 static int gen_setup_fuzz(void *state, int narg, struct str_slice args[])
 {
-    return -1;
+    struct dns_gen *gen = state;
+    const char *cmd = "fuzz";
+
+    gen->mode = MODE_FUZZ;
+
+    for (int i = 0; i < narg; i++) {
+        struct str_slice opt = args[i];
+        if (slice_cmp_cstr(opt,  STR_LIT("--type"))) {
+            if (i == narg - 1) {
+                return log_cmd_err(cmd, "--type <Type>", "requires an argument");
+            }
+            struct str_slice val = args[++i];
+            if (!val.len) return log_cmd_err(cmd, "--type <Type>", "cannot be blank");
+            gen->fuzz_type = get_fuzz_type(val);
+        }
+        else if (slice_cmp_cstr(opt,  STR_LIT("--server"))) {
+            if (i == narg - 1) return log_cmd_err(cmd, "--server <ip-addr>", "requires an argument");
+            struct str_slice val = args[++i];
+            if (!val.len) return log_cmd_err(cmd, "--server <ip-addr>", "cannot be blank");
+            if (gen->serv_addr) free(gen->serv_addr);
+            gen->serv_addr = slice_strdup(val); 
+            if (!gen->serv_addr) return log_errno_rf("copy ip_add failed");
+        }
+        else if (slice_cmp_cstr(opt,  STR_LIT("--output"))) {
+            if (i == narg - 1) {
+                return log_cmd_err(cmd, "--output <FileName>", "requires an argument");
+            }
+            struct str_slice val = args[++i];
+            if (!val.len) return log_cmd_err(cmd, "--output <FileName>", "cannot be blank");
+            if (gen->output) free(gen->output);
+            gen->output = slice_strdup(val);
+            if (!gen->output) {
+                return log_errno_rf("strdup failed for --output");
+            }
+        }
+        else {
+            return log_cmd_err(cmd, "unknown option", "%.*s", SLICE(opt));
+        }
+    }
+
+    if (!gen->fuzz_type) {
+        return log_cmd_err(cmd, "--type <Type>", "is required");
+    }
+    if (!gen->serv_addr && !gen->output) {
+        return log_cmd_err(cmd, "--server or --output", "is required");
+    }
+
+    // all done
+    return 0;
 }
 
 static int gen_do_resp(struct dns_gen *gen)
@@ -826,10 +916,10 @@ static int gen_setup_resp(void *state, int narg, struct str_slice args[])
         }
         else if (slice_cmp_cstr(opt,  STR_LIT("--output"))) {
             if (i == narg - 1) {
-                return log_cmd_err(cmd, "--name <dns-name>", "requires an argument");
+                return log_cmd_err(cmd, "--output <FileName>", "requires an argument");
             }
             struct str_slice val = args[++i];
-            if (!val.len) return log_cmd_err(cmd, "--name <dns-name>", "cannot be blank");
+            if (!val.len) return log_cmd_err(cmd, "--output <FileName>", "cannot be blank");
             if (gen->output) free(gen->output);
             gen->output = slice_strdup(val);
             if (!gen->output) {
@@ -924,7 +1014,7 @@ static int gen_setup_query(void *state, int narg, struct str_slice args[])
     }
 
     // min args check
-    if (!*gen->dns_name)  return log_cmd_err(cmd, "--name <dns-name>", "is required");
+    if (!*gen->dns_name) return log_cmd_err(cmd, "--name <dns-name>", "is required");
     if (!gen->serv_addr) return log_cmd_err(cmd, "--server <ip-addr>", "is required");
 
     return 0;

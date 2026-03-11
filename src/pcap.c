@@ -182,7 +182,7 @@ static int pcap_read_hdr(struct pcap_file *file)
     return 0;
 }
 
-static size_t pcap_read_pkt(struct pcap_file *file, void *buf, size_t len)
+static ssize_t pcap_read_pkt(struct pcap_file *file, void *buf, size_t len)
 {
     struct pcap_rec rec;
 
@@ -479,7 +479,7 @@ static int pcap_peek_block(struct pcap_file *file)
     return type;
 }
 
-static size_t pcapng_read_pkt(struct pcap_file *file, void *buf, size_t len)
+static ssize_t pcapng_read_pkt(struct pcap_file *file, void *buf, size_t len)
 {
     int block_type;
 
@@ -606,8 +606,9 @@ size_t pcap_read(struct pcap_file *file, void *buf, size_t len)
         return 0;
     }
    
-    size_t nread = file->read_pkt(file, buf, len);
+    ssize_t nread = file->read_pkt(file, buf, len);
 
+    if (nread < 0) nread = 0;
     if (nread > 0) {
         file->pkt_cnt++;
     }

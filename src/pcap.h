@@ -121,7 +121,7 @@ struct pcap_file {
     struct pcapng_idb_hdr idb;	
     int fmt; // PCAP_FMTLEG, PCAP_FMTNG
     int (*read_hdr)(struct pcap_file *file);
-    size_t (*read_pkt)(struct pcap_file *file, void *buf, size_t len);
+    ssize_t (*read_pkt)(struct pcap_file *file, void *buf, size_t len);
     int (*write_hdr)(struct pcap_file *file);
     int (*write_pkt)(struct pcap_file *file, void *buf, size_t len);
     int sys_errno; // saved errno
