@@ -198,8 +198,6 @@ Sends a DNS query message to a server
       example.com IN A                
       example.com IN A                
 
-
-
 ### 2.1 **Command: response**
 Generates DNS messages and save them to packet capture file.
 
@@ -219,4 +217,20 @@ Generates DNS messages and save them to packet capture file.
 
 	$ ./dns-gen response --id 0x1234 --name test.local --answer 192.168.1.1 --output packet.pcap
 	Wrote 38 bytes to packet.pcap
+
+### 2.1 **Command: fuzz**
+Generates invalid DNS messages for sending to a server or pcap file.
+
+**Supported featues**
+
+- Uses cmd line opts to control message generation
+- Writes DNS messages to a pcap file
+
+**Example usage**
+
+	$ ./dns-gen fuzz --type qd-badjmp --output a.pcap
+	Wrote 18 bytes to a.pcap
+	$ ./dns-inspect readpcap --file a.pcap 
+	[QUERY] ID 0x0000 QR:0 OPCODE:QUERY 
+	[ERROR] ID 0x0000 / PDU Question 1/ Question Name Invalid compression pointer (outside range)
 
