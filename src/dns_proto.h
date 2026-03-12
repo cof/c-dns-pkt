@@ -22,6 +22,10 @@
 #define DNS_NAME_MAXSTR 253
 #define DNS_MAX_REC     16
 #define DNS_HDR_LEN     12
+#define DNS_COMP_PTR    0xC0
+#define DNS_MAX_UDP     512 // rfc1035 - can be overriden by EDNS
+#define DNS_MAX_JMP     16 // max number of compression pointer jmps
+#define DNS_MAX_SUFFIX  32 // max number of compression names
 
 // DNS header flags
 #define DNS_FLAGS_QR      0x8000 // query response
@@ -48,7 +52,6 @@
 #define DNS_RCODE_NXDOMAIN 3
 #define DNS_RCODE_NOTIMP   4
 #define DNS_RCODE_REFUSED  5
-
 
 // DNS Record Types (QTYPE / TYPE)
 #define DNS_TYPE_A      1    // IPv4 Address

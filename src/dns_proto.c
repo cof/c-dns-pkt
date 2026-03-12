@@ -26,13 +26,11 @@
     (_log_error(__FILE__, __LINE__, __func__, 0,  fmt, ##__VA_ARGS__), DEC_ERR)
 
 
-#define DNS_MAX_EMSG 10
+// error reporting
+#define DNS_MAX_EMSG  10
 #define DNS_NAME_SIZE 256
 #define DNS_MSG_SIZE (256 + 256 + 100) // big enough for 2 names + some extra
 
-#define DNS_MAX_JMP 16  // max number of compression ptr jmps
-#define DNS_MAX_UDP 513 // rfc1035 - can be overriden by EDNS
-#define DNS_MAX_SUFF 32 // max number of compress suffiX
 
 struct dns_err {
     int group;
@@ -115,9 +113,25 @@ enum dns_dec_error {
     DNS_ERRORS(DNS_ERROR_ENUM)
 };
 
-static const char *dns_ec_tostr[] = {
+static const char *dns_ec_strs[] = {
     DNS_ERRORS(DNS_ERROR_TEXT)
 };
+
+#define DNS_EC_ISROW 10000
+
+static const char *dns_ec_tostr(int code)
+{
+    const char *str = ec_tostr(ARRAY(dns_ec_strs), code, NULL);
+    if (str) return str;
+
+    if (code >= DNS_EC_ISROW) {
+        // its section row number
+        code -= DNS_EC_ISROW;
+        code++;
+    }
+
+    return int_tostr(code);
+}
 
 
 // decode error locations
@@ -153,16 +167,16 @@ enum dns_dec_code {
     DNS_DECODES(DNS_DECODE_ENUM)
 };
 
-static const char *dec_code_tostr[] = {
+static const char *dec_code_strs[] = {
     DNS_DECODES(DNS_DECODE_TEXT)
 };
 
-static const char *sect_code_tostr(int sect_code)
+static const char *dec_code_tostr(int code)
 {
-    const char *str = ec_tostr(ARRAY(dec_code_tostr), sect_code, NULL);
+    const char *str = ec_tostr(ARRAY(dec_code_strs), code, NULL);
     if (str) return str;
 
-    return int_tostr(sect_code);
+    return int_tostr(code);
 }
 
 const char *dns_class_tostr(int ec)
@@ -278,9 +292,9 @@ int dns_dec_err(struct dns_dec *dec, int group, int field, int ec)
 
 char *dns_err_tostr(struct dns_dec *dec, struct dns_err *err)
 {
-    const char *group = ec_tostr(ARRAY(dec_code_tostr), err->group, "???");
-    const char *field = ec_tostr(ARRAY(dec_code_tostr), err->field, "???");
-    const char *error = ec_tostr(ARRAY(dns_ec_tostr), err->ec, "???");
+    const char *group = dec_code_tostr(err->group);
+    const char *field = dec_code_tostr(err->field);
+    const char *error = dns_ec_tostr(err->ec);
 
     int nw = snprintf(dec->msg, sizeof(dec->msg), "%s %s %s", group, field, error);
     if (nw < 0 || nw >= sizeof(dec->msg)) {
@@ -309,10 +323,10 @@ static int dns_dec_genmsg(struct dns_dec *dec)
         dns_wmsg(dec, "ID 0x%04x ",  dec->hdr.id);
     }
 
-    // build the erro strng
+    // build the error description
     for (int i = dec->nerr - 1; i >=  0; i--) {
         char *estr = dns_err_tostr(dec, &dec->errs[i]);
-        dns_wmsg(dec, " %s", estr);
+        dns_wmsg(dec, "/ %s", estr);
     }
 
     dns_wmsg(dec, "\n");
@@ -355,7 +369,7 @@ int parse_dns_name(
 
     while (ridx < pkt_len) {
         int len = pkt[ridx++];
-        if ((len & 0xc0) == 0xc0) {
+        if ((len & DNS_COMP_PTR) == DNS_COMP_PTR) {
             //  compression pointer - rfc1035 - 4.1.4. Message compression  
             if (ridx == pkt_len) return DNS_ERR_BADJMP; 
             if (njmp++ > DNS_MAX_JMP) return DNS_ERR_MAXJMP;
@@ -908,7 +922,7 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
     if (dec->need_emsg) {
         // ensure no hidden fields
         const char *rec_name = str_def(name, "<null>");
-        const char *sect_str = sect_code_tostr(sect_code);
+        const char *sect_str = dec_code_tostr(sect_code);
         const char *class_str = dns_class_tostr(rr_class);
         const char *type_str = dns_type_tostr(rr_type);
         // desc Record
@@ -987,7 +1001,7 @@ static int dns_dec_sect(struct dns_dec *dec, struct dns_msg *msg,
 {
     for (int i = 0; i < nrec; i++) {
         if (parse_record(dec, msg, sect_code, sect) != 0) {
-            return dns_dec_err(dec, DNS_DEC_PDU, sect_code, i);
+            return dns_dec_err(dec, DNS_DEC_PDU, sect_code, i + DNS_EC_ISROW);
         }
     }
 
@@ -1013,7 +1027,7 @@ static int decode_question(struct dns_dec *dec, struct dns_msg *msg)
 {
     for (int i = 0; i < msg->hdr.qd_count; i++) {
         if (parse_question(dec, msg) != 0) {
-            return dns_dec_err(dec, DNS_DEC_PDU, DNS_DEC_QUESTION, i);
+            return dns_dec_err(dec, DNS_DEC_PDU, DNS_DEC_QUESTION, i + DNS_EC_ISROW);
         }
     }
 
@@ -1113,7 +1127,7 @@ static int decode_msg(struct dns_dec *dec, struct dns_msg *msg)
     rc = decode_header(dec, msg);
     if (rc) return rc;
     rc = decode_question(dec, msg);
-    if (rc)  return rc;
+    if (rc) return rc;
     rc = decode_answer(dec, msg);
     if (rc) return rc;
     rc = decode_authority(dec, msg);
@@ -1183,7 +1197,7 @@ struct dns_enc {
     size_t pkt_max;
     size_t pkt_len;
     int num_suffix;
-    struct dns_suffix suffix[DNS_MAX_SUFF];
+    struct dns_suffix suffix[DNS_MAX_SUFFIX];
 };
 
 static inline uint8_t *enc_u32(uint8_t *wptr, uint32_t value)
@@ -1212,7 +1226,6 @@ static inline uint8_t *enc_raw(uint8_t *wptr, uint8_t *raw, uint16_t len)
     return wptr;
 }
 
-// TODO add compression support
 static uint8_t *enc_name(struct dns_enc *enc, uint8_t *wptr, const char *name)
 {
     int offset = wptr - enc->pkt_buf;
@@ -1285,7 +1298,7 @@ static uint8_t *enc_fld_mkspace(struct dns_enc *enc, size_t len, int sc, int typ
     if (!wbuf) {
         return log_error_rn(
             "No room for %s field %s len %zu", 
-            sect_code_tostr(sc), dns_type_tostr(type), len
+            dec_code_tostr(sc), dns_type_tostr(type), len
         );
     }
 
@@ -1540,29 +1553,29 @@ ssize_t dns_msg_encode(struct dns_msg *msg, uint8_t *buf, size_t len)
 static int dns_msg_add_rec(struct dns_msg *msg, int sc, struct dns_sect *sect, struct dns_rec *src_rec)
 {
     if (!src_rec) {
-        return log_error_rf("Store %s record is <null>", sect_code_tostr(sc));
+        return log_error_rf("Store %s record is <null>", dec_code_tostr(sc));
     }
 
     // space for record ?
     struct dns_rec *rec;
     if (sect->num_rec >= ARR_LEN(sect->rec)) {
-        return log_error_rf("No space to store %s record", sect_code_tostr(sc));
+        return log_error_rf("No space to store %s record", dec_code_tostr(sc));
     }
     rec = &sect->rec[sect->num_rec];
 
     if (!src_rec->name) {
-        return log_error_rf("Store %s record name is <null>", sect_code_tostr(sc));
+        return log_error_rf("Store %s record name is <null>", dec_code_tostr(sc));
     }
 
     // store name
     int len = strlen(src_rec->name);
     if (len > DNS_NAME_MAXSTR) {
-        return log_error_rf("%s name length %d bigger than max %u", sect_code_tostr(sc), len, DNS_NAME_MAXSTR);
+        return log_error_rf("%s name length %d bigger than max %u", dec_code_tostr(sc), len, DNS_NAME_MAXSTR);
     }
 
     rec->name = msg_store_name(msg, src_rec->name);
     if (!rec->name) {
-        return log_errno_rf("No space to store record name for %s", sect_code_tostr(sc));
+        return log_errno_rf("No space to store record name for %s", dec_code_tostr(sc));
     }
     rec->type = src_rec->type;
     rec->class = src_rec->class;
@@ -1576,13 +1589,13 @@ static int dns_msg_add_rec(struct dns_msg *msg, int sc, struct dns_sect *sect, s
     case DNS_TYPE_NS:
         rec->data.ns_name = msg_store_name(msg, src_rec->data.ns_name);
         if (!rec->data.ns_name) {
-            return log_errno_rf("No space to store ns_name for %s", sect_code_tostr(sc));
+            return log_errno_rf("No space to store ns_name for %s", dec_code_tostr(sc));
         }
         break;
     case DNS_TYPE_CNAME: // Canonical Name (Alias)
        rec->data.cname = msg_store_name(msg, src_rec->data.cname);
        if (!rec->data.cname) {
-          return log_errno_rf("No space to store cname for %s", sect_code_tostr(sc));
+          return log_errno_rf("No space to store cname for %s", dec_code_tostr(sc));
        }
        break;
     case DNS_TYPE_SOA: { // Start of Authority
@@ -1656,7 +1669,7 @@ int dns_msg_add_qd(struct dns_msg *msg, const char *name, uint16_t qtype,  uint1
 {
     struct dns_quest *quest;
     if (msg->num_qd >= ARR_LEN(msg->qd_recs)) {
-        return log_error_rf("No space to store %s record", sect_code_tostr(DNS_DEC_QUESTION));
+        return log_error_rf("No space to store %s record", dec_code_tostr(DNS_DEC_QUESTION));
     }
     quest = &msg->qd_recs[msg->num_qd];
 
@@ -1669,7 +1682,7 @@ int dns_msg_add_qd(struct dns_msg *msg, const char *name, uint16_t qtype,  uint1
     quest->qclass = qclass;
     quest->qname = msg_store_name(msg, name);
     if (!quest->qname)  {
-        return log_error_rf("No room to store %s name", sect_code_tostr(DNS_DEC_QUESTION));
+        return log_error_rf("No room to store %s name", dec_code_tostr(DNS_DEC_QUESTION));
     }
 
     // question added

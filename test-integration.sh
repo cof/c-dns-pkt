@@ -36,6 +36,12 @@ $CHK_RESP $TEST_PCAP 1>>$TEST_LOG 2>&1
 [[ $? -eq $BAD_PDU ]] && RESULT="PASS" || RESULT="FAIL"
 echo "[TEST] $TEST_NAME... $RESULT"
 
+TEST_NAME="Invalid compression pointers"
+$GEN_FUZZ --type comp-loop  --output $TEST_PCAP 1>$TEST_LOG 2>&1 &&
+$CHK_RESP $TEST_PCAP 1>>$TEST_LOG 2>&1
+[[ $? -eq $BAD_PDU ]] && RESULT="PASS" || RESULT="FAIL"
+echo "[TEST] $TEST_NAME... $RESULT"
+
 TEST_NAME="Invalid OPCODE"
 $GEN_FUZZ --type opcode  --output $TEST_PCAP 1>$TEST_LOG 2>&1 &&
 $CHK_RESP $TEST_PCAP 1>>$TEST_LOG 2>&1
