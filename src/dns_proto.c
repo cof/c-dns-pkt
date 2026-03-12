@@ -16,6 +16,7 @@
 #include <arpa/inet.h>   
 
 #include "util.h"
+#include "log.h"
 #include "dns_proto.h"
 
 // flag decoder error

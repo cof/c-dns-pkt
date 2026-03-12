@@ -53,7 +53,7 @@ $(BUILD_DIR):
 # build our binaries
 
 # dns-inspect
-DNS_INSPECT_SRCS = src/util.c src/pcap.c src/dns_proto.c src/dns_inspect.c
+DNS_INSPECT_SRCS = src/util.c src/log.c src/pcap.c src/dns_proto.c src/dns_inspect.c
 DNS_INSPECT_OBJS = $(DNS_INSPECT_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 DNS_INSPECT_DEPS = $(DNS_INSPECT_OBJS:.o=.d)
 -include $(DNS_INSPECT_DEPS)
@@ -61,7 +61,7 @@ $(DNS_INSPECT): $(DNS_INSPECT_OBJS) | $(BUILD_DIR)
 	$(cmd_LD) $(LDFLAGS) $(DNS_INSPECT_OBJS) -o $@
 
 # dns-gen
-DNS_GEN_SRCS = src/util.c src/pcap.c src/dns_proto.c  src/dns_gen.c
+DNS_GEN_SRCS = src/util.c src/log.c src/pcap.c src/dns_proto.c  src/dns_gen.c
 DNS_GEN_OBJS = $(DNS_GEN_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 DNS_GEN_DEPS = $(DNS_GEN_OBJS:.o=.d)
 -include $(DNS_GEN_DEPS)
