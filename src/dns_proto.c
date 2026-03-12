@@ -103,7 +103,10 @@ static inline uint16_t dec_u16(const unsigned char *buf)
     X(DNS_ERR_MINLEN, "Field smaller than min len") \
     X(DNS_ERR_FLDLEN, "Field length bigger than pkt") \
     X(DNS_ERR_OPTSECT, "OPT field not allowed") \
-    X(DNS_ERR_NOSPACE, "No space in buffer")
+    X(DNS_ERR_NOSPACE, "No space in buffer") \
+    X(DNS_ERR_BADOPCODE, "Invalid OPCODE") \
+    X(DNS_ERR_BADRCODE,  "Invalid RCODE")
+
 
 #define DNS_ERROR_ENUM(NAME, TEXT) NAME,
 #define DNS_ERROR_TEXT(NAME, TEXT) [NAME] = TEXT,
@@ -1071,6 +1074,7 @@ static int decode_header(struct dns_dec *dec, struct dns_msg *msg)
         // validate RCODE range
         if (rcode > 10) {
             rwbuf_strcat_sep(&buf, ' ', STR_LIT("bad-rcode"));
+            dns_dec_err(dec, DNS_DEC_PDU, DNS_DEC_HDR, DNS_ERR_BADRCODE);
         }
     }
     else {
@@ -1089,6 +1093,7 @@ static int decode_header(struct dns_dec *dec, struct dns_msg *msg)
         // validate OPCODE range
         if (opcode == 3 || opcode > 5) {
             rwbuf_strcat_sep(&buf, ' ', STR_LIT("bad-opcode"));
+            dns_dec_err(dec, DNS_DEC_PDU, DNS_DEC_HDR, DNS_ERR_BADOPCODE);
         }
     }
 
