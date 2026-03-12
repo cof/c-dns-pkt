@@ -46,12 +46,11 @@
 #define MODE_RESP  2
 #define MODE_FUZZ  3
 
-#define FUZZ_HDR    1
-#define FUZZ_COMP   2
-#define FUZZ_TRUNC  3
-#define FUZZ_LABELS 4
-#define FUZZ_OPCODE 5
-#define FUZZ_RCODE  6
+#define FUZZ_HDR_TRUNC   1
+#define FUZZ_HDR_OPCODE  2
+#define FUZZ_HDR_RCODE   3
+#define FUZZ_HDR_QDCNT   4
+#define FUZZ_QD_CMPLOOP  5
 
 #define ETHIPUDP_LEN (14 + 20 + 8)
 
@@ -214,12 +213,11 @@ static int get_dns_flag(struct str_slice str)
 
 static int get_fuzz_type(struct str_slice str)
 {
-    if (slice_cmp_cstr(str, STR_LIT("trunc-hdr")))  return FUZZ_HDR;
-    if (slice_cmp_cstr(str, STR_LIT("comp-loop"))) return FUZZ_COMP;
-    if (slice_cmp_cstr(str, STR_LIT("trunc")))  return FUZZ_TRUNC;
-    if (slice_cmp_cstr(str, STR_LIT("labels"))) return FUZZ_LABELS;
-    if (slice_cmp_cstr(str, STR_LIT("opcode"))) return FUZZ_OPCODE;
-    if (slice_cmp_cstr(str, STR_LIT("rcode")))  return FUZZ_RCODE;
+    if (slice_cmp_cstr(str, STR_LIT("hdr-trunc")))  return FUZZ_HDR_TRUNC;
+    if (slice_cmp_cstr(str, STR_LIT("hdr-opcode"))) return FUZZ_HDR_OPCODE;
+    if (slice_cmp_cstr(str, STR_LIT("hdr-rcode")))  return FUZZ_HDR_RCODE;
+    if (slice_cmp_cstr(str, STR_LIT("hdr-qdcnt")))  return FUZZ_HDR_QDCNT;
+    if (slice_cmp_cstr(str, STR_LIT("qd-cmploop"))) return FUZZ_QD_CMPLOOP;
 
     return 0;
 }
@@ -787,11 +785,31 @@ static int gen_mkbadmsg(struct dns_gen *gen)
     struct dns_header hdr = { 0 };
 
     switch(gen->fuzz_type) {
-    case FUZZ_HDR:
+    case FUZZ_HDR_TRUNC:
         // create truncated header
         wptr += 10;
         break;
-    case FUZZ_COMP:
+    case FUZZ_HDR_OPCODE:
+        hdr.flags = 6  << 11;
+        hdr.flags = ntohs(hdr.flags);
+        memcpy(wptr, &hdr, sizeof(hdr));
+        wptr += DNS_HDR_LEN;
+        break;
+    case FUZZ_HDR_RCODE:
+        hdr.flags = DNS_FLAGS_QR;
+        hdr.flags |= 11;
+        hdr.flags = ntohs(hdr.flags);
+        memcpy(wptr, &hdr, sizeof(hdr));
+        wptr += DNS_HDR_LEN;
+        break;
+    case FUZZ_HDR_QDCNT:
+        // set qd count to 0xffff
+        hdr.qd_count = 0xffff;
+        hdr.qd_count = ntohs(hdr.qd_count);
+        memcpy(wptr, &hdr, sizeof(hdr));
+        wptr += DNS_HDR_LEN;
+        break;
+    case FUZZ_QD_CMPLOOP:
         // encode a Question with a compression ptr loop
         hdr.qd_count = 1;
         memcpy(wptr, &hdr, sizeof(hdr));
@@ -800,23 +818,6 @@ static int gen_mkbadmsg(struct dns_gen *gen)
         *wptr++ = 0x0C; // jmp back to offset 12
         wptr = enc_u16(wptr, DNS_TYPE_A);
         wptr = enc_u16(wptr, DNS_CLASS_IN);
-        break;
-    case FUZZ_TRUNC:
-        break;
-    case FUZZ_LABELS:
-        break;
-    case FUZZ_OPCODE:
-        hdr.flags = 6  << 11;
-        hdr.flags = ntohs(hdr.flags);
-        memcpy(wptr, &hdr, sizeof(hdr));
-        wptr += DNS_HDR_LEN;
-        break;
-    case FUZZ_RCODE:
-        hdr.flags = DNS_FLAGS_QR;
-        hdr.flags |= 11;
-        hdr.flags = ntohs(hdr.flags);
-        memcpy(wptr, &hdr, sizeof(hdr));
-        wptr += DNS_HDR_LEN;
         break;
     }
 
@@ -866,11 +867,13 @@ static int gen_setup_fuzz(void *state, int narg, struct str_slice args[])
             struct str_slice val = args[++i];
             gen->fuzz_type = get_fuzz_type(val);
             if (!gen->fuzz_type) {
-                return log_cmd_err(cmd, "--type", "Must be one of trunc-hdr|comp-loop|opcode|rcode");
+                return log_cmd_err(cmd, "--type", "Must be one of hdr-trunc|hdr-opcode|hdr-rcode|hdr-qd|qd-cmploop");
             }
         }
         else if (slice_cmp_cstr(opt,  STR_LIT("--server"))) {
-            if (i == narg - 1) return log_cmd_err(cmd, "--server <ip-addr>", "requires an argument");
+            if (i == narg - 1) {
+                return log_cmd_err(cmd, "--server <ip-addr>", "requires an argument");
+            }
             struct str_slice val = args[++i];
             if (!val.len) return log_cmd_err(cmd, "--server <ip-addr>", "cannot be blank");
             if (gen->serv_addr) free(gen->serv_addr);

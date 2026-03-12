@@ -1255,7 +1255,7 @@ static uint8_t *enc_name(struct dns_enc *enc, uint8_t *wptr, const char *name)
         uint8_t len = dot_ptr ? dot_ptr - name : name_end - name;
         if (len > DNS_LABEL_MAXSTR) {
             return log_error_rn(
-                "Cannot encode name label len %d > max %d", len, DNS_LABEL_MAXSTR
+                "Cannot encode label for name - len %d > max %d", len, DNS_LABEL_MAXSTR
             );
 
         }
@@ -1324,6 +1324,7 @@ static int dns_enc_quest(struct dns_enc *enc, struct dns_quest *quest)
     // encode
     uint8_t *wptr = wbuf;
     wptr = enc_name(enc, wptr, quest->qname);
+    if (!wptr) return -1;
     wptr = enc_u16(wptr, quest->qtype);
     wptr = enc_u16(wptr, quest->qclass);
     size_t used = wptr - wbuf;
@@ -1341,6 +1342,7 @@ static int dns_enc_name(struct dns_enc *enc, const char *name, int sc, int type)
 
     uint8_t *wptr = wbuf;
     wptr = enc_name(enc, wptr, name);
+    if (!wptr) return -1;
     size_t used = wptr - wbuf;
     int rc = dns_enc_retspace(enc, len - used);
 
@@ -1368,6 +1370,7 @@ static int encode_record(struct dns_enc *enc, struct dns_rec *rec, int sc)
 
     uint8_t *wptr = wbuf;
     wptr = enc_name(enc, wptr, rec->name);
+    if (!wptr) return -1;
     wptr = enc_u16(wptr, rec->type);
     wptr = enc_u16(wptr, rec->class);
     wptr = enc_u32(wptr, rec->ttl);

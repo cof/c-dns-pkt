@@ -8,6 +8,7 @@ GEN_FUZZ="$GEN_NAME fuzz"
 CHK_RESP="$INSPECT_NAME readpcap --file"
 TEST_PCAP="$BUILD_DIR/test.pcap"
 BAD_PDU=5
+BAD_LABEL=6
 mkdir -p ${BUILD_DIR} || exit 1
 
 TEST_NAME="Simple A query"
@@ -30,26 +31,32 @@ $CHK_RESP $TEST_PCAP 1>>$TEST_LOG 2>&1
 [[ $? -eq 0 ]] && RESULT="PASS" || RESULT="FAIL"
 echo "[TEST] $TEST_NAME... $RESULT"
 
+TEST_NAME="Reject oversized label"
+$GEN_RESP --id 0x1234  --name "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA.com" --answer 192.168.1.1 --output $TEST_PCAP 1>$TEST_LOG 2>&1 &&
+$CHK_RESP $TEST_PCAP 1>>$TEST_LOG 2>&1
+[[ $? -eq $BAD_LABEL ]] && RESULT="PASS" || RESULT="FAIL"
+echo "[TEST] $TEST_NAME... $RESULT"
+
 TEST_NAME="Truncated Header"
-$GEN_FUZZ --type trunc-hdr --output $TEST_PCAP 1>$TEST_LOG 2>&1 &&
+$GEN_FUZZ --type hdr-trunc --output $TEST_PCAP 1>$TEST_LOG 2>&1 &&
 $CHK_RESP $TEST_PCAP 1>>$TEST_LOG 2>&1
 [[ $? -eq $BAD_PDU ]] && RESULT="PASS" || RESULT="FAIL"
 echo "[TEST] $TEST_NAME... $RESULT"
 
 TEST_NAME="Invalid compression pointers"
-$GEN_FUZZ --type comp-loop  --output $TEST_PCAP 1>$TEST_LOG 2>&1 &&
+$GEN_FUZZ --type qd-cmploop  --output $TEST_PCAP 1>$TEST_LOG 2>&1 &&
 $CHK_RESP $TEST_PCAP 1>>$TEST_LOG 2>&1
 [[ $? -eq $BAD_PDU ]] && RESULT="PASS" || RESULT="FAIL"
 echo "[TEST] $TEST_NAME... $RESULT"
 
 TEST_NAME="Invalid OPCODE"
-$GEN_FUZZ --type opcode  --output $TEST_PCAP 1>$TEST_LOG 2>&1 &&
+$GEN_FUZZ --type hdr-opcode  --output $TEST_PCAP 1>$TEST_LOG 2>&1 &&
 $CHK_RESP $TEST_PCAP 1>>$TEST_LOG 2>&1
 [[ $? -eq $BAD_PDU ]] && RESULT="PASS" || RESULT="FAIL"
 echo "[TEST] $TEST_NAME... $RESULT"
 
 TEST_NAME="Invalid RCODE"
-$GEN_FUZZ --type rcode  --output $TEST_PCAP 1>$TEST_LOG 2>&1 &&
+$GEN_FUZZ --type hdr-rcode  --output $TEST_PCAP 1>$TEST_LOG 2>&1 &&
 $CHK_RESP $TEST_PCAP 1>>$TEST_LOG 2>&1
 [[ $? -eq $BAD_PDU ]] && RESULT="PASS" || RESULT="FAIL"
 echo "[TEST] $TEST_NAME... $RESULT"
