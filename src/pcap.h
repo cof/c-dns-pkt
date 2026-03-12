@@ -3,10 +3,19 @@
  *
  * API
  * ---
- *  pcap_open - open pcap file 
+ *  pcap_open - open pcap file  (pathname, flags)
  *  pcap_read - read ethernet packet from the file
  *  pcap_write - write an ethernet packet to the file
  *  pcap_close - close pcap file
+ *   
+ * Flags
+ * -----
+ *  PCAP_READ   - open packet captue file for reading
+ *  PCAP_WRITE  - open a new packet capture for writing
+ *  PCAP_FMTLEG - pcap classic (default)
+ *  PCAP_FMTNG  - pcap nextgen (pcapng)
+ *  PCAP_FMTDET - Detect file fmt if fmt not given
+ *  PCAP_TRACE  - trace pcap records
  *
  * File formats
  * ------------
