@@ -32,6 +32,7 @@
 #include <errno.h>
 
 #include "util.h"
+#include "log.h"
 #include "pcap.h"
 #include "dns_proto.h"
 

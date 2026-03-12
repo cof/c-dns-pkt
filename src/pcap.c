@@ -16,6 +16,7 @@
 #include <time.h>
 
 #include "util.h"
+#include "log.h"
 #include "pcap.h"
 
 #define PCAP_FAIL -1
