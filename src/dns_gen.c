@@ -78,7 +78,7 @@ struct dns_gen {
     // last tid sent
     uint16_t tid_sent;
     size_t pkt_len;
-    // connetion
+    // connection
     size_t sent_len;
     size_t recv_len;
     struct timespec ts_sent;
@@ -87,7 +87,7 @@ struct dns_gen {
     socklen_t sock_addr_len;
     int sock_fd;
     // flags
-    unsigned int is_tcp    : 1;
+    unsigned int is_tcp     : 1;
     unsigned int sock_err   : 1;
     unsigned int recv_close : 1;
     unsigned int log_msg    : 1;
@@ -284,8 +284,6 @@ static int gen_load_rec(struct dns_gen *gen, struct dns_rec *rec, struct str_sli
     memcpy(addr_str, addr.ptr, addr.len);
     addr_str[addr.len] = '\0';
 
-    // start answer
-    uint8_t addr_raw[DNS_NAME_MAXLEN];
 
     // set defaults
     rec->name = gen->dns_name;
@@ -293,6 +291,7 @@ static int gen_load_rec(struct dns_gen *gen, struct dns_rec *rec, struct str_sli
     rec->ttl = gen->ttl;
 
     // parse addr_str (ip4|ip6|name)
+    uint8_t addr_raw[DNS_NAME_MAXLEN];
     if (inet_pton(AF_INET, addr_str, addr_raw) == 1) {
         // IPv4
         rec->type = DNS_TYPE_A;
@@ -655,7 +654,6 @@ static void pcap_end_pkt(struct dns_gen *gen)
     memcpy(wptr, &eth, sizeof(eth));
 }
 
-
 static int gen_msg_chk(struct dns_gen *gen)
 {
     if (!gen->log_msg) return 0;
@@ -719,6 +717,7 @@ static int gen_recv_resp(struct dns_gen *gen)
         return rc;
     }
 
+    // decode message
     struct dns_msg msg = { 0 };
     rc = dns_msg_decode(&msg, gen->pkt_buf, gen->recv_len);
     if (rc) return rc;
@@ -732,7 +731,7 @@ static int gen_recv_resp(struct dns_gen *gen)
     }
 
     // check Transaction ID
-    if (hdr->id != gen->tid_sent) {
+    if (hdr->id != gen->send_msg.hdr.id) {
         return log_info_rz("dng-gen",
             "Response ID 0x%04x does not match Request ID 0x%04x", 
             hdr->id, gen->tid_sent);
@@ -756,16 +755,6 @@ static int gen_recv_resp(struct dns_gen *gen)
 }
 
 
-static int gen_recv_badmsg(struct dns_gen *gen)
-{
-    return -1;
-}
-
-static int gen_send_badmsg(struct dns_gen *gen)
-{
-    return -1;
-}
-
 static int gen_do_query(struct dns_gen *gen)
 {
     int rc = gen_connect(gen);
@@ -776,6 +765,21 @@ static int gen_do_query(struct dns_gen *gen)
 
     rc = gen_recv_resp(gen);
     if (rc) return rc;
+
+    return 0;
+}
+
+static int gen_do_resp(struct dns_gen *gen)
+{
+    pcap_start_pkt(gen);
+    int rc = gen_msg_encode(gen);
+    if (rc) return rc;
+    pcap_end_pkt(gen);
+
+    rc = gen_pcap_rec(gen);
+    if (rc) return rc;
+
+    printf("Wrote %zu bytes to %s\n", gen->pkt_len - ETHIPUDP_LEN, gen->output);
 
     return 0;
 }
@@ -841,6 +845,16 @@ static int gen_mkbadmsg(struct dns_gen *gen)
     return 0;
 }
 
+static int gen_recv_badmsg(struct dns_gen *gen)
+{
+    return -1;
+}
+
+static int gen_send_badmsg(struct dns_gen *gen)
+{
+    return -1;
+}
+
 static int gen_do_fuzz(struct dns_gen *gen)
 {
     int rc;
@@ -881,7 +895,7 @@ static int gen_setup_fuzz(void *state, int narg, struct str_slice args[])
             struct str_slice val = args[++i];
             gen->fuzz_type = get_fuzz_type(val);
             if (!gen->fuzz_type) {
-                return log_cmd_err(cmd, "--type", "Must be one of hdr-trunc|hdr-opcode|hdr-rcode|hdr-qd|qd-cmploop");
+                return log_cmd_err(cmd, "--type", "Must be one of hdr-trunc|hdr-opcode|hdr-rcode|hdr-qd|qd-cmploop|qd-badjmp");
             }
         }
         else if (slice_cmp_cstr(opt,  STR_LIT("--server"))) {
@@ -922,20 +936,6 @@ static int gen_setup_fuzz(void *state, int narg, struct str_slice args[])
     return 0;
 }
 
-static int gen_do_resp(struct dns_gen *gen)
-{
-    pcap_start_pkt(gen);
-    int rc = gen_msg_encode(gen);
-    if (rc) return rc;
-    pcap_end_pkt(gen);
-
-    rc = gen_pcap_rec(gen);
-    if (rc) return rc;
-
-    printf("Wrote %zu bytes to %s\n", gen->pkt_len - ETHIPUDP_LEN, gen->output);
-
-    return 0;
-}
 
 static int gen_setup_resp(void *state, int narg, struct str_slice args[])
 {
@@ -1042,7 +1042,6 @@ static int gen_setup_resp(void *state, int narg, struct str_slice args[])
     // all done
     return 0;
 }
-
 
 static int gen_setup_query(void *state, int narg, struct str_slice args[])
 {
