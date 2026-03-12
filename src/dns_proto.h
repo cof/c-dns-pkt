@@ -16,16 +16,20 @@
  *
  */
 
-#define DNS_EMSG_MAXLEN 4096
-#define DNS_MAX_PDUSIZE 2048
-#define DNS_NAME_MAXLEN 255
-#define DNS_NAME_MAXSTR 253
-#define DNS_MAX_REC     16
-#define DNS_HDR_LEN     12
-#define DNS_COMP_PTR    0xC0
-#define DNS_MAX_UDP     512 // rfc1035 - can be overriden by EDNS
-#define DNS_MAX_JMP     16 // max number of compression pointer jmps
-#define DNS_MAX_SUFFIX  32 // max number of compression names
+// Protocol Size limits
+#define DNS_NAME_MAXLEN  255  // names  255 octets or less
+#define DNS_NAME_MAXSTR  253  // 255 - len(1) - nul(1) = 253
+#define DNS_LABEL_MAXSTR 63   // 63 octets or less
+#define DNS_HDR_LEN      12   // header size
+#define DNS_MAX_UDP     512   // can be overriden by EDNS
+
+// Our limits
+#define DNS_MAX_PDUSIZE  2048
+#define DNS_EMSG_MAXLEN  4096
+#define DNS_MAX_REC       32  // max section records 
+#define DNS_COMP_PTR    0xC0  // 1100000 upper 2 bits
+#define DNS_MAX_JMP       16  // max number of compression pointer jmps
+#define DNS_MAX_SUFFIX    32  // max number of compression names
 
 // DNS header flags
 #define DNS_FLAGS_QR      0x8000 // query response
