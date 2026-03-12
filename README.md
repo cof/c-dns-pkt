@@ -2,12 +2,12 @@
 A DNS packet inspector and DNS message generator.
 
 - **dns-inspect**  a DNS packet inspector
-- **dsn-gen**      A DNS message generator
+- **dns-gen**      A DNS message generator
 
 ## Prerequisites
 
 - **GCC**: Version 9.0 or higher.
-- **make**: Version 9.0 or higher.
+- **make**: Version 4.0 or higher.
 - **Bash**: Version 4.0+ for the test runner.
 
 ## Building the Project
@@ -132,11 +132,41 @@ Reads packet records from a capture flle, and prints them
 ## 2. dns-gen
 A DNS message and DNS packet file generator tool.
 
-**Supported Commands:**
+**Example usage**
 
-- **query**  Send a DNS query to server
-- **response**  Generate a DNS response message to pcap file:
-- **fuzz** Create a malformed DNS message
+    $ Usage: dns-gen [MODE] [OPTIONS]
+    MODE:
+    query      send DNS query message to a server
+     fuzz      create a dns mesage with bad values
+    response   create a dns reponse message
+
+    query Options:
+      --name    <NAME> A DNS name
+      --type    <TYPE> A DNS type A|NS|CNAME|SOA|PTR|HINFO|MX|TXT|AAAA|SRV
+      --class   <CLASS> A DNS class IN|CS|CH|HS|ANY
+      --flags   <FLAGS> Query flags AD:0|CD:0|RD:0
+      --server  <ADDR> Server IP address or name
+      --timeout <TIMEOUT> Response timeout
+      --tcp      Use TCP to send msg (instead of UDP)
+      --log      Log DNS message that are sent
+    response Options:
+      --id        <ID> A DNS header id
+      --flags   <FLAGS> Query flags Query flags name:value name=AD|CD|RD and val=0|1
+      --name      <NAME> A DNS name
+      --answer    <ANS> answer record
+      --authority <AUTH> answer record
+      --additional <ADD> adrecord
+      --output    <FILE> pcap file name
+    fuzz Options:
+      --type   <FUZZ> Fuzz type  hdr-trunc|hdr-opcode|hdr-rcode|hdr-qd|qd-cmploop|qd-badjmp
+      --server  <ADDR> Server IP address or name
+      --output  <FILE> pcap file name
+    
+    Examples:
+      dns-gen query --name example.com --type A --server 8.8.8.8
+      dns-gen query --name example.com --type A --server 8.8.8.8 --flags 'AD:1|CD:1|RD:0'
+      dns-gen fuzz --type qd-cmploop --server 127.0.0.1
+      dns-gen response --id 0x1234 --name test.local --answer 192.168.1.1 --output packet.bin
 
 ### 2.1 **Command: query**
 Sends a DNS query message to a server
@@ -167,6 +197,8 @@ Sends a DNS query message to a server
     Received response in 28ms: 
       example.com IN A                
       example.com IN A                
+
+
 
 ### 2.1 **Command: response**
 Generates DNS messages and save them to packet capture file.
