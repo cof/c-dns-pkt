@@ -30,8 +30,20 @@ $CHK_RESP $TEST_PCAP 1>>$TEST_LOG 2>&1
 [[ $? -eq 0 ]] && RESULT="PASS" || RESULT="FAIL"
 echo "[TEST] $TEST_NAME... $RESULT"
 
-TEST_NAME="Handle truncated header"
+TEST_NAME="Truncated Header"
 $GEN_FUZZ --type trunc-hdr --output $TEST_PCAP 1>$TEST_LOG 2>&1 &&
+$CHK_RESP $TEST_PCAP 1>>$TEST_LOG 2>&1
+[[ $? -eq $BAD_PDU ]] && RESULT="PASS" || RESULT="FAIL"
+echo "[TEST] $TEST_NAME... $RESULT"
+
+TEST_NAME="Invalid OPCODE"
+$GEN_FUZZ --type opcode  --output $TEST_PCAP 1>$TEST_LOG 2>&1 &&
+$CHK_RESP $TEST_PCAP 1>>$TEST_LOG 2>&1
+[[ $? -eq $BAD_PDU ]] && RESULT="PASS" || RESULT="FAIL"
+echo "[TEST] $TEST_NAME... $RESULT"
+
+TEST_NAME="Invalid RCODE"
+$GEN_FUZZ --type rcode  --output $TEST_PCAP 1>$TEST_LOG 2>&1 &&
 $CHK_RESP $TEST_PCAP 1>>$TEST_LOG 2>&1
 [[ $? -eq $BAD_PDU ]] && RESULT="PASS" || RESULT="FAIL"
 echo "[TEST] $TEST_NAME... $RESULT"

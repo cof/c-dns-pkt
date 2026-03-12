@@ -215,7 +215,7 @@ static int get_dns_flag(struct str_slice str)
 static int get_fuzz_type(struct str_slice str)
 {
     if (slice_cmp_cstr(str, STR_LIT("trunc-hdr")))  return FUZZ_HDR;
-    if (slice_cmp_cstr(str, STR_LIT("compression-loop"))) return FUZZ_COMP;
+    if (slice_cmp_cstr(str, STR_LIT("comp-loop"))) return FUZZ_COMP;
     if (slice_cmp_cstr(str, STR_LIT("trunc")))  return FUZZ_TRUNC;
     if (slice_cmp_cstr(str, STR_LIT("labels"))) return FUZZ_LABELS;
     if (slice_cmp_cstr(str, STR_LIT("opcode"))) return FUZZ_OPCODE;
@@ -776,29 +776,37 @@ static int gen_do_query(struct dns_gen *gen)
 
 static int gen_mkbadmsg(struct dns_gen *gen)
 {
-    uint8_t *wptr = gen->pkt_buf;
-    //uint8_t *wptr_end = wptr + sizeof(gen->pkt_buf);
-    //struct dns_header hdr;
+    uint8_t *start = gen->pkt_buf + gen->pkt_len;
+    uint8_t *wptr = start;
+    struct dns_header hdr = { 0 };
 
     switch(gen->fuzz_type) {
     case FUZZ_HDR:
         wptr += 10;
         break;
     case FUZZ_COMP:
-        //memcpy(gen->pkt_buf, &hdr, sizeof(hdr));
         break;
     case FUZZ_TRUNC:
         break;
     case FUZZ_LABELS:
         break;
     case FUZZ_OPCODE:
+        hdr.flags = 6  << 11;
+        hdr.flags = ntohs(hdr.flags);
+        memcpy(wptr, &hdr, sizeof(hdr));
+        wptr += DNS_HDR_LEN;
         break;
     case FUZZ_RCODE:
+        hdr.flags = DNS_FLAGS_QR;
+        hdr.flags |= 11;
+        hdr.flags = ntohs(hdr.flags);
+        memcpy(wptr, &hdr, sizeof(hdr));
+        wptr += DNS_HDR_LEN;
         break;
     }
 
-    // add DNS msg len
-    gen->pkt_len += wptr - gen->pkt_buf;
+    // add msg length to pkt len
+    gen->pkt_len += wptr - start;
 
     return 0;
 }
@@ -841,8 +849,10 @@ static int gen_setup_fuzz(void *state, int narg, struct str_slice args[])
                 return log_cmd_err(cmd, "--type <Type>", "requires an argument");
             }
             struct str_slice val = args[++i];
-            if (!val.len) return log_cmd_err(cmd, "--type <Type>", "cannot be blank");
             gen->fuzz_type = get_fuzz_type(val);
+            if (!gen->fuzz_type) {
+                return log_cmd_err(cmd, "--type", "Must be one of trunc-hdr|comp-loop|opcode|rcode");
+            }
         }
         else if (slice_cmp_cstr(opt,  STR_LIT("--server"))) {
             if (i == narg - 1) return log_cmd_err(cmd, "--server <ip-addr>", "requires an argument");
