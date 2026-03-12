@@ -1146,7 +1146,7 @@ static int gen_usage(void *state, struct str_slice prog_name)
 
     fprintf(out, "response Options:\n");
     fprintf(out, "  %-*s %s\n", w, "--id        <ID>", "A DNS header id");
-    fprintf(out, "  %-*s %s\n", w, "--flags   <FLAGS>", "Query flags name:value AD|CD|RD and val 0|1");
+    fprintf(out, "  %-*s %s\n", w, "--flags   <FLAGS>", "Query flags name:value name=AD|CD|RD and val=0|1");
     fprintf(out, "  %-*s %s\n", w, "--name      <NAME>", "A DNS name");
     fprintf(out, "  %-*s %s\n", w, "--answer    <ANS>", "answer record");
     fprintf(out, "  %-*s %s\n", w, "--authority <AUTH>", "answer record");
@@ -1154,7 +1154,7 @@ static int gen_usage(void *state, struct str_slice prog_name)
     fprintf(out, "  %-*s %s\n", w, "--output    <FILE>", "pcap file name");
 
     fprintf(out, "fuzz Options:\n");
-    fprintf(out, "  %-*s %s\n", w, "--type   <FUZZ>", "Fuzz type  hdr-trunc|hdr-opcode|hdr-rcode|hdr-qd|qd-cmploop");
+    fprintf(out, "  %-*s %s\n", w, "--type   <FUZZ>", "Fuzz type  hdr-trunc|hdr-opcode|hdr-rcode|hdr-qd|qd-cmploop|qd-badjmp");
     fprintf(out, "  %-*s %s\n", w, "--server  <ADDR>", "Server IP address or name");
     fprintf(out, "  %-*s %s\n", w, "--output  <FILE>", "pcap file name");
 
