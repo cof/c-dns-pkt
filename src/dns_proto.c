@@ -1253,6 +1253,12 @@ static uint8_t *enc_name(struct dns_enc *enc, uint8_t *wptr, const char *name)
         // look for next label
         const char *dot_ptr = strchr(name, '.');
         uint8_t len = dot_ptr ? dot_ptr - name : name_end - name;
+        if (len > DNS_LABEL_MAXSTR) {
+            return log_error_rn(
+                "Cannot encode name label len %d > max %d", len, DNS_LABEL_MAXSTR
+            );
+
+        }
         *wptr++ = len;
         wptr = mempcpy(wptr, name, len);
 
