@@ -270,7 +270,7 @@ int dns_dec_err(struct dns_dec *dec, int group, int field, int ec)
     dec->nerr++;
 
     // all done
-    return 0;
+    return DEC_ERR;
 }
 
 char *dns_err_tostr(struct dns_dec *dec, struct dns_err *err)
@@ -314,8 +314,8 @@ static int dns_dec_genmsg(struct dns_dec *dec)
 
     dns_wmsg(dec, "\n");
 
-    // ERROR
-    return -1;
+    // report ERROR
+    return DEC_ERR;
 }
 
 // Required functions
@@ -1106,7 +1106,7 @@ static int decode_msg(struct dns_dec *dec, struct dns_msg *msg)
     int rc;
 
     rc = decode_header(dec, msg);
-    if (rc != 0) return rc;
+    if (rc) return rc;
     rc = decode_question(dec, msg);
     if (rc)  return rc;
     rc = decode_answer(dec, msg);

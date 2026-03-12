@@ -42,7 +42,7 @@
 
 #define PKT_BUFSIZE 2048
 #define PKT_MAXRECV 10
-#define PKT_MIN_LEN (14 + 20 + 8 + 12)
+#define PKT_MIN_LEN (14 + 20 + 8)
 
 #define make_ptr(ptr, offset) ((void *) (ptr + offset))
 #define RCVBUF_SIZE (2 * 1024 * 1024)
@@ -132,7 +132,8 @@ static int sniff_process_pkt(struct dns_sniff *sniff, uint8_t *pkt_data, uint32_
 
     // call into api
     sniff->num_dns_pkts++;
-    if (validate_dns_packet(pkt_data + offset, pkt_len - offset, sniff->dns_emsg) == 0) {
+    int rc = validate_dns_packet(pkt_data + offset, pkt_len - offset, sniff->dns_emsg);
+    if (rc == 0) {
         sniff->num_dns_okay++;
     }
     else {
@@ -141,7 +142,7 @@ static int sniff_process_pkt(struct dns_sniff *sniff, uint8_t *pkt_data, uint32_
     log_msg(sniff->dns_emsg);
 
     // all done
-    return 0;
+    return rc;
 }
 
 static int sniff_process_msg(struct dns_sniff *sniff, struct mmsghdr *msg)
@@ -149,9 +150,10 @@ static int sniff_process_msg(struct dns_sniff *sniff, struct mmsghdr *msg)
     uint8_t *pkt_data = msg->msg_hdr.msg_iov->iov_base;
     uint32_t pkt_len = msg->msg_len;
 
-    return sniff_process_pkt(sniff, pkt_data, pkt_len);
-}
+    sniff_process_pkt(sniff, pkt_data, pkt_len);
 
+    return 0;
+}
 
 // signal handling
 static volatile sig_atomic_t keep_running = 1;
@@ -353,7 +355,6 @@ static int sniff_do_tracepcap(struct dns_sniff *sniff)
      return 0;
 }
 
-
 static int sniff_setup_capture(void *state, int narg, struct str_slice args[narg])
 {
     struct dns_sniff *sniff = state;
@@ -520,16 +521,16 @@ struct dns_sniff *sniff_create(void)
 int main(int argc, char *argv[])
 {
     struct dns_sniff *sniff = NULL;
-    int ec = EXIT_FAILURE;
+    int ec = 0;
 
     if (!(sniff = sniff_create())) { ec = 1; goto done; }
-    if (sniff_init(sniff) != 0)  { ec = 2; goto done; }
-    if (sniff_parse_argv(sniff, argc, argv) != 0) { ec = 3;  goto done; }
+    if (sniff_init(sniff)) { ec = 2; goto done; }
+    if (sniff_parse_argv(sniff, argc, argv)) { ec = 3;  goto done; }
 
     switch(sniff->mode) {
-    case MODE_CAPTURE:   ec = sniff_do_capture(sniff); break;
-    case MODE_READPCAP:  ec = sniff_do_readpcap(sniff); break;
-    case MODE_TRACEPCAP: ec = sniff_do_tracepcap(sniff); break;
+    case MODE_CAPTURE:   if (sniff_do_capture(sniff))   ec = 4; break;
+    case MODE_READPCAP:  if (sniff_do_readpcap(sniff))  ec = 5; break;
+    case MODE_TRACEPCAP: if (sniff_do_tracepcap(sniff)) ec = 6; break;
     default: 
         log_error("Unsupported mode %d", sniff->mode);
         ec = 4;
