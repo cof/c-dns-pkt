@@ -43,8 +43,14 @@ $CHK_RESP $TEST_PCAP 1>>$TEST_LOG 2>&1
 [[ $? -eq $BAD_PDU ]] && RESULT="PASS" || RESULT="FAIL"
 echo "[TEST] $TEST_NAME... $RESULT"
 
-TEST_NAME="Invalid compression pointers"
+TEST_NAME="Invalid compression pointer (loop)"
 $GEN_FUZZ --type qd-cmploop  --output $TEST_PCAP 1>$TEST_LOG 2>&1 &&
+$CHK_RESP $TEST_PCAP 1>>$TEST_LOG 2>&1
+[[ $? -eq $BAD_PDU ]] && RESULT="PASS" || RESULT="FAIL"
+echo "[TEST] $TEST_NAME... $RESULT"
+
+TEST_NAME="Invalid compression pointer (range)"
+$GEN_FUZZ --type qd-badjmp  --output $TEST_PCAP 1>$TEST_LOG 2>&1 &&
 $CHK_RESP $TEST_PCAP 1>>$TEST_LOG 2>&1
 [[ $? -eq $BAD_PDU ]] && RESULT="PASS" || RESULT="FAIL"
 echo "[TEST] $TEST_NAME... $RESULT"

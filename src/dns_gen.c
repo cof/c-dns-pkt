@@ -51,6 +51,7 @@
 #define FUZZ_HDR_RCODE   3
 #define FUZZ_HDR_QDCNT   4
 #define FUZZ_QD_CMPLOOP  5
+#define FUZZ_QD_BADJMP   6
 
 #define ETHIPUDP_LEN (14 + 20 + 8)
 
@@ -218,6 +219,7 @@ static int get_fuzz_type(struct str_slice str)
     if (slice_cmp_cstr(str, STR_LIT("hdr-rcode")))  return FUZZ_HDR_RCODE;
     if (slice_cmp_cstr(str, STR_LIT("hdr-qdcnt")))  return FUZZ_HDR_QDCNT;
     if (slice_cmp_cstr(str, STR_LIT("qd-cmploop"))) return FUZZ_QD_CMPLOOP;
+    if (slice_cmp_cstr(str, STR_LIT("qd-badjmp")))  return FUZZ_QD_BADJMP;
 
     return 0;
 }
@@ -812,10 +814,22 @@ static int gen_mkbadmsg(struct dns_gen *gen)
     case FUZZ_QD_CMPLOOP:
         // encode a Question with a compression ptr loop
         hdr.qd_count = 1;
+        hdr.qd_count = ntohs(hdr.qd_count);
         memcpy(wptr, &hdr, sizeof(hdr));
         wptr += DNS_HDR_LEN;
         *wptr++ = DNS_COMP_PTR; // comp ptr
         *wptr++ = 0x0C; // jmp back to offset 12
+        wptr = enc_u16(wptr, DNS_TYPE_A);
+        wptr = enc_u16(wptr, DNS_CLASS_IN);
+        break;
+    case FUZZ_QD_BADJMP:
+        // encode a Question with a badjmp compression ptr
+        hdr.qd_count = 1;
+        hdr.qd_count = ntohs(hdr.qd_count);
+        memcpy(wptr, &hdr, sizeof(hdr));
+        wptr += DNS_HDR_LEN;
+        *wptr++ = DNS_COMP_PTR; // comp ptr
+        *wptr++ = 0x00; // jmp back to offset 0
         wptr = enc_u16(wptr, DNS_TYPE_A);
         wptr = enc_u16(wptr, DNS_CLASS_IN);
         break;
@@ -1116,14 +1130,38 @@ static int gen_usage(void *state, struct str_slice prog_name)
     fprintf(out,"Usage: %.*s [MODE] [OPTIONS]\n\n", SLICE(prog_name));
 
     fprintf(out, "MODE:\n");
-    fprintf(out, "  %-*s %s\n", w, "query", "--name <dns-name> --type <rec-type> --server <ip-addr> --flags <Flags> --timeout <TimeOut> --tcp");
-    fprintf(out, "  %-*s %s\n", w, "fuzz", "--type <rec-type> --server <ip-addr>");
-    fprintf(out, "  %-*s %s\n", w, "response", "--id <trans-id> --name <dns-name> --answer <Ans> --output <pcap-file> --authority <Auth>");
+    fprintf(out, "  %-*s %s\n", w, "query",  "send DNS query message to a server");
+    fprintf(out, "  %-*s %s\n", w, "fuzz",  "create a dns mesage with bad values");
+    fprintf(out, "  %-*s %s\n", w, "response", "create a dns reponse message");
+    fprintf(out, "\n");
+    fprintf(out, "query Options:\n");
+    fprintf(out, "  %-*s %s\n", w, "--name    <NAME>", "A DNS name");
+    fprintf(out, "  %-*s %s\n", w, "--type    <TYPE>", "A DNS type A|NS|CNAME|SOA|PTR|HINFO|MX|TXT|AAAA|SRV");
+    fprintf(out, "  %-*s %s\n", w, "--class   <CLASS>", "A DNS class IN|CS|CH|HS|ANY");
+    fprintf(out, "  %-*s %s\n", w, "--flags   <FLAGS>", "Query flags AD:0|CD:0|RD:0");
+    fprintf(out, "  %-*s %s\n", w, "--server  <ADDR>", "Server IP address or name");
+    fprintf(out, "  %-*s %s\n", w, "--timeout <TIMEOUT>", "Response timeout");
+    fprintf(out, "  %-*s %s\n", w, "--tcp", "Use TCP to send msg (instead of UDP)");
+    fprintf(out, "  %-*s %s\n", w, "--log", "Log DNS message that are sent");
 
-    fprintf(out, "\nExample:\n");
+    fprintf(out, "response Options:\n");
+    fprintf(out, "  %-*s %s\n", w, "--id        <ID>", "A DNS header id");
+    fprintf(out, "  %-*s %s\n", w, "--flags   <FLAGS>", "Query flags name:value AD|CD|RD and val 0|1");
+    fprintf(out, "  %-*s %s\n", w, "--name      <NAME>", "A DNS name");
+    fprintf(out, "  %-*s %s\n", w, "--answer    <ANS>", "answer record");
+    fprintf(out, "  %-*s %s\n", w, "--authority <AUTH>", "answer record");
+    fprintf(out, "  %-*s %s\n", w, "--additional <ADD>", "adrecord");
+    fprintf(out, "  %-*s %s\n", w, "--output    <FILE>", "pcap file name");
+
+    fprintf(out, "fuzz Options:\n");
+    fprintf(out, "  %-*s %s\n", w, "--type   <FUZZ>", "Fuzz type  hdr-trunc|hdr-opcode|hdr-rcode|hdr-qd|qd-cmploop");
+    fprintf(out, "  %-*s %s\n", w, "--server  <ADDR>", "Server IP address or name");
+    fprintf(out, "  %-*s %s\n", w, "--output  <FILE>", "pcap file name");
+
+    fprintf(out, "\nExamples:\n");
     fprintf(out, "  %.*s query --name example.com --type A --server 8.8.8.8\n", SLICE(prog_name));
     fprintf(out, "  %.*s query --name example.com --type A --server 8.8.8.8 --flags 'AD:1|CD:1|RD:0'\n", SLICE(prog_name));
-    fprintf(out, "  %.*s fuzz --type compression-loop --server 127.0.0.1\n", SLICE(prog_name));
+    fprintf(out, "  %.*s fuzz --type qd-cmploop --server 127.0.0.1\n", SLICE(prog_name));
     fprintf(out, "  %.*s response --id 0x1234 --name test.local --answer 192.168.1.1 --output packet.bin\n", SLICE(prog_name));
 
     return -1;
