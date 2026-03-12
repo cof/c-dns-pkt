@@ -27,9 +27,12 @@
 #define DNS_MAX_PDUSIZE  2048
 #define DNS_EMSG_MAXLEN  4096
 #define DNS_MAX_REC       32  // max section records 
+#define DNS_MAX_TXT       32  // max txt string
 #define DNS_COMP_PTR    0xC0  // 1100000 upper 2 bits
 #define DNS_MAX_JMP       16  // max number of compression pointer jmps
 #define DNS_MAX_SUFFIX    32  // max number of compression names
+
+#define DNS_FAIL -1
 
 // DNS header flags
 #define DNS_FLAGS_QR      0x8000 // query response
@@ -149,15 +152,17 @@ struct dns_rec {
         } soa; // 6
         char *ptr_name; 
         struct {
-            uint8_t cpu_len;
-            uint8_t os_offset;
-            uint8_t os_len;
+            char *cpu_str;
+            char *os_str;
         } hinfo; // 13
         struct {
             uint16_t pref;    
             char *name;
         } mx; // 15
-        char *txt; // 16
+        struct {
+            uint16_t num_str;
+            char *str[DNS_MAX_TXT];
+        } txt; // 16
         uint8_t aaaa[16];  //  28
         struct {
             uint16_t prior;
@@ -181,8 +186,10 @@ struct dns_sect {
     struct dns_rec rec[DNS_MAX_REC];
 };
 
-// convert dns record to a readable string
-int dns_rec_tostr(struct dns_rec *rec, char *buf, size_t buf_len);
+// convert dns msg section to readable string
+int dns_quest_tostr(struct dns_quest *quest, char *buf, size_t buf_len);
+int dns_sect_tostr(struct dns_sect *sect, int sc, char *buf, size_t buf_len);
+int dns_rec_tostr(struct dns_rec *rec, int sc, char *buf, size_t buf_len);
 
 // DNS message
 struct dns_msg {
@@ -199,6 +206,8 @@ struct dns_msg {
 // decode/encode a DNS message
 int dns_msg_decode(struct dns_msg *msg, uint8_t *buf, size_t len);
 ssize_t dns_msg_encode(struct dns_msg *msg, uint8_t *buf, size_t len);
+
+int dns_msg_sects_tostr(struct dns_msg *msg,  char *buf, size_t len);
 
 static inline void dns_msg_set_id_flags(struct dns_msg *msg, uint16_t id, uint16_t flags)
 {

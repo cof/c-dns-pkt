@@ -30,6 +30,11 @@
 #define XSTR(a) #a
 #define STR(a) XSTR(a)
 
+static inline size_t safe_strlen(const char *str)
+{
+    return str ? strlen(str) : 0;
+}
+
 // return str if set else use default
 static inline const char *str_def(const char *str, const char *def_str)
 {
