@@ -258,6 +258,12 @@ static uint16_t get_dns_flags(uint16_t flags, struct str_slice flags_str)
     return flags;
 }
 
+static inline uint8_t *enc_u16(uint8_t *wptr, uint16_t value)  
+{
+    *wptr++ = value >> 8;
+    *wptr++ = value;
+    return wptr;
+}
 
 /*
  * Figure out the record
@@ -782,9 +788,18 @@ static int gen_mkbadmsg(struct dns_gen *gen)
 
     switch(gen->fuzz_type) {
     case FUZZ_HDR:
+        // create truncated header
         wptr += 10;
         break;
     case FUZZ_COMP:
+        // encode a Question with a compression ptr loop
+        hdr.qd_count = 1;
+        memcpy(wptr, &hdr, sizeof(hdr));
+        wptr += DNS_HDR_LEN;
+        *wptr++ = DNS_COMP_PTR; // comp ptr
+        *wptr++ = 0x0C; // jmp back to offset 12
+        wptr = enc_u16(wptr, DNS_TYPE_A);
+        wptr = enc_u16(wptr, DNS_CLASS_IN);
         break;
     case FUZZ_TRUNC:
         break;
