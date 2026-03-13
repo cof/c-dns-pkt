@@ -45,7 +45,6 @@
 #define PKT_MAXRECV 10
 #define PKT_MIN_LEN (14 + 20 + 8)
 
-#define make_ptr(ptr, offset) ((void *) (ptr + offset))
 #define RCVBUF_SIZE (2 * 1024 * 1024)
 #define MAX_EVENTS 10
 
