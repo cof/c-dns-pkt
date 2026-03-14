@@ -182,7 +182,7 @@ struct dns_rec {
 };
 
 struct dns_sect {
-    int num_rec;
+    size_t num_rec;
     struct dns_rec rec[DNS_MAX_REC];
 };
 
@@ -196,7 +196,7 @@ struct dns_msg {
     struct dns_header hdr;
     char names[DNS_MAX_PDUSIZE];
     int names_len;
-    int num_qd;
+    size_t num_qd;
     struct dns_quest qd_recs[DNS_MAX_REC];
     struct dns_sect an_recs;
     struct dns_sect ns_recs;
