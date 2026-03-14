@@ -14,6 +14,7 @@
 
 #include <stdlib.h>
 #include <time.h>
+#include <errno.h>
 
 #include "util.h"
 #include "log.h"
@@ -35,7 +36,7 @@
     UTIL_FAIL; \
 })
 
-static uint32_t inline pad_len(uint32_t cap_len)
+static inline uint32_t pad_len(uint32_t cap_len)
 {
     return  (4 - (cap_len % 4)) % 4;
 }
@@ -349,7 +350,7 @@ static int pcap_read_idb(struct pcap_file *file)
 }
 
 // return packet length or zero on error or eof
-static size_t pcap_read_epb(struct pcap_file *file, void *buf, size_t len)
+static size_t pcap_read_epb(struct pcap_file *file, void *buf, size_t buf_len)
 {
     if (!file->have_idb) {
         return log_error_rz("pcapng: bad block %lu type %s %s", file->rec_cnt, "EPB", "missing IDB");
@@ -382,6 +383,11 @@ static size_t pcap_read_epb(struct pcap_file *file, void *buf, size_t len)
         return log_error_rz("pcapng: bad block %lu type %s len %u", file->rec_cnt, "EPB", epb.total_len);
     }
 
+    if (epb.incl_len > buf_len) {
+        return log_error_rz("pcapng: block %lu type %s len %u > buf %zu",
+            file->rec_cnt, "EPB", epb.incl_len, buf_len);
+    }
+
     // read packet data
     uint32_t cap_len = epb.incl_len;
     rc = pcap_read_data(file, "EPB", buf, epb.incl_len);
@@ -397,7 +403,7 @@ static size_t pcap_read_epb(struct pcap_file *file, void *buf, size_t len)
 }
 
 // return packet length or zero on error or eof
-static size_t pcap_read_spb(struct pcap_file *file, void *buf, size_t len)
+static size_t pcap_read_spb(struct pcap_file *file, void *buf, size_t buf_len)
 {
     if (!file->have_idb) {
         return log_error_rz("pcapng: bad block %lu type %s %s", file->rec_cnt, "SPB", "missing IDB");
@@ -426,8 +432,13 @@ static size_t pcap_read_spb(struct pcap_file *file, void *buf, size_t len)
         return log_error_rz("pcapng: bad block %lu type %s len %u", file->rec_cnt, "SPB", spb.total_len);
     }
 
-    // read packet data
     uint32_t cap_len = spb.total_len - (sizeof(spb) + 4);
+    if (cap_len > buf_len) {
+        return log_error_rz("pcapng: block %lu type %s len %u > buf %zu",
+            file->rec_cnt, "SPB", cap_len, buf_len);
+    }
+
+    // read packet data
     rc = pcap_read_data(file, "SPB", buf, cap_len);
     if (rc) return 0;
 

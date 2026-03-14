@@ -45,14 +45,14 @@ struct dns_dec {
     size_t offset;
     // a simple error stack
     struct dns_err errs[DNS_MAX_EMSG];
-    int nerr;
+    size_t nerr;
     // flags
     unsigned int need_emsg : 1;
     unsigned int load_msg : 1;
     unsigned int got_edns : 1;
     unsigned int dnssec_ok : 1;
     // EDNS0 Options (RFC 6891)  
-    int udp_size;
+    size_t udp_size;
     uint8_t ext_rcode;
     uint8_t edns_ver;
     // track what we write into emsg
@@ -231,7 +231,6 @@ static const char *rcode_strs[] = {
     [9] = "NotAuth",
     [10] = "NotZone",
     // 11 - 15 Available for assignment
-    [16] = "BADVERSA",
     [16] = "BADSIG",
     [17] = "BADKEYA",
     [18] = "BADTIME",
@@ -302,7 +301,7 @@ char *dns_err_tostr(struct dns_dec *dec, struct dns_err *err)
     if (nw < 0) {
         return log_errno_rn("dns_err_tostr snprintf failed");
     }
-    if (nw >= sizeof(dec->msg)) {
+    if ((size_t) nw >= sizeof(dec->msg)) {
         return log_error_rn("dns_err_tostr sprintf no room");
     }
 
@@ -366,14 +365,14 @@ int parse_dns_name(
     char *out, size_t out_len, 
     size_t *bytes_consumed)
 {
-    int ridx = offset;
+    size_t ridx = offset;
     int njmp = 0;
     int len = 0;
 
     *bytes_consumed = 0;
 
     while (ridx < pkt_len) {
-        int len = pkt[ridx++];
+        size_t len = pkt[ridx++];
         if ((len & DNS_COMP_PTR) == DNS_COMP_PTR) {
             //  compression pointer - rfc1035 - 4.1.4. Message compression  
             if (ridx == pkt_len) return DNS_ERR_BADJMP; 
@@ -387,7 +386,7 @@ int parse_dns_name(
         }
 
         // label - len (0-63)
-        int pkt_rem = pkt_len - ridx;
+        size_t pkt_rem = pkt_len - ridx;
         if (len > pkt_rem) return DNS_ERR_NAMELEN;
         if (len > out_len) return DNS_ERR_OUTLEN; 
         if (!njmp) *bytes_consumed += 1 + len;
@@ -453,7 +452,7 @@ int dns_rec_tostr(struct dns_rec *rec, int sc, char *buf, size_t buf_len)
 
     // hdr
     int rc = snprintf(wptr, end - wptr, "  %s %s %s ", name, class_str, type_str);
-    if (rc < 0) return log_errno_rf("snprintf failed");
+    if (rc < 0) return log_errno_rf("snprintf failed for %s", dec_code_tostr(sc));
     wptr += rc;
 
     // rdata
@@ -541,9 +540,9 @@ int dns_rec_tostr(struct dns_rec *rec, int sc, char *buf, size_t buf_len)
 
 int dns_sect_tostr(struct dns_sect *sect, int sc, char *buf, size_t buf_len)
 {
-    int nw = 0;
+    size_t nw = 0;
         
-    for (int i = 0; i < sect->num_rec; i++) {
+    for (size_t i = 0; i < sect->num_rec; i++) {
         if (i > 0) {
             if (nw == buf_len) return DNS_FAIL;
             buf[nw++] = '\n';
@@ -1220,7 +1219,7 @@ static int decode_msg(struct dns_dec *dec, struct dns_msg *msg)
     // validate message size
     if (dec->need_emsg && dec->pkt_len > dec->udp_size) {
         // Check packet doesn't exceed 512 bytes (UDP) or declared length
-        dns_wmsg(dec, "UDP message: packet-length %zu > max size %d\n", dec->pkt_len, dec->udp_size);
+        dns_wmsg(dec, "UDP message: packet-length %zu > max size %zu\n", dec->pkt_len, dec->udp_size);
     }
 
     // all done
@@ -1278,7 +1277,7 @@ struct dns_enc {
     uint8_t *pkt_buf;
     size_t pkt_max;
     size_t pkt_len;
-    int num_suffix;
+    size_t num_suffix;
     struct dns_suffix suffix[DNS_MAX_SUFFIX];
 };
 
@@ -1315,7 +1314,7 @@ static uint8_t *enc_name(struct dns_enc *enc, uint8_t *wptr, const char *name)
     
     while (name < name_end) {
         // scan for suffix match
-        for (int i = 0; i < enc->num_suffix; i++) {
+        for (size_t i = 0; i < enc->num_suffix; i++) {
             if (enc->suffix[i].offset < offset && strcasecmp(enc->suffix[i].name, name) == 0) {
                 // suffix match - drop a 2-byte comp ptr
                 uint16_t comp_ptr = 0xc000 | enc->suffix[i].offset;

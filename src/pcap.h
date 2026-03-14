@@ -154,9 +154,8 @@ struct pcap_file {
 #define PCAP_FMTNG  0x10 // pcap nextgen (pcapng)
 #define PCAP_TRACE  0x20 // trace pcap records
 
-
 // helper functions
-static int inline pcap_islegacy(uint32_t magic)
+static inline int pcap_islegacy(uint32_t magic)
 {
     if (magic == PCAP_MAGIC_LE_USEC) return 1;
     if (magic == PCAP_MAGIC_LE_NSEC) return 1;
@@ -166,25 +165,24 @@ static int inline pcap_islegacy(uint32_t magic)
     return 0;
 }
 
-static int inline pcap_isng(uint32_t magic)
+static inline int pcap_isng(uint32_t magic)
 {
     return magic == PCAP_SHB_TYPE;
 }
 
-static int inline pcap_bom_isng(uint32_t magic)
+static inline int pcap_bom_isng(uint32_t magic)
 {
     if (magic == PCAP_BOM_NATIVE) return 1;
     if (magic == PCAP_BOM_SWAP) return 1;
     return 0;
 }
 
-
-static int inline pcap_isnative(uint32_t magic)
+static inline int pcap_isnative(uint32_t magic)
 {
     return magic == PCAP_MAGIC_LE_USEC || magic == PCAP_MAGIC_LE_NSEC;
 }
 
-static int inline pcapng_isnative(uint32_t magic)
+static inline int pcapng_isnative(uint32_t magic)
 {
     return magic == PCAP_BOM_NATIVE;
 }
