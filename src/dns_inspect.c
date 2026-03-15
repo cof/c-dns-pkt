@@ -163,6 +163,7 @@ static volatile sig_atomic_t sender_uid = 0;
 
 static void catch_signal(int signo, siginfo_t *info, void *ucontext)
 {
+    (void) ucontext;
     caught_signo = signo;
 
     sender_pid = 0;
@@ -178,6 +179,7 @@ static void catch_signal(int signo, siginfo_t *info, void *ucontext)
 
 int sniff_signals(struct dns_sniff *sniff)
 {
+    (void) sniff;
     struct sigaction sa = { 0 };
 
     sa.sa_sigaction = catch_signal;
@@ -355,28 +357,84 @@ static int sniff_do_tracepcap(struct dns_sniff *sniff)
      return 0;
 }
 
-static int sniff_setup_capture(void *state, int narg, struct str_slice args[narg])
+static int sniff_setup_tracepcap(struct dns_sniff *sniff, int argc, char *argv[])
 {
-    struct dns_sniff *sniff = state;
+    sniff->mode = MODE_TRACEPCAP;
 
+    if (argc < 4) {
+       return log_error_rf("tracepcap: missing --file");
+    }
+
+    // --file
+    struct str_slice opt = slice_make_cstr(argv[2]);
+    if (!slice_cmp_cstr(opt, STR_LIT("--file"))) {
+       return log_error_rf("tracepcap: unknown option %.*s", (int) opt.len, opt.ptr);
+    }
+
+    // name
+    if (argc < 4) {
+       return log_error_rf("tracepcap: mising name");
+    }
+    opt = slice_make_cstr(argv[3]);
+    sniff->pcap_filename = slice_strdup(opt);
+    if (!sniff->pcap_filename) {
+        return log_errno_rf("strdup failed for len %zu", opt.len);
+    }
+
+    return 0;
+}
+
+static int sniff_setup_readpcap(struct dns_sniff *sniff, int argc, char *argv[])
+{
+    sniff->mode = MODE_READPCAP;
+
+    if (argc < 3) {
+       return log_error_rf("readpcap: Missing --file option");
+    }
+
+    // --file
+    struct str_slice opt = slice_make_cstr(argv[2]);
+    if (!slice_cmp_cstr(opt, STR_LIT("--file"))) {
+       return log_error_rf("readpcap: unknown option %.*s", (int) opt.len, opt.ptr);
+    }
+
+    // name
+    if (argc < 4) {
+       return log_error_rf("readpcap: mising name");
+    }
+    opt = slice_make_cstr(argv[3]);
+    sniff->pcap_filename = slice_strdup(opt);
+    if (!sniff->pcap_filename) {
+        return log_errno_rf("strdup failed for len %zu", opt.len);
+    }
+
+    return 0;
+}
+
+static int sniff_setup_capture(struct dns_sniff *sniff, int argc, char *argv[])
+{
     sniff->mode = MODE_CAPTURE;
-    if (narg != 2) {
+
+    if (argc < 3) {
        return log_error_rf("capture require an --interface name");
     }
 
     // --interface option
-    struct str_slice opt = args[0];
+    struct str_slice opt = slice_make_cstr(argv[2]);
     if (!slice_cmp_cstr(opt, STR_LIT("--interface"))) {
        return log_error_rf("capture unknown option %.*s", (int) opt.len, opt.ptr);
     }
 
     // device name
-    struct str_slice name = args[1];
-    if (name.len >= sizeof(sniff->dev_name)) {
+    if (argc < 4) {
+       return log_error_rf("capture require an --interface name");
+    }
+    opt = slice_make_cstr(argv[3]);
+    if (opt.len >= sizeof(sniff->dev_name)) {
        return log_error_rf("device name cant be bigger than %zu", sizeof(sniff->dev_name) - 1);
     }
-    memcpy(sniff->dev_name, name.ptr, name.len);
-    sniff->dev_name[name.len] = '\0';
+    memcpy(sniff->dev_name, opt.ptr, opt.len);
+    sniff->dev_name[opt.len] = '\0';
 
     sniff->dev_index = if_nametoindex(sniff->dev_name);
     if (sniff->dev_index == 0) {
@@ -387,60 +445,9 @@ static int sniff_setup_capture(void *state, int narg, struct str_slice args[narg
     return 0;
 }
 
-static int sniff_setup_readpcap(void *state, int narg, struct str_slice args[narg])
+static int sniff_usage(char *path)
 {
-    struct dns_sniff *sniff = state;
-
-    sniff->mode = MODE_READPCAP;
-
-    if (narg < 1) {
-       return log_error_rf("readpcap: Missing --file option");
-    }
-
-    // --file
-    struct str_slice opt = args[0];
-    if (!slice_cmp_cstr(opt, STR_LIT("--file"))) {
-       return log_error_rf("readpcap: unknown option %.*s", (int) opt.len, opt.ptr);
-    }
-
-    // name
-    if (narg < 2) {
-       return log_error_rf("readpcap: mising name");
-    }
-    sniff->pcap_filename = slice_strdup(args[1]);
-    if (!sniff->pcap_filename) {
-        return log_errno_rf("strdup failed for len %zu", args[1].len);
-    }
-
-    return 0;
-}
-
-static int sniff_setup_tracepcap(void *state, int narg, struct str_slice args[])
-{
-    struct dns_sniff *sniff = state;
-
-    sniff->mode = MODE_TRACEPCAP;
-    if (narg != 2) {
-       return log_error_rf("tracepcap: missing --file");
-    }
-
-    // --file
-    struct str_slice opt = args[0];
-    if (!slice_cmp_cstr(opt, STR_LIT("--file"))) {
-       return log_error_rf("tracepcap: unknown option %.*s", (int) opt.len, opt.ptr);
-    }
-
-    // name
-    sniff->pcap_filename = slice_strdup(args[1]);
-    if (!sniff->pcap_filename) {
-        return log_errno_rf("strdup failed for len %zu", args[1].len);
-    }
-
-    return 0;
-}
-
-static int sniff_usage(void *state, struct str_slice name)
-{
+    struct str_slice name = slice_rsplit1(slice_make_cstr(path), '/');
     FILE *out = stderr;
     int w= 10;
 
@@ -459,15 +466,23 @@ static int sniff_usage(void *state, struct str_slice name)
     return -1;
 }
 
-static struct util_cmd cmds[] =  {
-    { STR_LIT("capture"),  sniff_setup_capture },
-    { STR_LIT("readpcap"), sniff_setup_readpcap  },
-    { STR_LIT("tracepcap"), sniff_setup_tracepcap }
-};
-
 static int sniff_parse_argv(struct dns_sniff *sniff, int argc, char *argv[])
 {
-    return util_parse_argv(sniff, argc, argv, ARRAY(cmds), sniff_usage);
+    if (argc < 2) return sniff_usage(argv[0]);
+
+    struct str_slice mode = slice_make_cstr(argv[1]);
+
+    if (slice_cmp_cstr(mode, STR_LIT("capture")))  {
+        return sniff_setup_capture(sniff, argc, argv);
+    }
+    if (slice_cmp_cstr(mode, STR_LIT("readpcap"))) {
+        return sniff_setup_readpcap(sniff, argc, argv);
+    }
+    if (slice_cmp_cstr(mode, STR_LIT("tracepcap")))  {
+        return sniff_setup_tracepcap(sniff, argc, argv);
+    }
+
+    return log_error_rf("Unsupported mode %.*s", (int) mode.len, mode.ptr);
 }
 
 void sniff_free(struct dns_sniff *sniff)

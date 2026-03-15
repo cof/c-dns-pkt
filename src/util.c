@@ -64,6 +64,78 @@ char *int_tostr(int val)
     return itoa(str, sizeof(bufs[0][0]), val);
 }
 
+int getopt_init(struct getopt_parse *parse, 
+    int argc, char *argv[],
+    size_t num_opt, struct get_opt opts[num_opt])
+{
+    memset(parse->long_opts, 0, sizeof(parse->long_opts));
+
+    parse->argc = argc;
+    parse->argv = argv;
+
+    parse->opts = opts;
+    parse->num_opt = num_opt;
+
+    if (num_opt > GETOPT_MAX) {
+        return log_error_rf("Num opts %zu > max %d", num_opt, GETOPT_MAX);
+    }
+
+    for (size_t i = 0; i < num_opt; i++) {
+        struct option *long_opt = &parse->long_opts[i];
+        long_opt->name = opts[i].name;
+        long_opt->has_arg = opts[i].has_arg;
+        long_opt->val = opts[i].val;
+    }
+
+    return 0;
+}
+
+int getopt_next(struct getopt_parse *parse)
+{
+    int rc = getopt_long_only(
+        parse->argc, parse->argv,
+        "", parse->long_opts, 
+        &parse->opt_idx
+    );
+
+    if (rc == -1) return rc;
+    if (rc == '?' || rc == ':') {
+        parse->opt_idx = optind -1;
+        return rc;
+    }
+    
+    parse->val = slice_make_cstr(optarg);
+    
+    return rc;
+}
+
+void print_usage(const char *cmd, 
+    int num_opt, const struct get_opt opts[num_opt],
+    int num_exa, char *examples[num_exa])
+{
+    const char *base = strrchr(cmd, '/');
+    const char *prog_name = (base) ? base + 1 : cmd;
+    int w= 15;
+
+    printf("Usage: %s [OPTIONS]\n\n", prog_name);
+    printf("Options:\n");
+
+    for (int i = 0; i < num_opt; i++) {
+        printf(" --%-*s %s", w, opts[i].name, opts[i].desc);
+        if (opts[i].have_defval) {
+            printf(" (default=%d)", opts[i].def_val);
+        }
+        printf("\n");
+    }
+
+    if (!num_exa) return;
+
+    printf("\nExamples:\n");
+    for (int i = 0; i < num_exa; i++) {
+        printf("  %s %s\n", prog_name, examples[i]);
+    }
+}
+
 static int find_cmd(struct str_slice cmd, int ncmd, struct util_cmd cmds[ncmd])
 {
     cmd = slice_tolower(cmd);

@@ -105,6 +105,7 @@ static volatile sig_atomic_t sender_uid = 0;
 
 static void catch_signal(int signo, siginfo_t *info, void *ucontext)
 {
+    (void) ucontext;
     caught_signo = signo;
 
     sender_pid = 0;
@@ -120,6 +121,7 @@ static void catch_signal(int signo, siginfo_t *info, void *ucontext)
 
 int gen_signals(struct dns_gen *gen)
 {
+    (void) (gen);
     struct sigaction sa = { 0 };
 
     sa.sa_sigaction = catch_signal;
@@ -225,19 +227,6 @@ static int get_fuzz_type(struct str_slice str)
     if (slice_cmp_cstr(str, STR_LIT("qd-badjmp")))  return FUZZ_QD_BADJMP;
 
     return 0;
-}
-
-int ipaddrstr_toraw(void *addr, size_t len, struct str_slice str)
-{
-    char addrstr[INET6_ADDRSTRLEN];
-
-    memcpy(addrstr, str.ptr, str.len);
-    addrstr[str.len] = '\0';
-
-    if (inet_pton(AF_INET, addrstr, addr) == 1) return 4;
-    if (inet_pton(AF_INET6, addrstr, addr) == 1) return 6;
-
-    return -1;
 }
 
 static uint16_t get_dns_flags(uint16_t flags, struct str_slice flags_str)
@@ -491,6 +480,7 @@ static int gen_send_dnspdu(struct dns_gen *gen)
 
 static int gen_recv_err(struct dns_gen *gen, int err)
 {
+    (void) gen;
     const char *etype = "ERROR";
     const char *emsg = "rejected/ignored";
 
@@ -898,49 +888,59 @@ static int gen_do_fuzz(struct dns_gen *gen)
     return rc;
 }
 
-static int gen_setup_fuzz(void *state, int narg, struct str_slice args[])
+static int gen_setup_fuzz(struct dns_gen *gen, int argc, char *argv[])
 {
-    struct dns_gen *gen = state;
     const char *cmd = "fuzz";
 
     gen->mode = MODE_FUZZ;
 
-    for (int i = 0; i < narg; i++) {
-        struct str_slice opt = args[i];
-        if (slice_cmp_cstr(opt,  STR_LIT("--type"))) {
-            if (i == narg - 1) {
-                return log_cmd_err(cmd, "--type <Type>", "requires an argument");
-            }
-            struct str_slice val = args[++i];
+    enum {
+        FUZZ_TYPE = 0,
+        FUZZ_SERVER,
+        FUZZ_OUTPUT
+    };
+
+    struct get_opt opts[] = {
+        { "type",   "<FUZZ> type must be hdr-trunc|hdr-opcode|hdr-rcode|hdr-qdcnt|qd-cmploop|qd-badjmp", 1, FUZZ_TYPE },
+        { "server", "<ADDR> Server address to send pdu to",  1, FUZZ_SERVER },
+        { "output", "<FILE> pcap file name", 1, FUZZ_OUTPUT }
+    };
+
+    struct getopt_parse parse;
+    struct str_slice val;
+    int opt;
+
+    getopt_init(&parse, argc, argv, ARRAY(opts));
+
+    while ((opt = getopt_next(&parse)) != -1) {
+        switch(opt) {
+        case FUZZ_TYPE:
+            val = getopt_val(&parse);
             gen->fuzz_type = get_fuzz_type(val);
             if (!gen->fuzz_type) {
-                return log_cmd_err(cmd, "--type", "Must be one of hdr-trunc|hdr-opcode|hdr-rcode|hdr-qdcnt|qd-cmploop|qd-badjmp");
+                return log_cmd_err(cmd, opts[parse.opt_idx].name, "%s",  opts[parse.opt_idx].desc);
             }
-        }
-        else if (slice_cmp_cstr(opt,  STR_LIT("--server"))) {
-            if (i == narg - 1) {
-                return log_cmd_err(cmd, "--server <ip-addr>", "requires an argument");
-            }
-            struct str_slice val = args[++i];
-            if (!val.len) return log_cmd_err(cmd, "--server <ip-addr>", "cannot be blank");
+            break;
+        case FUZZ_SERVER:
+            val = getopt_val(&parse);
             if (gen->serv_addr) free(gen->serv_addr);
             gen->serv_addr = slice_strdup(val); 
-            if (!gen->serv_addr) return log_errno_rf("copy ip_add failed");
-        }
-        else if (slice_cmp_cstr(opt,  STR_LIT("--output"))) {
-            if (i == narg - 1) {
-                return log_cmd_err(cmd, "--output <FileName>", "requires an argument");
+            if (!gen->serv_addr) {
+                return log_errno_rf("copy ip_add failed");
             }
-            struct str_slice val = args[++i];
-            if (!val.len) return log_cmd_err(cmd, "--output <FileName>", "cannot be blank");
+            break;
+        case FUZZ_OUTPUT:
+            val = getopt_val(&parse);
             if (gen->output) free(gen->output);
             gen->output = slice_strdup(val);
             if (!gen->output) {
                 return log_errno_rf("strdup failed for --output");
             }
-        }
-        else {
-            return log_cmd_err(cmd, "unknown option", "%.*s", SLICE(opt));
+            break;
+        case ':': // missing value
+            return log_error_rf("Option: --%s requries an arg", opts[parse.opt_idx].name);
+        case '?': // unknown
+            return log_error_rf("Error: Unknown option %s", argv[parse.opt_idx]);
         }
     }
 
@@ -956,91 +956,88 @@ static int gen_setup_fuzz(void *state, int narg, struct str_slice args[])
 }
 
 
-static int gen_setup_resp(void *state, int narg, struct str_slice args[])
+static int gen_setup_resp(struct dns_gen *gen, int argc, char *argv[])
 {
-    struct dns_gen *gen = state;
-    const char *cmd = "query";
+    const char *cmd = "response";
 
     gen->mode = MODE_RESP;
 
-    for (int i = 0; i < narg; i++) {
-        struct str_slice opt = args[i];
-        if (slice_cmp_cstr(opt,  STR_LIT("--id"))) {
-            if (i == narg - 1) {
-                return log_cmd_err(cmd, "--id <id>", "requires an argument");
-            }
-            struct str_slice val = args[++i];
-            if (!val.len) return log_cmd_err(cmd, "--id <id>", "cannot be blank");
+    enum {
+        RESP_ID = 0,
+        RESP_NAME,
+        RESP_FLAGS,
+        RESP_AN,
+        RESP_NS,
+        RESP_AR,
+        RESP_TTL,
+        RESP_OUTPUT
+    };
+
+    struct get_opt opts[] = {
+        { "id"        , "<ID> A DNS header id",  1, RESP_ID  },
+        { "name"      , "<NAME> A DNS name",     1, RESP_NAME },
+        { "flags"     , "<FLAGS> Query flags name:value name=AD|CD|RD and val=0|1", RESP_FLAGS },
+        { "answer"    , "<ANS>  answer record",  1, RESP_AN },
+        { "authority" , "<AUTH> auth record",    1, RESP_NS },
+        { "additional", "<ADD>  add record",     1, RESP_AR },
+        { "output"    , "<FILE> pcap file name", 1, RESP_OUTPUT }
+    };
+
+    struct getopt_parse parse;
+    struct str_slice val;
+    int opt;
+
+    getopt_init(&parse, argc, argv, ARRAY(opts));
+
+    while ((opt = getopt_next(&parse)) != -1) {
+        switch(opt) {
+        case RESP_ID:
+            val = getopt_val(&parse);
             gen->id = (uint16_t) strtol(val.ptr, NULL, 0);
-        }
-        else if (slice_cmp_cstr(opt,  STR_LIT("--name"))) {
-            if (i == narg - 1) {
-                return log_cmd_err(cmd, "--name <DNS-name>", "requires an argument");
-            }
-            struct str_slice val = args[++i];
-            if (!val.len) return log_cmd_err(cmd, "--name <dns-name>", "cannot be blank");
-            if (val.len > DNS_NAME_MAXSTR) return log_cmd_err(cmd, "--name <dns-name>", "name too big");
+            break;
+        case RESP_NAME:
+            val = getopt_val(&parse);
             memcpy(gen->dns_name, val.ptr, val.len);
             gen->dns_name[val.len] = '\0';
-        }
-        else if (slice_cmp_cstr(opt,  STR_LIT("--answer"))) {
-            if (i == narg - 1) {
-                return log_cmd_err(cmd, "--answer <Answer>", "requires an argument");
-            }
-            struct str_slice val = args[++i];
-            if (!val.len) return log_cmd_err(cmd, "--answer <Answer>", "cannot be blank");
-            if (gen_add_an(gen, val) != 0) {
-                return log_cmd_err(cmd, "--answer <answer>", "Bad format");
-            }
-        }
-        else if (slice_cmp_cstr(opt,  STR_LIT("--authority"))) {
-            if (i == narg - 1) {
-                return log_cmd_err(cmd, "--authority <Authority>", "requires an argument");
-            }
-            struct str_slice val = args[++i];
-            if (!val.len) return log_cmd_err(cmd, "--answer <Authority>", "cannot be blank");
-            if (gen_add_ns(gen, val) != 0) {
-                return log_cmd_err(cmd, "--answer <answer>", "Bad format");
-            }
-        }
-        else if (slice_cmp_cstr(opt,  STR_LIT("--additional"))) {
-            if (i == narg - 1) {
-                return log_cmd_err(cmd, "--additional <Additional>", "requires an argument");
-            }
-            struct str_slice val = args[++i];
-            if (!val.len) return log_cmd_err(cmd, "--Additional <Additional>", "cannot be blank");
-            if (gen_add_ar(gen, val) != 0) {
-                return log_cmd_err(cmd, "--additional <Additional>", "Bad format");
-            }
-        }
-        else if (slice_cmp_cstr(opt,  STR_LIT("--ttl"))) {
-            if (i == narg - 1) {
-                return log_cmd_err(cmd, "--ttl <ttl>", "requires an argument");
-            }
-            struct str_slice val = args[++i];
-            if (!val.len) return log_cmd_err(cmd, "--ttl <id>", "cannot be blank");
-            gen->ttl = (uint32_t) strtol(val.ptr, NULL, 16);
-        }
-        else if (slice_cmp_cstr(opt,  STR_LIT("--flags"))) {
-            if (i == narg - 1) return log_cmd_err(cmd, "--class <dns-class>", "requires an argument");
-            struct str_slice val = args[++i];
-            if (!val.len) return log_cmd_err(cmd, "--flags <dns-flags>", "Must look like AD:0|CD:0|RD:0");
+            break;
+        case RESP_FLAGS:
+            val = getopt_val(&parse);
             gen->dns_flags = get_dns_flags(gen->dns_flags, slice_toupper(val));
-        }
-        else if (slice_cmp_cstr(opt,  STR_LIT("--output"))) {
-            if (i == narg - 1) {
-                return log_cmd_err(cmd, "--output <FileName>", "requires an argument");
+            break;
+        case RESP_AN:
+            val = getopt_val(&parse);
+            if (gen_add_an(gen, val) != 0) {
+                return log_cmd_err(cmd, opts[parse.opt_idx].name, "Bad format");
             }
-            struct str_slice val = args[++i];
-            if (!val.len) return log_cmd_err(cmd, "--output <FileName>", "cannot be blank");
+            break;
+        case RESP_NS:
+            val = getopt_val(&parse);
+            if (gen_add_ns(gen, val) != 0) {
+                return log_cmd_err(cmd, opts[parse.opt_idx].name, "Bad format");
+            }
+            break;
+        case RESP_AR:
+            val = getopt_val(&parse);
+            if (gen_add_ar(gen, val) != 0) {
+                return log_cmd_err(cmd, opts[parse.opt_idx].name, "Bad format");
+            }
+            break;
+        case RESP_TTL:
+            val = getopt_val(&parse);
+            gen->ttl = (uint32_t) strtol(val.ptr, NULL, 16);
+            break;
+        case RESP_OUTPUT:
+            val = getopt_val(&parse);
             if (gen->output) free(gen->output);
             gen->output = slice_strdup(val);
             if (!gen->output) {
                 return log_errno_rf("strdup failed for --output");
             }
-        }
-        else {
-            return log_cmd_err(cmd, "unknown option", "%.*s", SLICE(opt));
+            break;
+        case ':': // missing value
+            return log_error_rf("Option: --%s requries an arg", opts[parse.opt_idx].name);
+        case '?': // unknown
+            return log_error_rf("Error: Unknown option %s", argv[parse.opt_idx]);
         }
     }
 
@@ -1062,68 +1059,87 @@ static int gen_setup_resp(void *state, int narg, struct str_slice args[])
     return 0;
 }
 
-static int gen_setup_query(void *state, int narg, struct str_slice args[])
+static int gen_setup_query(struct dns_gen *gen, int argc, char *argv[])
 {
-    struct dns_gen *gen = state;
     const char *cmd = "query";
 
     gen->mode = MODE_QUERY;
     gen->dns_flags = DNS_FLAGS_RD;
     gen->dns_class = DNS_CLASS_IN;
 
-    for (int i = 0; i < narg; i++) {
-        struct str_slice opt = args[i];
-        if (slice_cmp_cstr(opt,  STR_LIT("--name"))) {
-            if (i == narg - 1) {
-                return log_cmd_err(cmd, "--name <dns-name>", "requires an argument");
+    enum { 
+        QUERY_NAME= 0,
+        QUERY_TYPE,
+        QUERY_CLASS,
+        QUERY_FLAGS,
+        QUERY_SERVER,
+        QUERY_TIMEOUT,
+        QUERY_TCP,
+        QUERY_LOG,
+    };
+
+    struct get_opt opts[] = {
+        { "name",   "<NAME> A DNS name", 1,  QUERY_NAME },
+        { "type",  "<TYPE> A DNS type A|NS|CNAME|SOA|PTR|HINFO|MX|TXT|AAAA|SRV", 1, QUERY_TYPE },
+        { "class", "<CLASS> A DNS class IN|CS|CH|HS|ANY", 1, QUERY_CLASS },
+        { "flags", "<FLAGS> Query flags AD:0|CD:0|RD:0", 1, QUERY_FLAGS },
+        { "server", "<ADDR> Server IP address or name", 1, QUERY_SERVER },
+        { "timeout", "<TimeOut> Response timeout", 1, QUERY_TIMEOUT },
+        { "tcp",  "Use TCP to send msg (instead of UDP)", 0, QUERY_TCP },
+        { "log",  "Log DNS message that are sent", 1, QUERY_LOG },
+    };
+
+    struct getopt_parse parse;
+    struct str_slice val;
+    int opt;
+
+    getopt_init(&parse, argc, argv, ARRAY(opts));
+
+    while ((opt = getopt_next(&parse)) != -1) {
+        switch(opt) {
+        case QUERY_NAME:
+            val = getopt_val(&parse);
+            if (val.len > DNS_NAME_MAXSTR) {
+                return log_cmd_err(cmd, opts[parse.opt_idx].name, "name too big");
             }
-            struct str_slice val = args[++i];
-            if (!val.len) return log_cmd_err(cmd, "--name <dns-name>", "cannot be blank");
-            if (val.len > DNS_NAME_MAXSTR) return log_cmd_err(cmd, "--name <dns-name>", "name too big");
             memcpy(gen->dns_name, val.ptr, val.len);
             gen->dns_name[val.len] = '\0';
-        }
-        else if (slice_cmp_cstr(opt,  STR_LIT("--type"))) {
-            if (i == narg - 1) return log_cmd_err(cmd, "--type <dns-type>", "requires an argument");
-            struct str_slice val = args[++i];
+            break;
+        case QUERY_TYPE:
             gen->dns_type = get_dns_type(slice_toupper(val));
-            if (!gen->dns_type) return log_cmd_err(cmd, "--type <dns-type>", "Value Must be one of A|NS|CNAME|SOA|PTR|HINFO|MX|TXT|AAAA|SRV");
-        }
-        else if (slice_cmp_cstr(opt,  STR_LIT("--class"))) {
-            if (i == narg - 1) return log_cmd_err(cmd, "--class <dns-class>", "requires an argument");
-            struct str_slice val = args[++i];
-            if (!val.len) return log_cmd_err(cmd, "--type <dns-type>", "cannot be blank");
+            if (!gen->dns_type) {
+                return log_cmd_err(cmd, opts[parse.opt_idx].name, "Unknown type");
+            }
+            break;
+        case QUERY_CLASS:
             gen->dns_class = get_dns_class(slice_toupper(val));
-            if (!gen->dns_class) return log_cmd_err(cmd, "--type <dns-type>", "Value Must be one of IN|CS|CH|HS|ANY");
-        }
-        else if (slice_cmp_cstr(opt,  STR_LIT("--flags"))) {
-            if (i == narg - 1) return log_cmd_err(cmd, "--flags <Flags>", "requires an argument");
-            struct str_slice val = args[++i];
-            if (!val.len) return log_cmd_err(cmd, "--flags <Flags>", "Must look like AD:0|CD:0|RD:0");
+            if (!gen->dns_class) {
+                return log_cmd_err(cmd, opts[parse.opt_idx].name, "Unknown class");
+            }
+            break;
+        case QUERY_FLAGS:
             gen->dns_flags = get_dns_flags(gen->dns_flags, slice_toupper(val));
-        }
-        else if (slice_cmp_cstr(opt,  STR_LIT("--server"))) {
-            if (i == narg - 1) return log_cmd_err(cmd, "--server <ip-addr>", "requires an argument");
-            struct str_slice val = args[++i];
-            if (!val.len) return log_cmd_err(cmd, "--server <ip-addr>", "cannot be blank");
+            break;
+        case QUERY_SERVER:
             if (gen->serv_addr) free(gen->serv_addr);
             gen->serv_addr = slice_strdup(val); 
-            if (!gen->serv_addr) return log_errno_rf("copy ip_add failed");
-        }
-        else if (slice_cmp_cstr(opt,  STR_LIT("--timeout"))) {
-            if (i == narg - 1) return log_cmd_err(cmd, "--timeout <TimeOut>", "requires an argument");
-            struct str_slice val = args[++i];
-            if (!val.len) return log_cmd_err(cmd, "--timeout <TimeOuts>", "Cannot be blank");
+            if (!gen->serv_addr) {
+                return log_errno_rf("copy ip_add failed");
+            }
+            break;
+        case QUERY_TIMEOUT:
             gen->timeout = (uint16_t) strtol(val.ptr, NULL, 0);
-        }
-        else if (slice_cmp_cstr(opt,  STR_LIT("--tcp"))) {
+            break;
+        case QUERY_TCP:
             gen->is_tcp = 1;
-        }
-        else if (slice_cmp_cstr(opt,  STR_LIT("--log"))) {
+            break;
+        case QUERY_LOG:
             gen->log_msg = 1;
-        }
-        else {
-            return log_cmd_err(cmd, "unknown option", "%.*s", SLICE(opt));
+            break;
+        case ':': // missing value
+            return log_error_rf("Option: --%s requries an arg", opts[parse.opt_idx].name);
+        case '?': // unknown
+            return log_error_rf("Error: Unknown option %s", argv[parse.opt_idx]);
         }
     }
 
@@ -1139,8 +1155,9 @@ static int gen_setup_query(void *state, int narg, struct str_slice args[])
     return 0;
 }
 
-static int gen_usage(void *state, struct str_slice prog_name)
+static int gen_usage(char *path)
 {
+    struct str_slice prog_name = slice_rsplit1(slice_make_cstr(path), '/');
     FILE *out = stderr;
     int w= 10;
 
@@ -1184,15 +1201,23 @@ static int gen_usage(void *state, struct str_slice prog_name)
     return -1;
 }
 
-static struct util_cmd cmds[] =  {
-    { STR_LIT("query"), gen_setup_query },
-    { STR_LIT("fuzz"),  gen_setup_fuzz },
-    { STR_LIT("response"),  gen_setup_resp },
-};
-
 static int gen_parse_argv(struct dns_gen *gen, int argc, char *argv[])
 {
-    return util_parse_argv(gen, argc, argv, ARRAY(cmds), gen_usage);
+    if (argc < 2) return gen_usage(argv[0]);
+
+    struct str_slice mode = slice_make_cstr(argv[1]);
+
+    if (slice_cmp_cstr(mode, STR_LIT("query")))  {
+        return gen_setup_query(gen, argc, argv);
+    }
+    if (slice_cmp_cstr(mode, STR_LIT("response"))) {
+        return gen_setup_resp(gen, argc, argv);
+    }
+    if (slice_cmp_cstr(mode, STR_LIT("fuzz")))  {
+        return gen_setup_fuzz(gen, argc, argv);
+    }
+
+    return log_error_rf("Unsupported mode %.*s", (int) mode.len, mode.ptr);
 }
 
 void gen_free(struct dns_gen *gen)

@@ -1,16 +1,16 @@
-#ifndef __UTIL_H__
-#define __UTIL_H__
 /*
  * A util api for string and cmdline processing
  *
  */
+#ifndef __UTIL_H__
+#define __UTIL_H__
 
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <errno.h>
+#include <getopt.h>
 
 // system errors
 #define UTIL_OK    0
@@ -19,11 +19,16 @@
 
 // general purpose macros
 #define ARR_LEN(a) (sizeof(a) / sizeof(a[0]))
-#define ARRAY(a) ARR_LEN(a), a
+#define ARRAY(a)  ARR_LEN(a), a
 #define STR_LIT(s) (s), (sizeof(s) - 1)
-#define containerof(ptr, type, member) ((type *)((char *)(ptr) - offsetof(type, member)))
-#define make_ptr(ptr, offset) ((void *) ((char *) ptr + offset))
 #define ALIGN_UP(n, a) (((n) + (a) - 1) & ~((a) - 1))
+
+// ptr macros
+#define containerof(ptr, type, member) ((type *)((char *)(ptr) - offsetof(type, member)))
+#define make_ptr(ptr, offset)  ((void *)  ( ((char *) ptr) + offset))
+#define make_offset(base, ptr) ((uint64_t) ((char *) (ptr) - (char *) (base)))
+#define make_mem(val) ((void *) ((uintptr_t) val))
+#define unmake_mem(val) ((uintptr_t) (val))
 
 // Stringification macros
 #define XSTR(a) #a
@@ -56,93 +61,6 @@ static inline const char *ec_tostr(int len, const char *estr[len], int ec, const
     return str ?: def;
 }
 
-// buffer code
-struct rwbuf {
-    char *data;
-    int cap; // fixed size 
-    int widx;  // start of bytes to read
-    int ridx;
-};
-
-static inline void rwbuf_init(struct rwbuf *buf, char *data, int len)
-{
-    buf->data = data;
-    buf->cap = len;
-    buf->widx = 0;
-    buf->ridx = 0;
-}
-
-#define RWBUF_INIT(_buf, _len) { .data = (_buf), .cap = (_len), .widx = 0, .ridx = 0 }
-
-
-static inline char *rwbuf_wpos(struct rwbuf *buf)
-{
-    return buf->data + buf->widx;
-}
-
-static inline int rwbuf_wrem(struct rwbuf *buf)
-{
-    return buf->cap - buf->widx;
-}
-
-// bytes writen to buffer available to read
-static inline int rwbuf_avail(struct rwbuf *buf)
-{
-    return buf->widx - buf->ridx;
-}
-
-static inline char *rwbuf_rpos(struct rwbuf *buf)
-{
-    return buf->data + buf->ridx;
-}
-
-static inline int rwbuf_rrem(struct rwbuf *buf)
-{
-    return buf->widx - buf->ridx;
-}
-
-// resever len bytes in buf or error
-static inline char *rwbuf_wres(struct rwbuf *buf, int len)
-{
-    int wrem = buf->cap - buf->widx;
-
-    if (wrem < len) {
-        // not enough space
-        return  NULL;
-    }
-
-    char *wptr = buf->data + buf->widx;
-    buf->widx += len;
-
-    return wptr;
-}
-
-static inline char *rwbuf_strcat(struct rwbuf *buf, const char *str, int len)
-{
-    char *wptr = rwbuf_wres(buf, len);
-
-    if (wptr) {
-        memcpy(wptr, str, len);
-    }
-
-    return wptr;
-}
-
-static inline char *rwbuf_strcat_sep(struct rwbuf *buf, int ch, const char *str, int len)
-{
-    int add_ch = (buf->widx > 0) ? 1 : 0;
-    char *wptr = rwbuf_wres(buf, len + add_ch);
-
-    if (wptr) {
-        if (add_ch) *wptr++ = ch;
-        memcpy(wptr, str, len);
-    }
-
-    return wptr;
-}
-
-
-
 // string handling code
 struct str_slice {
     char *ptr;
@@ -171,9 +89,19 @@ static inline struct str_slice slice_copy(struct str_slice val)
     return val;
 }
 
-static inline int slice_cmp_cstr(struct str_slice str, const char *cstr, int len)
+static inline int slice_cmp_cstr(struct str_slice str, const char *cstr, size_t len)
 {
     return len == str.len && memcmp(str.ptr, cstr, len) == 0;
+}
+
+static inline struct str_slice slice_unbracket(struct str_slice str, int left, int right)
+{
+    if (str.len && str.ptr[0] == left) {
+        str.ptr++; str.len--;
+        if (str.ptr[str.len] == right) str.len--;
+    }
+
+    return str;
 }
 
 static inline struct str_slice slice_rsplit(struct str_slice *src, int ch)
@@ -275,8 +203,6 @@ static inline void str_toupper(char *str, size_t len)
     }
 }
 
-char *itoa(char *buf, int len, int val);
-char *int_tostr(int val);
 
 static inline int iswhite(int ch) 
 {
@@ -347,16 +273,9 @@ static inline struct str_slice slice_tolower(struct str_slice str)
     return str;
 }
 
-struct util_cmd {
-    const char *name;
-    size_t len;
-    int (*func)(void *state, int narg, struct str_slice args[]);
-};
-
-int util_parse_argv(void *state,
-    int argc, char *argv[],
-    int ncmd, struct util_cmd cmds[ncmd],
-    int (*usage_func)(void *state, struct str_slice prog));
+char *slice_strdup(const struct str_slice str);
+char *itoa(char *buf, int len, int val);
+char *int_tostr(int val);
 
 char *gen_path(const char *dir, const char *name);
 
@@ -383,5 +302,145 @@ static inline uint64_t dbj2a_hash_slice(const struct str_slice str)
 {
     return dbj2a_hash(str.ptr, str.len);
 }
+
+// wrapper around getopt_long
+#define GETOPT_NOARG  0
+#define GETOPT_REQARG 1
+#define GETOPT_OPTARG 2
+#define GETOPT_MAX 20
+#define GETDEF(x) (x), 1
+
+struct get_opt {
+    const char *name;
+    const char *desc;
+    int has_arg;
+    int val;
+    // TODO use a union
+    int def_val;
+    unsigned int have_defval : 1;
+};
+
+struct getopt_parse {
+    char **argv;
+    size_t argc;
+    size_t num_opt;
+    struct get_opt *opts;
+    struct str_slice val;
+    int opt_idx;
+    struct option long_opts[GETOPT_MAX+1];
+};
+
+int getopt_init(struct getopt_parse *parse, 
+    int argc, char *argv[],
+    size_t num_opt, struct get_opt opts[num_opt]);
+int getopt_next(struct getopt_parse *parse);
+
+static inline struct str_slice getopt_val(struct getopt_parse *parse)
+{
+    return parse->val;
+}
+
+void print_usage(const char *cmd, 
+    int num_opt, const struct get_opt opt[num_opt],
+    int num_exa, char *examples[num_exa]);
+
+// delete
+struct util_cmd {
+    const char *name;
+    size_t len;
+    int (*func)(void *state, int narg, struct str_slice args[]);
+};
+
+int util_parse_argv(void *state,
+    int argc, char *argv[],
+    int ncmd, struct util_cmd cmds[ncmd],
+    int (*usage_func)(void *state, struct str_slice prog));
+
+
+// buffer code
+struct rwbuf {
+    char *data;
+    int cap; // fixed size 
+    int widx;  // start of bytes to read
+    int ridx;
+};
+
+static inline void rwbuf_init(struct rwbuf *buf, char *data, int len)
+{
+    buf->data = data;
+    buf->cap = len;
+    buf->widx = 0;
+    buf->ridx = 0;
+}
+
+#define RWBUF_INIT(_buf, _len) { .data = (_buf), .cap = (_len), .widx = 0, .ridx = 0 }
+
+
+static inline char *rwbuf_wpos(struct rwbuf *buf)
+{
+    return buf->data + buf->widx;
+}
+
+static inline int rwbuf_wrem(struct rwbuf *buf)
+{
+    return buf->cap - buf->widx;
+}
+
+// bytes writen to buffer available to read
+static inline int rwbuf_avail(struct rwbuf *buf)
+{
+    return buf->widx - buf->ridx;
+}
+
+static inline char *rwbuf_rpos(struct rwbuf *buf)
+{
+    return buf->data + buf->ridx;
+}
+
+static inline int rwbuf_rrem(struct rwbuf *buf)
+{
+    return buf->widx - buf->ridx;
+}
+
+// resever len bytes in buf or error
+static inline char *rwbuf_wres(struct rwbuf *buf, int len)
+{
+    int wrem = buf->cap - buf->widx;
+
+    if (wrem < len) {
+        // not enough space
+        return  NULL;
+    }
+
+    char *wptr = buf->data + buf->widx;
+    buf->widx += len;
+
+    return wptr;
+}
+
+static inline char *rwbuf_strcat(struct rwbuf *buf, const char *str, int len)
+{
+    char *wptr = rwbuf_wres(buf, len);
+
+    if (wptr) {
+        memcpy(wptr, str, len);
+    }
+
+    return wptr;
+}
+
+static inline char *rwbuf_strcat_sep(struct rwbuf *buf, int ch, const char *str, int len)
+{
+    int add_ch = (buf->widx > 0) ? 1 : 0;
+    char *wptr = rwbuf_wres(buf, len + add_ch);
+
+    if (wptr) {
+        if (add_ch) *wptr++ = ch;
+        memcpy(wptr, str, len);
+    }
+
+    return wptr;
+}
+
 
 #endif
