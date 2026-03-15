@@ -11,6 +11,7 @@ Q=
 endif
 
 DEBUG ?= 0
+VALGRIND ?= 0
 
 ifeq ($(V),1)
 cmd_CC  = $(CC)
@@ -27,11 +28,11 @@ LD = gcc
 CTAGS = ctags
 
 # compiler flags
-CFLAGS += -D_GNU_SOURCE -Wall -Werror -O2 -Isrc -MMD -MP
+NO_EXTRA = -Wno-missing-field-initializers
+CFLAGS += -D_GNU_SOURCE -Wall -Werror -Wextra $(NO_EXTRA) -O2 -Isrc -MMD -MP
 ifeq ($(DEBUG), 1)
-	CFLAGS += -O0 -g
+	CFLAGS += -O0 -ggdb3
 endif
-LDFLAGS =
 
 
 # dirs
@@ -58,7 +59,7 @@ DNS_INSPECT_OBJS = $(DNS_INSPECT_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 DNS_INSPECT_DEPS = $(DNS_INSPECT_OBJS:.o=.d)
 -include $(DNS_INSPECT_DEPS)
 $(DNS_INSPECT): $(DNS_INSPECT_OBJS) | $(BUILD_DIR)
-	$(cmd_LD) $(LDFLAGS) $(DNS_INSPECT_OBJS) -o $@
+	$(cmd_LD) $(CFLAGS) $(LDFLAGS) $(DNS_INSPECT_OBJS) -o $@
 
 # dns-gen
 DNS_GEN_SRCS = src/util.c src/log.c src/pcap.c src/dns_proto.c  src/dns_gen.c
@@ -66,7 +67,7 @@ DNS_GEN_OBJS = $(DNS_GEN_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 DNS_GEN_DEPS = $(DNS_GEN_OBJS:.o=.d)
 -include $(DNS_GEN_DEPS)
 $(DNS_GEN): $(DNS_GEN_OBJS) | $(BUILD_DIR)
-	$(cmd_LD) $(LDFLAGS) $(DNS_GEN_OBJS) -o $@
+	$(cmd_LD) $(CFLAGS) $(LDFLAGS) $(DNS_GEN_OBJS) -o $@
 
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
 	$(cmd_CC) $(CFLAGS) -c $< -o $@
