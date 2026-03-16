@@ -611,14 +611,14 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
     // decode name
     char *wptr = dec->msg;
     char *end = wptr + sizeof(dec->msg);
-    char *name = dec->msg;
+    char *name = wptr;
     size_t len;
     int rc = parse_dns_name(dec->pkt_buf, dec->pkt_len, dec->offset, name, end - wptr,  &len);
     if (rc != 0) {
         return dns_dec_err(dec, DNS_DEC_RECORD, DNS_DEC_NAME, rc);
     }
     dec->offset += len;
-    wptr += len;
+    wptr += strlen(name) + 1;
 
     if (rec) {
         rec->name = msg_store_name(msg, name);
@@ -1041,7 +1041,7 @@ static int parse_question(struct dns_dec *dec, struct dns_msg *msg)
     }
 
     dec->offset += consumed;
-    wptr += consumed;
+    wptr += strlen(name) + 1;
 
     if (dec->offset + 4 > dec->pkt_len) {
         return dns_dec_err(dec, DNS_DEC_QUESTION, DNS_DEC_HDR, DNS_ERR_FLDPKTLEN);
