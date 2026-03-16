@@ -254,33 +254,32 @@ static int pcap_write_hdr(struct pcap_file *file)
     return 0;
 }
 
-static int pcap_get_ts(struct pcap_file *file)
+static uint64_t pcap_get_ts(struct pcap_file *file)
 {
     struct timespec ts;
 
     if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
-        return log_errno_rf("clock_gettime MONOTTONIC failed");
+        log_errno_rf("clock_gettime MONOTTONIC failed");
+        return 0;
     }
 
-    file->usec_ts = (uint64_t)ts.tv_sec * 1000000 + (ts.tv_nsec / 1000);
+    uint64_t mono_usec = (uint64_t) ts.tv_sec * 1000000 + (ts.tv_nsec / 1000);
 
-    return 0;
+    return mono_usec + file->epoch_usec;
 }
 
 static int pcap_write_rec(struct pcap_file *file, void *buf, size_t len)
 {
-    // timestamp
-    int rc = pcap_get_ts(file);
+    uint64_t usec_ts = pcap_get_ts(file);
 
-    // setup record
     struct pcap_rec rec = {
-        .ts_sec   = file->usec_ts >> 32,
-        .ts_usec  = file->usec_ts & 0xFFFFFFFF,
+        .ts_sec   = usec_ts >> 32,
+        .ts_usec  = usec_ts & 0xFFFFFFFF,
         .incl_len = len,
         .orig_len = len
     };
 
-    pcap_write_block(file, "pcap-rec", &rec, sizeof(rec));
+    int rc = pcap_write_block(file, "pcap-rec", &rec, sizeof(rec));
     if (rc) return rc;
 
     if (file->trace_rec) {
@@ -491,24 +490,20 @@ static size_t pcap_read_epb(struct pcap_file *file, void *buf, size_t buf_len)
 
 static int pcap_write_epb(struct pcap_file *file, void *buf, size_t buf_len)
 {
-    // timestamp
-    int rc = pcap_get_ts(file);
-    if (rc) return rc;
-
-    // write the header
+    uint64_t usec_ts = pcap_get_ts(file);
     uint32_t pad_len = calc_padlen(buf_len);
 
     struct pcap_epb_hdr epb = {
         .type = PCAP_EPB_TYPE,
-        .tot_len = sizeof(epb) + buf_len + pad_len + 4,
-        .if_id   = 0,
-        .ts_high = file->usec_ts >> 32,
-        .ts_low  = file->usec_ts & 0xFFFFFFFF,
+        .tot_len  = sizeof(epb) + buf_len + pad_len + 4,
+        .if_id    = 0,
+        .ts_high  = usec_ts >> 32,
+        .ts_low   = usec_ts & 0xFFFFFFFF,
         .incl_len = buf_len,
         .orig_len = buf_len
     };
 
-    rc = pcap_write_block(file, "EPB", &epb, sizeof(epb));
+    int rc = pcap_write_block(file, "EPB", &epb, sizeof(epb));
     if (rc) return rc;
 
     if (file->trace_rec) {
@@ -686,7 +681,7 @@ static ssize_t pcap_read_xpb(struct pcap_file *file, void *buf, size_t len)
     return 0;
 }
 
-// write pcapng packet data to either SPB or EPB
+// write PCAPNG packet data block using either SPB or EPB
 static int pcap_write_xpb(struct pcap_file *file, void *buf, size_t len)
 {
     if (!file->have_idb) {
@@ -694,11 +689,37 @@ static int pcap_write_xpb(struct pcap_file *file, void *buf, size_t len)
         if (rc) return rc;
     }
    
-    int rc = file->use_epb
-        ? pcap_write_epb(file, buf, len)
-        : pcap_write_spb(file, buf, len);
+    int rc = file->use_spb
+        ? pcap_write_spb(file, buf, len)
+        : pcap_write_epb(file, buf, len);
         
     return rc;
+}
+
+static int pcap_setup_ts(struct pcap_file *file)
+{
+    struct timespec real_ts, mono_ts;
+
+    if (clock_gettime(CLOCK_REALTIME, &real_ts) != 0) {
+        return log_errno_rf("clock_gettime REALTIME failed");
+    }
+    if (clock_gettime(CLOCK_MONOTONIC, &mono_ts) != 0) {
+        return log_errno_rf("clock_gettime MONOTONIC failed");
+    }
+
+    // calc epoch offset
+    uint64_t real_usec = real_ts.tv_sec * 1000000LL + (real_ts.tv_nsec / 1000);
+    uint64_t mono_usec = mono_ts.tv_sec * 1000000LL + (mono_ts.tv_nsec / 1000);
+
+    if (real_usec >= mono_usec) {
+        file->epoch_usec = real_usec - mono_usec;
+    }
+    else {
+        log_error("clock_gettime REALTIME < MONOTONIC !!!");
+        file->epoch_usec = 0;
+    }
+
+    return 0;
 }
 
 static int pcap_setup_fmt(struct pcap_file *file)
@@ -727,6 +748,8 @@ static int pcap_setup_fmt(struct pcap_file *file)
     default: 
         return log_error_rf("pcap fmt %d unsupported", file->fmt);
     }
+
+
 
     return 0;
 }
@@ -763,10 +786,12 @@ struct pcap_file *pcap_open(const char *path_name, uint32_t flags)
     file->fmt = fmt;
     if (flags & PCAP_TRACE) file->trace_rec = 1;
     if (flags & PCAP_READ) file->is_reader = 1;
+    if (flags & PCAP_SPB) file->use_spb = 1;
 
     if (pcap_open_file(file, path_name) != 0) goto err;
     if (pcap_setup_fmt(file) != 0) goto err;
     if (pcap_setup_hdr(file) != 0) goto err;
+    if (pcap_setup_ts(file)  != 0) goto err;
 
     // all done
     return file;

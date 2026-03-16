@@ -136,11 +136,11 @@ struct pcap_file {
     int (*write_hdr)(struct pcap_file *file);
     int (*write_pkt)(struct pcap_file *file, void *buf, size_t len);
     int sys_errno; // saved errno
-    uint64_t usec_ts;
+    uint64_t epoch_usec;
     unsigned int is_reader : 1; // we read pcap
     unsigned int must_swap : 1; // need to swap endian
     unsigned int have_idb  : 1; // read or set IDB
-    unsigned int use_epb   : 1; // write a epb or spb
+    unsigned int use_spb   : 1; // Use SPB instead of default EPB
     unsigned int sys_err   : 1;
     unsigned int have_eof  : 1;
     unsigned int trace_rec : 1;
@@ -155,6 +155,7 @@ struct pcap_file {
 #define PCAP_FMTLG  0x08 // pcap legacy/classic
 #define PCAP_FMTNG  0x10 // pcap nextgen (pcapng)
 #define PCAP_TRACE  0x20 // trace pcap records
+#define PCAP_SPB    0x40 // Use Simple Packet Blocks for PCAPNG
 
 #define PCAP_SNAPLEN 65535
 

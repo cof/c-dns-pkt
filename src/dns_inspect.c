@@ -404,7 +404,6 @@ static int set_interface(struct dns_sniff *sniff, struct get_opt *opt, const cha
     }
 
     memcpy(sniff->dev_name, name, len);
-
     sniff->dev_name[len] = '\0';
 
     sniff->dev_index = if_nametoindex(sniff->dev_name);
