@@ -933,9 +933,9 @@ static int gen_usage(char *path)
     // list options
     for (size_t i = 1; i < ARR_LEN(cmds); i++) {
         fprintf(out, "%s Options:\n", cmds[i].name);
-        for (size_t j = 0; j < ARR_LEN(query_opts); j++) {
-            struct get_opt *opt = &query_opts[j];
-            if (!opt->name) break;
+        struct get_opt *opts = cmds[i].opts;
+        for (size_t j = 0; opts[j].name; j++) {
+            struct get_opt *opt = &opts[j];
             fprintf(out, "  --%-*s %s\n", w, opt->name, opt->desc);
         }
         fprintf(out, "\n");
