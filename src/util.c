@@ -1,7 +1,6 @@
 /*
  *
  */
-
 #include <stdio.h>
 #include <string.h>
 #include <stdarg.h>
@@ -101,7 +100,7 @@ int getopt_init(struct getopt_parse *parse,
     // disable getopt error reporiing
     opterr = 0;
 
-    /// convert to getopt_long fmt
+    // convert to getopt_long fmt
     size_t i = 0;
     while (1) {
         struct option *lopt = &parse->long_opts[i];
