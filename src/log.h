@@ -1,6 +1,8 @@
 #ifndef __LOG_H__
 #define __LOG_H__
 
+#include <errno.h>
+
 // logger
 void log_msg(const char *msg);
 void log_info(const char *what, const char *fmt, ...)
@@ -11,6 +13,8 @@ void _log_error(const char *file, int line, const char *func, int ec, const char
     __attribute__((format(printf, 5, 6)));
 void _fatal_error(const char *file, int line, const char *func, int ec, const char *fmt, ...)
     __attribute__((format(printf, 5, 6)));
+
+void log_argv(const char *what, int argc, char *argv[]);
 
 #define log_msg_rf(msg) ({ \
     log_msg(msg); \
@@ -31,6 +35,11 @@ void _fatal_error(const char *file, int line, const char *func, int ec, const ch
 #define log_error_rf(...) ({ \
     _log_error(__FILE__, __LINE__, __func__, 0,  __VA_ARGS__); \
     UTIL_FAIL; \
+})
+
+#define log_error_re(ec, ...) ({ \
+    _log_error(__FILE__, __LINE__, __func__, 0,  __VA_ARGS__); \
+    (ec); \
 })
 
 // report estr, return 0
