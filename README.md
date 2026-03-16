@@ -18,8 +18,8 @@ A DNS packet inspector and DNS message generator.
 
 ## Design Notes
 
-- DNS message encode/decode logic in dns_proto.c and API exposed in dns_proto.h
-- PCAP record read/write logic in pcap.c and API exposed in pcap.
+- Full rfc1035 DNS message encode/decode in dns_proto.c and API exposed in dns_proto.h
+- PCAP/PCAPNG read/write support in pcap.c and API exposed in pcap.h
 - String processing, cmd-line parsing and logging in util.c and API exposed in util.h
 - Both dns-inspect and dns-gen use UTIL api for strings,cmd-lines and error logging.
 - Both dns-inspect and dns-gen use DNS api to read/write DNS messages
@@ -134,39 +134,47 @@ A DNS message and DNS packet file generator tool.
 
 **Example usage**
 
-    $ Usage: dns-gen [MODE] [OPTIONS]
-    MODE:
-    query      send DNS query message to a server
-     fuzz      create a dns mesage with bad values
-    response   create a dns reponse message
+	Usage: dns-gen [MODE] [OPTIONS]
 
-    query Options:
-      --name    <NAME> A DNS name
-      --type    <TYPE> A DNS type A|NS|CNAME|SOA|PTR|HINFO|MX|TXT|AAAA|SRV
-      --class   <CLASS> A DNS class IN|CS|CH|HS|ANY
-      --flags   <FLAGS> Query flags AD:0|CD:0|RD:0
-      --server  <ADDR> Server IP address or name
-      --timeout <TIMEOUT> Response timeout
-      --tcp      Use TCP to send msg (instead of UDP)
-      --log      Log DNS message that are sent
-    response Options:
-      --id        <ID> A DNS header id
-      --flags   <FLAGS> Query flags Query flags name:value name=AD|CD|RD and val=0|1
-      --name      <NAME> A DNS name
-      --answer    <ANS> answer record
-      --authority <AUTH> answer record
-      --additional <ADD> adrecord
-      --output    <FILE> pcap file name
-    fuzz Options:
-      --type   <FUZZ> Fuzz type  hdr-trunc|hdr-opcode|hdr-rcode|hdr-qd|qd-cmploop|qd-badjmp
-      --server  <ADDR> Server IP address or name
-      --output  <FILE> pcap file name
-    
-    Examples:
-      dns-gen query --name example.com --type A --server 8.8.8.8
-      dns-gen query --name example.com --type A --server 8.8.8.8 --flags 'AD:1|CD:1|RD:0'
-      dns-gen fuzz --type qd-cmploop --server 127.0.0.1
-      dns-gen response --id 0x1234 --name test.local --answer 192.168.1.1 --output packet.bin
+	MODE:
+	  query      send DNS query message to a server
+	  response   create a dns mesage with bad values
+	  fuzz       create a dns reponse message
+
+	query Options:
+	  --name       <NAME> A DNS name
+	  --type       <TYPE> A DNS type A|NS|CNAME|SOA|PTR|HINFO|MX|TXT|AAAA|SRV
+	  --class      <CLASS> A DNS class IN|CS|CH|HS|ANY
+	  --flags      <FLAGS> Query flags AD:0|CD:0|RD:0
+	  --server     <ADDR> Server IP address or name
+	  --timeout    <TimeOut> Response timeout
+	  --tcp        Use TCP to send msg (instead of UDP)
+	  --log        Log DNS message that are sent
+
+	response Options:
+	  --id         <ID> A DNS header id
+	  --name       <NAME> A DNS name
+	  --flags      <FLAGS> Query flags name:value name=AD|CD|RD and val=0|1
+	  --answer     <ANS>  answer record
+	  --authority  <AUTH> auth record
+	  --additional <ADD>  add record
+	  --output     <FILE> pcap file name
+	  --pcapng     Use pcapng file fmt
+
+	fuzz Options:
+	  --type       <FUZZ> type must be hdr-trunc|hdr-opcode|hdr-rcode|hdr-qdcnt|qd-cmploop|qd-badjmp
+	  --server     <ADDR> Server address to send pdu to
+	  --output     <FILE> pcap file name
+	  --pcapng     Use pcapng file fmt
+
+	Examples:
+	  dns-gen query --name example.com --type A --server 8.8.8.8
+	  dns-gen query --name example.com --type A --server 8.8.8.8 --flags 'AD:1|CD:1|RD:0'
+	  dns-gen query --name example.com --type MX --server 8.8.8.8 --tcp
+	  dns-gen fuzz --type qd-cmploop --server 127.0.0.1
+	  dns-gen fuzz --type qd-badjmp --output f.pcapng --pcapng
+	  dns-gen response --id 0x1234 --name test.local --answer 192.168.1.1 --output packet.bin
+
 
 ### 2.1 **Command: query**
 Sends a DNS query message to a server
@@ -175,7 +183,7 @@ Sends a DNS query message to a server
 
 - Can send a DNS query message to a server
 - Supports multiple query options
-- Can validate message befor they are sent
+- Can validate message before they are sent
 - Supports both UDP and TCP
 - Supports timeouts for send/receive messages
 
@@ -206,6 +214,7 @@ Generates DNS messages and save them to packet capture file.
 - Uses cmd line opts to control message generation
 - Supports multiple sections (AN|NS|AR) and record types
 - Writes DNS messages to a pcap file
+- Supports both PCAP and PCAPNG file formats
 
 **Design**
 
@@ -215,8 +224,13 @@ Generates DNS messages and save them to packet capture file.
 
 **Example usage**
 
-	$ ./dns-gen response --id 0x1234 --name test.local --answer 192.168.1.1 --output packet.pcap
-	Wrote 38 bytes to packet.pcap
+	$ ./dns-gen response --id 0x1234 --name test.local --answer 192.168.1.1 --answer 172.168.0.10 --authority example.com --output f.pcapng --pcapng
+	Wrote 79 bytes to f.pcapng
+	$ ./dns-inspect readpcap --file f.pcapng 
+	[QUERY] ID 0x1234 QR:0 OPCODE:QUERY 
+	  Answer: test.local 0 A 192.168.1.1
+	  Answer: test.local 0 A 172.168.0.10
+	  Authority: test.local 0 CNAME example.com
 
 ### 2.1 **Command: fuzz**
 Generates invalid DNS messages for sending to a server or pcap file.
@@ -225,6 +239,7 @@ Generates invalid DNS messages for sending to a server or pcap file.
 
 - Uses cmd line opts to control message generation
 - Writes DNS messages to a pcap file
+- Supports both PCAP and PCAPNG file formats
 
 **Example usage**
 
