@@ -61,6 +61,8 @@
 #define PCAP_BOM_NATIVE  0x1A2B3C4D
 #define PCAP_BOM_SWAP    0x4D3C2B1A
 
+// link types
+#define LINKTYPE_ETHERNET 1
 
 // PCAP Capture File Format - draft-ietf-opsawg-pcap-06
 
@@ -86,28 +88,28 @@ struct pcap_rec {
 // PCAPng file format - draft-ietf-opsawg-pcapng-04
 
 // 28 byte section header
-struct pcapng_shb_hdr {
+struct pcap_shb_hdr {
     uint32_t type;      // Block Type = 0x0A0D0D0A
-    uint32_t total_len; // Block Total Length
+    uint32_t tot_len;   // Block Total Length
     uint32_t magic;     // Byte-Order Magic
     uint16_t ver_major; // Major Version
     uint16_t ver_minor; // Minor Version
-    int64_t sec_len;    // Section Length
+    int64_t  sec_len;  // Section Length
 };
 
 // 16 byte interface description header
-struct pcapng_idb_hdr {
+struct pcap_idb_hdr {
     uint32_t type; //  Block Type = 0x00000001
-    uint32_t total_len;
+    uint32_t tot_len;
     uint16_t link_type;
     uint16_t reserved;
     uint32_t snap_len;
 };
 
 // 32 byte Enhanced Packet Block header
-struct pcapng_epb_hdr {
+struct pcap_epb_hdr {
     uint32_t type;      // Block Type = 0x00000006
-    uint32_t total_len; // Block Total Length
+    uint32_t tot_len; // Block Total Length
     uint32_t if_id;     // Interface ID
     uint32_t ts_high;   // Timestamp Upper 32 bits
     uint32_t ts_low;    // Timesgtamp lower 32 bits
@@ -116,29 +118,30 @@ struct pcapng_epb_hdr {
 };
 
 // 12 byte Simple Packet Block header
-struct pcapng_spb_hdr {
+struct pcap_spb_hdr {
     uint32_t type;      // Block Type = 0x00000003
-    uint32_t total_len; // Block Total Length
+    uint32_t tot_len; // Block Total Length
     uint32_t orig_len;  // Original Packet Length  
 };
 
 struct pcap_file {
     FILE *fp;
     union {
-        struct pcap_hdr     pcap;
-        struct pcapng_shb_hdr pcapng;
-    } hdr;
-    struct pcapng_idb_hdr idb;  
+        struct pcap_hdr     hdr;
+        struct pcap_shb_hdr shb;
+    };
+    struct pcap_idb_hdr idb;  
     int fmt; // PCAP_FMTLEG, PCAP_FMTNG
     int (*read_hdr)(struct pcap_file *file);
     ssize_t (*read_pkt)(struct pcap_file *file, void *buf, size_t len);
     int (*write_hdr)(struct pcap_file *file);
     int (*write_pkt)(struct pcap_file *file, void *buf, size_t len);
     int sys_errno; // saved errno
-    struct timespec ts_now; // for writing
+    uint64_t usec_ts;
     unsigned int is_reader : 1; // we read pcap
     unsigned int must_swap : 1; // need to swap endian
-    unsigned int have_idb  : 1; // loaded a idb
+    unsigned int have_idb  : 1; // read or set IDB
+    unsigned int use_epb   : 1; // write a epb or spb
     unsigned int sys_err   : 1;
     unsigned int have_eof  : 1;
     unsigned int trace_rec : 1;
@@ -147,15 +150,17 @@ struct pcap_file {
 };
 
 // mode flags
-#define PCAP_READ   0x1 // open for reading
-#define PCAP_WRITE  0x2 // open for writing
-#define PCAP_FMTDET 0x4 // detect pcap|pcapng
-#define PCAP_FMTLEG 0x8 // pcap classic
+#define PCAP_READ   0x01 // open for reading
+#define PCAP_WRITE  0x02 // open for writing
+#define PCAP_FMTDET 0x04 // detect pcap|pcapng
+#define PCAP_FMTLG  0x08 // pcap legacy/classic
 #define PCAP_FMTNG  0x10 // pcap nextgen (pcapng)
 #define PCAP_TRACE  0x20 // trace pcap records
 
+#define PCAP_SNAPLEN 65535
+
 // helper functions
-static inline int pcap_islegacy(uint32_t magic)
+static inline int pcap_islg(uint32_t magic)
 {
     if (magic == PCAP_MAGIC_LE_USEC) return 1;
     if (magic == PCAP_MAGIC_LE_NSEC) return 1;
@@ -189,7 +194,7 @@ static inline int pcapng_isnative(uint32_t magic)
 
 
 // API
-struct pcap_file *pcap_open(const char *path, int mode);
+struct pcap_file *pcap_open(const char *path, uint32_t mode);
 int pcap_close(struct pcap_file *pf);
 size_t pcap_read(struct pcap_file *pf, void *buf, size_t len);
 int pcap_write(struct pcap_file *pf, void *buf, size_t len);

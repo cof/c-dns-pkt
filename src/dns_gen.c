@@ -93,6 +93,7 @@ struct dns_gen {
     unsigned int sock_err   : 1;
     unsigned int recv_close : 1;
     unsigned int log_msg    : 1;
+    unsigned int use_pcapng : 1;
 };
 
 
@@ -288,7 +289,7 @@ static int gen_print_dnsrsp(struct dns_gen *gen)
     *desc = '\0';
     if (rec) {
         int rc = dns_rec_tostr(rec, 0, desc, sizeof(gen->emsg));
-        if (rc) return rc;
+        if (rc < 0) return rc;
     }
     else if (dns_msg_cnt_rec(rsp) == 0) {
         desc = "<None>";
@@ -528,6 +529,7 @@ static int gen_enc_dnsmsg(struct dns_gen *gen)
 {
     uint8_t *wptr = gen->pkt_buf + gen->pkt_len;
     size_t  wlen = sizeof(gen->pkt_buf) - gen->pkt_len;
+
     ssize_t pkt_len = dns_msg_encode(&gen->send, wptr, wlen);
 
     if (pkt_len <= 0) {
@@ -551,7 +553,10 @@ static int gen_dec_dnsmsg(struct dns_gen *gen)
 
 static int gen_pcap_rec(struct dns_gen *gen)
 {
-    gen->pcap = pcap_open(gen->output, PCAP_WRITE);
+    uint32_t flags = PCAP_WRITE;
+    if (gen->use_pcapng) flags |= PCAP_FMTNG;
+
+    gen->pcap = pcap_open(gen->output, flags);
     if (!gen->pcap) return -1;
 
     int rc = pcap_write(gen->pcap, gen->pkt_buf, gen->pkt_len);
@@ -847,9 +852,11 @@ enum {
     RESP_AR,
     RESP_TTL,
     RESP_OUTPUT,
+    RESP_PCAPNG,
     FUZZ_TYPE,
     FUZZ_SERVER,
     FUZZ_OUTPUT,
+    FUZZ_PCAPNG
 };
 
 
@@ -874,6 +881,7 @@ struct get_opt resp_opts[] = {
     { "authority" , "<AUTH> auth record",    1, RESP_NS },
     { "additional", "<ADD>  add record",     1, RESP_AR },
     { "output"    , "<FILE> pcap file name", 1, RESP_OUTPUT },
+    { "pcapng"    , "Use pcapng file fmt",   0, RESP_PCAPNG  },
     { NULL }
 };
 
@@ -881,13 +889,16 @@ struct get_opt fuzz_opts[] = {
     { "type",   "<FUZZ> type must be hdr-trunc|hdr-opcode|hdr-rcode|hdr-qdcnt|qd-cmploop|qd-badjmp", 1, FUZZ_TYPE },
     { "server", "<ADDR> Server address to send pdu to",  1, FUZZ_SERVER },
     { "output", "<FILE> pcap file name", 1, FUZZ_OUTPUT },
+    { "pcapng" , "Use pcapng file fmt",  0, FUZZ_PCAPNG  },
     { NULL }
 };
 
 static const char *examples[] = {
     "query --name example.com --type A --server 8.8.8.8",
     "query --name example.com --type A --server 8.8.8.8 --flags 'AD:1|CD:1|RD:0'",
+    "query --name example.com --type MX --server 8.8.8.8 --tcp",
     "fuzz --type qd-cmploop --server 127.0.0.1",
+    "fuzz --type qd-badjmp --output f.pcapng --pcapng",
     "response --id 0x1234 --name test.local --answer 192.168.1.1 --output packet.bin"
 };
 
@@ -989,7 +1000,7 @@ static int set_dns_class(struct dns_gen *gen, struct get_opt *opt, const char *s
 static int set_dns_flags(struct dns_gen *gen, struct get_opt *opt, char *str)
 {
     struct str_slice flags_str = slice_make_cstr(str);
-    uint16_t flags;
+    uint16_t flags = 0;
 
     while (flags_str.len) {
         struct str_slice flag = slice_split(&flags_str, '|');
@@ -1154,10 +1165,12 @@ static int gen_parse_argv(struct dns_gen *gen, int argc, char *argv[])
         case RESP_AR:  rc = add_ar(gen, opt, getopt_str(&parse)); break;
         case RESP_TTL: rc = set_timeout(gen, opt, getopt_str(&parse)); break;
         case RESP_OUTPUT: rc = set_output(gen, opt, getopt_str(&parse)); break;
+        case RESP_PCAPNG: gen->use_pcapng = 1; break;
         // fuzz
         case FUZZ_TYPE:   rc = set_fuzz_type(gen, opt, getopt_str(&parse)); break;
         case FUZZ_SERVER: rc = set_server(gen, opt, getopt_str(&parse)); break;
         case FUZZ_OUTPUT: rc = set_output(gen, opt, getopt_str(&parse)); break;
+        case FUZZ_PCAPNG: gen->use_pcapng = 1; break;
         }
         if (rc < 0) break;
     }
@@ -1169,7 +1182,7 @@ static int gen_parse_argv(struct dns_gen *gen, int argc, char *argv[])
         if (!*gen->dns_name) return log_cmd_err(cmd, "--name <dns-name>", "is required");
         if (!gen->serv_addr) return log_cmd_err(cmd, "--server <ip-addr>", "is required");
         dns_msg_set_id_flags(&gen->send, 0, gen->dns_flags);
-        rc = dns_msg_add_qd(&gen->send, gen->dns_name, gen->dns_class, gen->dns_type);
+        rc = dns_msg_add_qd(&gen->send, gen->dns_name, gen->dns_type, gen->dns_class);
         if (rc) return rc;
         break;
     case MODE_RESP:
