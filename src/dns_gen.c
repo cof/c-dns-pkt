@@ -71,9 +71,9 @@ struct dns_gen {
     uint32_t ttl;
     char *output;
     struct pcap_file *pcap;
-    struct dns_msg send; 
-    struct dns_msg recv;
-    uint32_t timeout; // send / recv message timeout 
+    struct dns_msg send;  // msg to encode into pkt_buf
+    struct dns_msg recv;  // decoded msg read from pkt_buf
+    uint32_t timeout;     // send / recv message timeout 
     int fuzz_type;
     uint8_t pkt_buf[DNS_MAX_PDUSIZE];
     char emsg[DNS_EMSG_MAXLEN];
@@ -89,11 +89,11 @@ struct dns_gen {
     socklen_t sock_addr_len;
     int sock_fd;
     // flags
-    unsigned int is_tcp     : 1;
-    unsigned int sock_err   : 1;
-    unsigned int recv_close : 1;
-    unsigned int log_msg    : 1;
-    unsigned int use_pcapng : 1;
+    unsigned int use_tcp    : 1; // Guess ....
+    unsigned int sock_err   : 1; // socket error
+    unsigned int recv_close : 1; // peer closed
+    unsigned int log_msg    : 1; // log all msg to stdout
+    unsigned int use_pcapng : 1; // use pcapng for output fmt
 };
 
 
@@ -350,7 +350,7 @@ static int sock_read(struct dns_gen *gen, void *buf, size_t buf_len)
         tread += nread;
 
         // UDP is one shot
-        if (!gen->is_tcp) break;
+        if (!gen->use_tcp) break;
     }
 
     // have data
@@ -392,7 +392,7 @@ static int gen_send_dnspdu(struct dns_gen *gen)
 
     gen->sent_len = 0;
 
-    if (gen->is_tcp) {
+    if (gen->use_tcp) {
         // send the 2 byte dns prefix
         uint16_t dns_len = ntohs(pkt_len);
         int rc = sock_write(gen, &dns_len, sizeof(dns_len));
@@ -436,7 +436,7 @@ static int gen_recv_dnspdu(struct dns_gen *gen)
     size_t read_len = sizeof(gen->pkt_buf);
     gen->recv_len = 0;
 
-    if (gen->is_tcp) {
+    if (gen->use_tcp) {
         // read 2-byte prefix
         uint16_t dns_len;
         int rc = sock_read(gen, &dns_len, sizeof(dns_len));
@@ -474,7 +474,7 @@ static int gen_serv_connect(struct dns_gen *gen)
     struct addrinfo hints, *res;
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = gen->is_tcp ? SOCK_STREAM : SOCK_DGRAM;
+    hints.ai_socktype = gen->use_tcp ? SOCK_STREAM : SOCK_DGRAM;
     const char *port = "53";
 
     int rc = getaddrinfo(gen->serv_addr, port, &hints, &res);
@@ -487,7 +487,7 @@ static int gen_serv_connect(struct dns_gen *gen)
     for (struct addrinfo *ai = res; ai; ai = ai->ai_next) {
         sock_fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
         if (sock_fd == -1) continue;
-        if (!gen->is_tcp) break;
+        if (!gen->use_tcp) break;
         rc = connect(sock_fd, ai->ai_addr, ai->ai_addrlen);
         if (rc != -1) break;
         log_errno("connect(%s:%s) failed", gen->serv_addr, port);
@@ -639,7 +639,7 @@ static int gen_send_query(struct dns_gen *gen)
 
     // tell user
     printf("Send query (%s) ID:0x%04x for %s %s %s\n", 
-        gen->is_tcp ? "TCP" : "UDP",
+        gen->use_tcp ? "TCP" : "UDP",
         gen->send.hdr.id, str_def(gen->dns_name, "<null>"),
         dns_class_tostr(gen->dns_class),
         dns_type_tostr(gen->dns_type));
@@ -1154,7 +1154,7 @@ static int gen_parse_argv(struct dns_gen *gen, int argc, char *argv[])
         case QUERY_FLAGS:   rc = set_dns_flags(gen, opt, getopt_str(&parse)); break;
         case QUERY_SERVER:  rc = set_server(gen, opt, getopt_str(&parse)); break;
         case QUERY_TIMEOUT: rc = set_timeout(gen, opt, getopt_str(&parse)); break;
-        case QUERY_TCP: gen->is_tcp = 1; break;
+        case QUERY_TCP: gen->use_tcp = 1; break;
         case QUERY_LOG: gen->log_msg = 1; break;
         // response
         case RESP_ID:   rc = set_id(gen, opt, getopt_str(&parse)); break;
