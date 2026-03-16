@@ -1,8 +1,9 @@
 /*
  * PCAP - A packet capture file reader and writer
  *
- * Supports read and writing clasic pcap fmt
- * Supports reading pcapg fmt
+ * Supports
+ * - read | write classic/legacy pcap file format
+ * - read | write pcapng file format
  *
  * API
  * ---

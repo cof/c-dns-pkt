@@ -13,7 +13,7 @@ A DNS packet inspector and DNS message generator.
 ## Building the Project
 
 - **make all** (Default): Compiles dns-inspect and dns-gen
-- **make test** : Compiles dns-inspect and dns-gen
+- **make test** : Compiles and test dns-inspect and dns-gen
 - **make clean**: Removes all compiled binaries, object files and test logs
 
 ## Design Notes
