@@ -248,4 +248,8 @@ static inline int dns_msg_cnt_rec(struct dns_msg *msg)
 
 struct dns_rec *dns_msg_get_rec(struct dns_msg *msg);
 
+int dns_get_type(const char *str);
+int dns_get_class(const char *str);
+int dns_get_flag(const char *str);
+
 #endif

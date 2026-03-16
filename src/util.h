@@ -22,6 +22,7 @@
 #define ARRAY(a)  ARR_LEN(a), a
 #define STR_LIT(s) (s), (sizeof(s) - 1)
 #define ALIGN_UP(n, a) (((n) + (a) - 1) & ~((a) - 1))
+#define RMCONST(_t, _v) ((_t)(uintptr_t)(_v))
 
 // ptr macros
 #define containerof(ptr, type, member) ((type *)((char *)(ptr) - offsetof(type, member)))
@@ -48,6 +49,11 @@ static inline const char *str_def(const char *str, const char *def_str)
 static inline size_t max(size_t x, size_t y)
 {
     return x > y ? x : y;
+}
+
+static inline size_t min(size_t x, size_t y)
+{
+    return x < y ? x : y;
 }
 
 static inline const char *ec_tostr(int len, const char *estr[len], int ec, const char *def)
@@ -181,8 +187,6 @@ static inline struct str_slice slice_lsplit1(struct str_slice src, int ch)
     return dst;
 }
 
-char *slice_strdup(const struct str_slice str);
-
 static inline void str_tolower(char *str, size_t len)
 {
     while (len) {
@@ -304,25 +308,32 @@ static inline uint64_t dbj2a_hash_slice(const struct str_slice str)
 }
 
 // wrapper around getopt_long
+#define GETOPT_EOF     -1
+#define GETOPT_MISSVAL -2
+#define GETOPT_ERROPT  -3
+
 #define GETOPT_NOARG  0
 #define GETOPT_REQARG 1
 #define GETOPT_OPTARG 2
 #define GETOPT_MAX 20
-#define GETDEF(x) (x), 1
+#define GETOPT_DEFINT(x) .def_type = 1, .def_int = (x)
+#define GETOPT_DEFSTR(x) .def_type = 2, .def_str = (x)
 
 struct get_opt {
     const char *name;
     const char *desc;
     int has_arg;
     int val;
-    // TODO use a union
-    int def_val;
-    unsigned int have_defval : 1;
+    int def_type;
+    union  {
+        const char *def_str;
+        int def_int;
+    };
 };
 
 struct getopt_parse {
     char **argv;
-    size_t argc;
+    int argc;
     size_t num_opt;
     struct get_opt *opts;
     struct str_slice val;
@@ -340,22 +351,32 @@ static inline struct str_slice getopt_val(struct getopt_parse *parse)
     return parse->val;
 }
 
+static inline char *getopt_str(struct getopt_parse *parse)
+{
+    return parse->val.ptr;
+}
+
+static inline struct get_opt *getopt_curopt(struct getopt_parse *parse)
+{
+    int idx = parse->opt_idx;
+    if (idx < 0 || (size_t) idx > parse->num_opt) return NULL;
+    return &parse->opts[idx];
+}
+
+
+static inline char *getopt_erropt(struct getopt_parse *parse)
+{
+    int idx = optind - 1;
+
+    if (idx < 0) return "<null>";
+    if (idx >= parse->argc) return "<null>";
+
+    return parse->argv[idx];
+}
+
 void print_usage(const char *cmd, 
     int num_opt, const struct get_opt opt[num_opt],
     int num_exa, char *examples[num_exa]);
-
-// delete
-struct util_cmd {
-    const char *name;
-    size_t len;
-    int (*func)(void *state, int narg, struct str_slice args[]);
-};
-
-int util_parse_argv(void *state,
-    int argc, char *argv[],
-    int ncmd, struct util_cmd cmds[ncmd],
-    int (*usage_func)(void *state, struct str_slice prog));
-
 
 // buffer code
 struct rwbuf {
@@ -441,6 +462,5 @@ static inline char *rwbuf_strcat_sep(struct rwbuf *buf, int ch, const char *str,
 
     return wptr;
 }
-
 
 #endif

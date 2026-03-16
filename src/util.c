@@ -5,6 +5,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdarg.h>
+#include <getopt.h>
+
 #include "util.h"
 #include "log.h"
 
@@ -64,29 +66,61 @@ char *int_tostr(int val)
     return itoa(str, sizeof(bufs[0][0]), val);
 }
 
+// wrapper around getopt_long
+static struct get_opt *getopt_missopt(struct getopt_parse *parse)
+{
+    int val = optopt;
+
+    for (size_t i = 0; i < parse->num_opt; i++) {
+        if (parse->opts[i].val == val) {
+            parse->opt_idx = i;
+            return &parse->opts[i];
+        }
+    }
+
+    return NULL;
+}
+
 int getopt_init(struct getopt_parse *parse, 
     int argc, char *argv[],
     size_t num_opt, struct get_opt opts[num_opt])
 {
     memset(parse->long_opts, 0, sizeof(parse->long_opts));
 
-    parse->argc = argc;
+    parse->argc = argc >= 0 ? argc : 0;
     parse->argv = argv;
 
     parse->opts = opts;
     parse->num_opt = num_opt;
+    parse->opt_idx = 0;
 
     if (num_opt > GETOPT_MAX) {
         return log_error_rf("Num opts %zu > max %d", num_opt, GETOPT_MAX);
     }
 
-    for (size_t i = 0; i < num_opt; i++) {
-        struct option *long_opt = &parse->long_opts[i];
-        long_opt->name = opts[i].name;
-        long_opt->has_arg = opts[i].has_arg;
-        long_opt->val = opts[i].val;
+    // disable getopt error reporiing
+    opterr = 0;
+
+    /// convert to getopt_long fmt
+    size_t i = 0;
+    while (1) {
+        struct option *lopt = &parse->long_opts[i];
+        struct get_opt *opt = &opts[i];
+        // 3 exit condtions
+        if (num_opt && i >= num_opt) break;
+        if (opt->name == NULL) break;
+        if (parse->num_opt >= GETOPT_MAX) {
+            return log_error_rf("Num opts %zu > max %d", num_opt, GETOPT_MAX);
+        }
+        // safe to load
+        lopt->name = opt->name;
+        lopt->has_arg = opt->has_arg;
+        lopt->val = opt->val;
+        if (!num_opt) parse->num_opt++;
+        i++;
     }
 
+    // all done
     return 0;
 }
 
@@ -94,18 +128,30 @@ int getopt_next(struct getopt_parse *parse)
 {
     int rc = getopt_long_only(
         parse->argc, parse->argv,
-        "", parse->long_opts, 
+        ":", parse->long_opts, 
         &parse->opt_idx
     );
 
-    if (rc == -1) return rc;
-    if (rc == '?' || rc == ':') {
-        parse->opt_idx = optind -1;
-        return rc;
+    if (rc == -1) {
+        // all cmd-line options parsed
+        return GETOPT_EOF;
+    }
+
+    if (rc == ':') {
+        //  Missing value
+        struct get_opt *opt = getopt_missopt(parse);
+        return log_error_re(GETOPT_MISSVAL, "Option: --%s requries an arg", opt->name);
+    }
+
+    if (rc == '?') {
+        // Unknown option
+        const char *opt = getopt_erropt(parse);
+        return log_error_re(GETOPT_ERROPT, "Error: Unknown option %s", opt);
     }
     
     parse->val = slice_make_cstr(optarg);
-    
+
+    // option code
     return rc;
 }
 
@@ -122,8 +168,11 @@ void print_usage(const char *cmd,
 
     for (int i = 0; i < num_opt; i++) {
         printf(" --%-*s %s", w, opts[i].name, opts[i].desc);
-        if (opts[i].have_defval) {
-            printf(" (default=%d)", opts[i].def_val);
+        if (opts[i].def_type) {
+            const char *def_str = opts[i].def_type == 1
+                ? int_tostr(opts[i].def_int)
+                : opts[i].def_str;
+            printf(" (default=%s)", def_str);
         }
         printf("\n");
     }
@@ -134,53 +183,4 @@ void print_usage(const char *cmd,
     for (int i = 0; i < num_exa; i++) {
         printf("  %s %s\n", prog_name, examples[i]);
     }
-}
-
-static int find_cmd(struct str_slice cmd, int ncmd, struct util_cmd cmds[ncmd])
-{
-    cmd = slice_tolower(cmd);
-
-    for (int i = 0; i < ncmd; i++) {
-        if (slice_cmp_cstr(cmd, cmds[i].name, cmds[i].len)) {
-            return i;
-        }
-    }
-
-    return -1;
-}
-
-int util_parse_argv(void *state,
-    int argc, char *argv[],
-    int ncmd, struct util_cmd cmds[ncmd],
-    int (*usage_func)(void *state, struct str_slice prog))
-{
-    // mode
-    struct str_slice mode = slice_make_cstr(argv[1]);
-    int cmd_idx = find_cmd(mode, ncmd, cmds);
-
-    if (argc < 2) {
-        if (usage_func) {
-            return usage_func(state, slice_rsplit1(slice_make_cstr(argv[0]), '/'));
-        }
-        // fail
-        return -1;
-    }
-
-    if (cmd_idx == -1) {
-        log_error_rf("Unsupported mode %.*s", (int) mode.len, mode.ptr);
-        if (usage_func) {
-            return usage_func(state, slice_rsplit1(slice_make_cstr(argv[0]), '/'));
-        }
-        // fail
-        return -1;
-    }
-
-    // load remaing args
-    int len = argc - 2;
-    struct str_slice args[len];
-    for (int i = 0; i < len; i++) {
-        args[i] = slice_make_cstr(argv[i + 2]);
-    }
-
-    return cmds[cmd_idx].func(state, len, args);
 }

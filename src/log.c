@@ -39,7 +39,7 @@ int log_cmd_err(const char *cmd, const char *opt, const char *fmt, ...)
 
     fprintf(stdout, "\n");
     
-    return -1;
+    return -2;
 }
 
 void _log_error(const char *file, int line, const char *func, int ec, const char *fmt, ...)

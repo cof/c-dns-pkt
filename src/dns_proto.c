@@ -1832,3 +1832,39 @@ struct dns_rec *dns_msg_get_rec(struct dns_msg *msg)
 
     return NULL;
 }
+
+int dns_get_type(const char *str)
+{
+    if (!strncasecmp(str, STR_LIT("A")))  return DNS_TYPE_A;
+    if (!strncasecmp(str, STR_LIT("NS")))  return DNS_TYPE_NS;
+    if (!strncasecmp(str, STR_LIT("CNAME")))  return DNS_TYPE_CNAME;
+    if (!strncasecmp(str, STR_LIT("SOA")))  return DNS_TYPE_SOA;
+    if (!strncasecmp(str, STR_LIT("PTR")))  return DNS_TYPE_PTR;
+    if (!strncasecmp(str, STR_LIT("HINFO")))  return DNS_TYPE_HINFO;
+    if (!strncasecmp(str, STR_LIT("MX")))  return DNS_TYPE_MX;
+    if (!strncasecmp(str, STR_LIT("TXT")))  return DNS_TYPE_TXT;
+    if (!strncasecmp(str, STR_LIT("AAAA")))  return DNS_TYPE_AAAA;
+    if (!strncasecmp(str, STR_LIT("SRV")))  return DNS_TYPE_SRV;
+
+    return 0;
+}
+
+int dns_get_class(const char *str)
+{
+    if (!strncasecmp(str, STR_LIT("IN")))  return DNS_CLASS_IN;
+    if (!strncasecmp(str, STR_LIT("CS")))  return DNS_CLASS_CS;
+    if (!strncasecmp(str, STR_LIT("CH")))  return DNS_CLASS_CH;
+    if (!strncasecmp(str, STR_LIT("HS")))  return DNS_CLASS_HS;
+    if (!strncasecmp(str, STR_LIT("ANY")))  return DNS_CLASS_ANY;
+
+    return 0;
+}
+
+int dns_get_flag(const char *str)
+{
+    if (!strncasecmp(str, STR_LIT("CD")))  return DNS_FLAGS_CD;
+    if (!strncasecmp(str, STR_LIT("RD")))  return DNS_FLAGS_RD;
+    if (!strncasecmp(str, STR_LIT("AD")))  return DNS_FLAGS_AD;
+
+    return 0;
+}

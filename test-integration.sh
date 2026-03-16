@@ -7,8 +7,8 @@ GEN_RESP="$GEN_NAME response"
 GEN_FUZZ="$GEN_NAME fuzz"
 CHK_RESP="$INSPECT_NAME readpcap --file"
 TEST_PCAP="$BUILD_DIR/test.pcap"
-BAD_PDU=5
-BAD_LABEL=6
+BAD_PDU=4
+BAD_LABEL=5
 mkdir -p ${BUILD_DIR} || exit 1
 
 TEST_NAME="Simple A query"
