@@ -333,7 +333,7 @@ static int pcap_read_shb(struct pcap_file *file)
 
     if (file->trace_rec) {
         pcap_log("PCAPNG",
-            "blk=%lu name=%s type=0x%08x total_len=%u magic=0x%08x ver_major=%d ver_minor=%d sec_len=%ld", 
+            "blk=%lu name=%s type=0x%08x tot_len=%u magic=0x%08x ver_major=%d ver_minor=%d sec_len=%ld", 
             file->rec_cnt, "SHB", shb->type, shb->tot_len, 
             shb->magic, shb->ver_major, shb->ver_minor, (signed long) shb->sec_len);
     }
@@ -368,7 +368,7 @@ static int pcap_write_shb(struct pcap_file *file)
 
     if (file->trace_rec) {
         pcap_log("PCAPNG",
-            "blk=%lu name=%s type=0x%08x total_len=%u magic=0x%08x ver_major=%d ver_minor=%d sec_len=%ld", 
+            "blk=%lu name=%s type=0x%08x tot_len=%u magic=0x%08x ver_major=%d ver_minor=%d sec_len=%ld", 
             file->rec_cnt, "SHB", shb->type, shb->tot_len, 
             shb->magic, shb->ver_major, shb->ver_minor, (signed long) shb->sec_len);
     }
@@ -545,7 +545,7 @@ static size_t pcap_read_spb(struct pcap_file *file, void *buf, size_t buf_len)
     }
 
     // read the header
-    struct pcap_epb_hdr spb;
+    struct pcap_spb_hdr spb;
     int rc = pcap_read_block(file, "SPB", &spb, sizeof(spb));
     if (rc) return 0;
 
@@ -631,7 +631,7 @@ static int pcap_skip_block(struct pcap_file *file)
 {
     struct {
         uint32_t type; 
-        uint32_t total_len;
+        uint32_t tot_len;
     } blk;
 
     int rc = pcap_read_block(file, "skip", &blk, sizeof(&blk));
@@ -639,15 +639,15 @@ static int pcap_skip_block(struct pcap_file *file)
 
     if (file->must_swap) {
         blk.type = __builtin_bswap32(blk.type);
-        blk.total_len = __builtin_bswap32(blk.total_len);
+        blk.tot_len = __builtin_bswap32(blk.tot_len);
     }
 
-    if (blk.total_len < sizeof(blk)) {
-        return log_error_rf("pcap: Bad block %lu total_len %u", file->rec_cnt + 1, blk.total_len);
+    if (blk.tot_len < sizeof(blk)) {
+        return log_error_rf("pcap: Bad block %lu tot_len %u", file->rec_cnt + 1, blk.tot_len);
     }
 
     // skip options
-    return pcap_data_skip(file, "skip-block", blk.total_len - sizeof(blk) + 4);
+    return pcap_data_skip(file, "skip-block", blk.tot_len - sizeof(blk) + 4);
 }
 
 static int pcap_peek_block(struct pcap_file *file)
