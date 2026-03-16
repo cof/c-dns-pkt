@@ -54,9 +54,9 @@
 
 // pcap-ng
 #define PCAP_SHB_TYPE    0x0A0D0D0A 
-#define PCAP_IDB_TYPE 	 0x00000001
-#define PCAP_EPB_TYPE 	 0x00000006
-#define PCAP_SPB_TYPE 	 0x00000003
+#define PCAP_IDB_TYPE    0x00000001
+#define PCAP_EPB_TYPE    0x00000006
+#define PCAP_SPB_TYPE    0x00000003
 
 #define PCAP_BOM_NATIVE  0x1A2B3C4D
 #define PCAP_BOM_SWAP    0x4D3C2B1A
@@ -128,7 +128,7 @@ struct pcap_file {
         struct pcap_hdr     pcap;
         struct pcapng_shb_hdr pcapng;
     } hdr;
-    struct pcapng_idb_hdr idb;	
+    struct pcapng_idb_hdr idb;  
     int fmt; // PCAP_FMTLEG, PCAP_FMTNG
     int (*read_hdr)(struct pcap_file *file);
     ssize_t (*read_pkt)(struct pcap_file *file, void *buf, size_t len);
