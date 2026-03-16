@@ -30,9 +30,9 @@ A DNS packet inspector that capture DNS messages from a local interface and disp
 
 **Supported Commands:**
 
-- **capture**  Send a DNS query to server
-- **readpcap**  Generate a DNS response message to pcap file:
-- **tracepcap** Create a malformed DNS message
+- **capture**   Capture DNS traffic from a local interface and log them
+- **readpcap**  Read DNS traffic from a packet capture and log them
+- **tracepcap** Debug a packet capture file.
 
 **Supported featues**
 
