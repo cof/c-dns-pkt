@@ -327,7 +327,7 @@ static int dns_dec_genmsg(struct dns_dec *dec)
         dns_wmsg(dec, "ID 0x%04x ",  dec->hdr.id);
     }
 
-    // build the error description
+    // convert the error chain to desc
     for (int i = dec->nerr - 1; i >=  0; i--) {
         char *estr = dns_err_tostr(dec, &dec->errs[i]);
         dns_wmsg(dec, "/ %s", estr);
@@ -359,7 +359,7 @@ int parse_dns_header(const uint8_t *buf, size_t len, struct dns_header *hdr)
     return 0;
 }
 
-// Required functions
+// Required functions - not clear if we return len written ?
 int parse_dns_name(
     const uint8_t *pkt, size_t pkt_len, size_t offset, 
     char *out, size_t out_len, 
