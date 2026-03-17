@@ -1,5 +1,11 @@
 *.swp
 *.o
+*.pcap
+*.pcapng
+*.bin
+*.ntar
 .gdb_history
 tags
-build
+/dns-inspect
+/dns-gen
+/build/
