@@ -24,14 +24,15 @@
 #define SOCK_ANY      0x0001
 #define SOCK_IPV4     0x0002
 #define SOCK_IPV6     0x0004
-#define SOCK_TCP      0x0008
-#define SOCK_UDP      0x0010
-#define SOCK_UDPCON   0x0020
-#define SOCK_NONBLK   0x0040
-#define SOCK_PASSIVE  0x0080
-#define SOCK_NUMSERV  0x0100
+#define SOCK_FILE     0x0008
+#define SOCK_TCP      0x0010
+#define SOCK_UDP      0x0020
+#define SOCK_UDPCON   0x0040
+#define SOCK_NONBLK   0x0080
+#define SOCK_PASSIVE  0x0100
+#define SOCK_NUMSERV  0x0200
 
-#define SOCK_LISTEN (SOCK_ANY | SOCK_NUMSERV | SOCK_PASSIVE)
+#define SOCK_LISTEN (SOCK_ANY | SOCK_NUMSERV | SOCK_PASSIVE | SOCK_NONBLK)
 
 // wrapper around fd
 struct simple_sock {
@@ -76,6 +77,7 @@ int sock_listen(struct simple_sock *sock, uint32_t mode, const char *host, const
 int sock_accept(struct simple_sock *sock, struct sockaddr_in6 *addr);
 
 // change socket fd state
+int sock_set_mode(struct simple_sock *sock, uint32_t mode);
 int sock_set_nonblk(struct simple_sock *sock);
 int sock_set_sndto(struct simple_sock *sock, uint32_t ms);
 int sock_set_rcvto(struct simple_sock *sock, uint32_t ms);
@@ -149,7 +151,6 @@ static inline int sock_wr_done(struct simple_sock *sock)
 {
     return sock->send_fin && sock_sendbuf_used(sock) == 0;
 }
-
 
 static inline int sock_isclosing(struct simple_sock *sock)
 {

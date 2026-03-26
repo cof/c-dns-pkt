@@ -245,7 +245,8 @@ int sock_accept(struct simple_sock *sock, struct sockaddr_in6 *addr)
 {
     socklen_t addr_len = sizeof(*addr);
 
-    int fd = accept4(sock->fd, addr, &addr_len, SOCK_NONBLOCK);
+    int flags = sock->mode & SOCK_NONBLK ? SOCK_NONBLOCK : 0;
+    int fd = accept4(sock->fd, addr, &addr_len, flags);
     if (fd == -1) {
         /// EAGAIN|EWOULDBLOCK - means no more pending accepts ..
         return -1;
@@ -296,6 +297,16 @@ int sock_connect(struct simple_sock *sock, uint32_t mode, const char *host, cons
     }
 
     // all done
+    return 0;
+}
+
+int sock_set_mode(struct simple_sock *sock, uint32_t mode)
+{
+    if (mode & SOCK_NONBLK && (sock->mode & SOCK_NONBLK) == 0) {
+        int rc = sock_set_nonblk(sock);
+        if (rc) return rc;
+    }
+    sock->mode = mode;
     return 0;
 }
 
@@ -565,10 +576,15 @@ int sock_send(struct simple_sock *sock)
 // read a line from our recv buffer
 int sock_readline(struct simple_sock *sock, struct str_slice *line, int eof)
 {
-    int rc = rwbuf_readline(&sock->recv_buf, line, sock->max_line, eof);
+    int flags = RWBUF_NOLOG;
+    if (eof) flags |= RWBUF_EOF;
+
+    int rc = rwbuf_readline(&sock->recv_buf, line, sock->max_line, flags);
     if (rc < 0) {
         // line too big
         sock->sys_err = 1;
+        return log_error_rf("peer %s exceed max line length %zu", 
+            sock_tostr(sock), sock->max_line);
     }
     return rc;
 }
@@ -674,6 +690,7 @@ int sock_send_line(struct simple_sock *sock, struct str_slice line)
 // shutdown writes on socket
 int sock_sendfin(struct simple_sock *sock) 
 {
+    if (sock->sys_err) return SOCK_ERROR;
     if (sock->fin_sent) return 0;
 
     int rc = shutdown(sock->fd, SHUT_WR);
@@ -683,6 +700,10 @@ int sock_sendfin(struct simple_sock *sock)
     }
 
     sock->fin_sent = 1;
+    if (sock->send_fin) {
+        // send done
+        sock->send_fin = 0;
+    }
 
     return 0;
 }
@@ -719,5 +740,17 @@ char *sockaddr_tostr(struct sockaddr *addr, socklen_t addr_len)
 
 char *sock_tostr(struct simple_sock *sock)
 {
+    if (sock->mode & SOCK_FILE) {
+        // not a socket
+        static char bufs[16][10];
+        static int idx;
+        char *buf = bufs[idx];
+        size_t len = sizeof(bufs[0]);
+        idx = (idx + 1) & 15;
+        buf[0] = '\0';
+        snprintf(buf, len, "fd %d", sock->fd);
+        return buf;
+    }
+
     return sockaddr_tostr((struct sockaddr *) &sock->addr, sizeof(sock->addr));
 }

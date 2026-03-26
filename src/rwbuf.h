@@ -12,8 +12,8 @@ struct rwbuf {
     size_t size;  // total capacity in bytes
     size_t ridx;  // read index
     size_t widx;  // write index
-    unsigned int is_malloc : 1; // malloc or static buffer
-    unsigned int is_grow   : 1; // can realloc
+    unsigned int is_malloc  : 1; // malloc or static buffer
+    unsigned int is_grow    : 1; // can realloc
 };
 
 // api
@@ -36,7 +36,11 @@ void rwbuf_deinit(struct rwbuf *buf);
 
 int rwbuf_write(struct rwbuf *buf, void *data, size_t len);
 int rwbuf_writev(struct rwbuf *buf, int nbuf, struct iovec iovs[nbuf]);
-int rwbuf_readline(struct rwbuf *buf, struct str_slice *line, size_t max, int eof);
+
+// readline flags
+#define RWBUF_EOF   0x1
+#define RWBUF_NOLOG 0x2
+int rwbuf_readline(struct rwbuf *buf, struct str_slice *line, size_t max, uint32_t flags);
 
 // inline helpers
 static inline uint8_t *rwbuf_rptr(struct rwbuf *buf)

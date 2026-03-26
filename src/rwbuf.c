@@ -106,7 +106,7 @@ int rwbuf_writev(struct rwbuf *buf, int nbuf, struct iovec iovs[nbuf])
     return 0;
 }
 
-int rwbuf_readline(struct rwbuf *buf, struct str_slice *line, size_t max, int eof)
+int rwbuf_readline(struct rwbuf *buf, struct str_slice *line, size_t max, uint32_t flags)
 {
     size_t   rlen = rwbuf_used(buf);
     uint8_t *rptr = rwbuf_rptr(buf);
@@ -137,6 +137,7 @@ int rwbuf_readline(struct rwbuf *buf, struct str_slice *line, size_t max, int eo
         line->len = len;
 
         if (len > max) {
+            if (flags & RWBUF_NOLOG) return -1;
             return log_error_rf("line too big - len %zu > max %zu", len, max);
         }
 
@@ -146,10 +147,11 @@ int rwbuf_readline(struct rwbuf *buf, struct str_slice *line, size_t max, int eo
 
     // incomplete line
     if (rlen > max) {
+        if (flags & RWBUF_NOLOG) return -1;
         return log_error_rf("line too big - len %zu > max %zu", rlen, max);
     }
 
-    if (eof) {
+    if (flags & RWBUF_EOF) {
         // store line
         line->ptr = (char *) rptr;
         line->len = rlen;

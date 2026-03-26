@@ -31,9 +31,6 @@
 #define make_mem(val) ((void *) ((uintptr_t) val))
 #define unmake_mem(val) ((uintptr_t) (val))
 
-
-// simple e
-
 // Stringification macros
 #define XSTR(a) #a
 #define STR(a) XSTR(a)
