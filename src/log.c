@@ -6,40 +6,42 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "util.h"
 #include "log.h"
+
 
 void log_msg(const char *msg)
 {
-    fputs(msg, stdout);
-    fflush(stdout);
+    fputs(msg, stderr);
+    fflush(stderr);
 }
 
 void log_info(const char *what, const char *fmt, ...)
 {
-    va_list args;  
+    va_list args;
 
-    fprintf(stdout, "[%s] ", what);
+    fprintf(stderr, "[%s] ", what);
 
     va_start(args, fmt);
-    vfprintf(stdout, fmt, args);
+    vfprintf(stderr, fmt, args);
     va_end(args);
 
-    fprintf(stdout, "\n");
+    fprintf(stderr, "\n");
 }
 
 int log_cmd_err(const char *cmd, const char *opt, const char *fmt, ...)
 {
     va_list args;  
 
-    fprintf(stdout, "[ERROR] %s: %s: ", cmd, opt);
+    fprintf(stderr, "[ERROR] %s: %s: ", cmd, opt);
 
     va_start(args, fmt);
-    vfprintf(stdout, fmt, args);
+    vfprintf(stderr, fmt, args);
     va_end(args);
 
-    fprintf(stdout, "\n");
+    fprintf(stderr, "\n");
     
-    return -2;
+    return -1;
 }
 
 void _log_error(const char *file, int line, const char *func, int ec, const char *fmt, ...)
@@ -78,4 +80,11 @@ void _fatal_error(const char *file, int line, const char *func, int ec, const ch
     fflush(stderr);
 
     exit(1);
+}
+
+void log_argv(const char *what, int argc, char *argv[])
+{
+    for (int i= 0 ; i < argc; i++) {
+        log_info(what, "argv[%d]=%s", i, argv[i]);
+    }
 }

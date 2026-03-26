@@ -1,5 +1,5 @@
-#ifndef __LOG_H__
-#define __LOG_H__
+#ifndef _LOG_H_
+#define _LOG_H_
 
 #include <errno.h>
 
@@ -73,6 +73,11 @@ void log_argv(const char *what, int argc, char *argv[]);
 // report errno + estr, return FAIL
 #define log_errno_rf(...) ({ \
     _log_error(__FILE__, __LINE__, __func__, errno,  __VA_ARGS__); \
+    UTIL_FAIL; \
+})
+
+#define log_ec_rf(ec, ...) ({ \
+    _log_error(__FILE__, __LINE__, __func__, ec,  __VA_ARGS__); \
     UTIL_FAIL; \
 })
 

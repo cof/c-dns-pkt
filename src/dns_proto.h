@@ -215,10 +215,14 @@ static inline void dns_msg_set_id_flags(struct dns_msg *msg, uint16_t id, uint16
     msg->hdr.flags = flags;
 }
 
+// DNS messaage sections
+#define DNS_MSG_QD 1
+#define DNS_MSG_AN 2
+#define DNS_MSG_NS 3
+#define DNS_MSG_AR 4
+
 int dns_msg_add_qd(struct dns_msg *msg, const char *name, uint16_t qtype,  uint16_t qclass);
-int dns_msg_add_an(struct dns_msg *msg, struct dns_rec *ans);
-int dns_msg_add_ns(struct dns_msg *msg, struct dns_rec *ans);
-int dns_msg_add_ar(struct dns_msg *msg, struct dns_rec *ans);
+int dns_msg_add_rec(struct dns_msg *msg, int sc, struct dns_rec *rec);
 
 static inline int dns_msg_num_an(struct dns_msg *msg)
 {
@@ -251,5 +255,6 @@ struct dns_rec *dns_msg_get_rec(struct dns_msg *msg);
 int dns_get_type(const char *str);
 int dns_get_class(const char *str);
 int dns_get_flag(const char *str);
+int dns_rec_load(struct dns_rec *rec, int sc, const char *str);
 
 #endif

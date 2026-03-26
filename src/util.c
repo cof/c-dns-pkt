@@ -144,6 +144,12 @@ int int_setval(int *ival, const char *name, const char *val_str)
     return 0;
 }
 
+int uint_setval(uint32_t *uval, const char *name, const char *val_str)
+{
+    *uval = strtoul(val_str, NULL, 0);
+    return 0;
+}
+
 // cmd-line parsing
 int opt_setstr(char **str, struct cmd_argv *parse)
 {
@@ -153,6 +159,11 @@ int opt_setstr(char **str, struct cmd_argv *parse)
 int opt_setint(int *iptr, struct cmd_argv *parse)
 {
     return int_setval(iptr, parse->name, parse->value);
+}
+
+int opt_setuint(uint32_t *iptr, struct cmd_argv *parse)
+{
+    return uint_setval(iptr, parse->name, parse->value);
 }
 
 static int find_opt(const char *name, const struct cmd_opt opts[])

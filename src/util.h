@@ -31,6 +31,9 @@
 #define make_mem(val) ((void *) ((uintptr_t) val))
 #define unmake_mem(val) ((uintptr_t) (val))
 
+
+// simple e
+
 // Stringification macros
 #define XSTR(a) #a
 #define STR(a) XSTR(a)
@@ -65,6 +68,58 @@ static inline const char *ec_tostr(int len, const char *estr[len], int ec, const
         : NULL;
 
     return str ?: def;
+}
+
+
+/*
+ * Simple encoders/decoders
+ */
+static inline uint8_t *enc_u32(uint8_t *wptr, uint32_t value)
+{
+    *wptr++ = value >> 24;
+    *wptr++ = value >> 16;
+    *wptr++ = value >> 8;
+    *wptr++ = value;
+
+    return wptr;
+}
+
+static inline uint8_t *enc_u16(uint8_t *wptr, uint16_t value)
+{
+    *wptr++ = value >> 8;
+    *wptr++ = value;
+
+    return wptr;
+}
+
+static inline uint8_t *enc_raw(uint8_t *wptr, uint8_t *raw, uint16_t len)
+{
+    mempcpy(wptr, raw, len);
+    wptr += len;
+
+    return wptr;
+}
+
+static inline uint32_t dec_u32(const unsigned char *buf)
+{
+    uint32_t value;
+
+    value = buf[0] << 24;
+    value |= buf[1] << 16;
+    value |= buf[2] << 8;
+    value |= buf[3];
+
+    return value;
+}
+
+static inline uint16_t dec_u16(const unsigned char *buf)
+{
+    uint16_t value;
+
+    value = buf[0] << 8;
+    value |= buf[1];
+
+    return value;
 }
 
 
@@ -381,6 +436,7 @@ static inline const char *get_basename(const char *name)
 // generic setters
 int str_setval(char **str, const char *name, const char *val_str);
 int int_setval(int *ival, const char *name, const char *val_str);
+int uint_setval(uint32_t *uval, const char *name, const char *val_str);
 
 // cmd-line parsing
 #define OPT_NOARG  0
@@ -414,6 +470,7 @@ struct cmd_argv {
 int cmd_argv_next(struct cmd_argv *parse);
 int opt_setstr(char **str, struct cmd_argv *parse);
 int opt_setint(int *iptr, struct cmd_argv *parse);
+int opt_setuint(uint32_t *uptr, struct cmd_argv *parse);
 
 void print_usage(const char *cmd, const struct cmd_opt opts[], const char *examples[]);
 
