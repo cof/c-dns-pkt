@@ -49,6 +49,7 @@
 
 struct dns_sniff {
     // config
+    struct simple_sig sig;
     pid_t pid;
     char *host;
     char *port;
@@ -154,55 +155,9 @@ static int sniff_process_msg(struct dns_sniff *sniff, struct mmsghdr *msg)
     return 0;
 }
 
-// signal handling
-static volatile sig_atomic_t keep_running = 1;
-static volatile sig_atomic_t caught_signo = 0; 
-static volatile sig_atomic_t sender_pid = 0; 
-static volatile sig_atomic_t sender_uid = 0; 
-
-static void catch_signal(int signo, siginfo_t *info, void *ucontext)
-{
-    (void) ucontext;
-    caught_signo = signo;
-
-    sender_pid = 0;
-    sender_uid = 0;
-
-    if (info->si_code <= 0) {
-        sender_pid = info->si_pid;
-        sender_uid = info->si_uid;
-    }
-
-    keep_running = 0;
-}
-
-int sniff_signals(struct dns_sniff *sniff)
-{
-    (void) sniff;
-    struct sigaction sa = { 0 };
-
-    sa.sa_sigaction = catch_signal;
-    sa.sa_flags = SA_SIGINFO;
-    if (sigaction(SIGINT, &sa, NULL) == -1) {
-        return log_errno_rf("setup sigint");
-    }
-    if (sigaction(SIGTERM, &sa, NULL) == -1) {
-        return log_errno_rf("setup sigterm");
-    }
-
-    // XXX prevent write(fd) trigger a signal
-    sa.sa_handler = SIG_IGN;
-    sa.sa_flags = 0;
-    if (sigaction(SIGPIPE, &sa, NULL) == -1) {
-        return log_errno_rf("setup SIGPIPE");
-    }
-
-    return 0;
-}
-
 int sniff_capture(struct dns_sniff *sniff)
 {
-    while (keep_running) {
+    while (sniff->sig.run) {
         // read a block
         int nr = recvmmsg(sniff->sock_raw, sniff->msgs, PKT_MAXRECV, MSG_WAITFORONE, NULL);
         if (nr < 0) {
@@ -215,12 +170,12 @@ int sniff_capture(struct dns_sniff *sniff)
         }
     }
 
-    if (caught_signo) {
+    if (sniff->sig.signo) {
         log_info("dns-sniff", 
             "PID:%d shutting down: got signal %d (%s) from UID:%d PID:%d ",
             sniff->pid,
-            caught_signo, strsignal(caught_signo), 
-            sender_uid, sender_pid);
+            sniff->sig.signo, strsignal(sniff->sig.signo), 
+            sniff->sig.uid, sniff->sig.pid);
     }
 
     return 0;
@@ -349,7 +304,7 @@ static int run_tracepcap(struct dns_sniff *sniff)
 
 static int run_capture(struct dns_sniff *sniff)
 {
-    if (sniff_signals(sniff) != 0) return 4;
+    if (setup_signals(&sniff->sig) != 0) return 4;
     if (sniff_attach(sniff) != 0)  return 4;
     if (sniff_capture(sniff) != 0) return 4;
 

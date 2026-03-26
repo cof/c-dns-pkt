@@ -59,6 +59,7 @@
 struct dns_gen {
     // config
     pid_t pid;
+    struct simple_sig sig;
     //  state
     int mode;
     // cmd options
@@ -95,53 +96,6 @@ struct dns_gen {
     unsigned int log_msg    : 1; // log all msg to stdout
     unsigned int use_pcapng : 1; // use pcapng for output fmt
 };
-
-
-// signal handling
-static volatile sig_atomic_t keep_running = 1;
-static volatile sig_atomic_t caught_signo = 0; 
-static volatile sig_atomic_t sender_pid = 0; 
-static volatile sig_atomic_t sender_uid = 0; 
-
-static void catch_signal(int signo, siginfo_t *info, void *ucontext)
-{
-    (void) ucontext;
-    caught_signo = signo;
-
-    sender_pid = 0;
-    sender_uid = 0;
-
-    if (info->si_code <= 0) {
-        sender_pid = info->si_pid;
-        sender_uid = info->si_uid;
-    }
-
-    keep_running = 0;
-}
-
-int gen_signals(struct dns_gen *gen)
-{
-    (void) (gen);
-    struct sigaction sa = { 0 };
-
-    sa.sa_sigaction = catch_signal;
-    sa.sa_flags = SA_SIGINFO;
-    if (sigaction(SIGINT, &sa, NULL) == -1) {
-        return log_errno_rf("setup sigint");
-    }
-    if (sigaction(SIGTERM, &sa, NULL) == -1) {
-        return log_errno_rf("setup sigterm");
-    }
-
-    // XXX prevent write(fd) trigger a signal
-    sa.sa_handler = SIG_IGN;
-    sa.sa_flags = 0;
-    if (sigaction(SIGPIPE, &sa, NULL) == -1) {
-        return log_errno_rf("setup SIGPIPE");
-    }
-
-    return 0;
-}
 
 // util funcs
 static double time_diff_ms(struct timespec *begin, struct timespec *end)
@@ -1229,7 +1183,7 @@ int main(int argc, char *argv[])
     if (!(gen = gen_create())) { ec = 1; goto done; }
     if (gen_init(gen)) { ec = 2; goto done; }
     if (gen_parse_argv(gen, argc, argv)) { ec = 3;  goto done; }
-    if (gen_signals(gen))  { ec = 4 ; goto done; }
+    if (setup_signals(&gen->sig))  { ec = 4 ; goto done; }
     if (cmds[gen->mode].run(gen)) { ec = 5; goto done; }
 
 done:
