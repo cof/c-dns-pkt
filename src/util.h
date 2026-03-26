@@ -67,7 +67,58 @@ static inline const char *ec_tostr(int len, const char *estr[len], int ec, const
     return str ?: def;
 }
 
-// string handling code
+
+/*
+ * a simple string write buffer
+ */
+struct strbuf {
+    char *data;
+    char *wptr;
+    char *end;
+};
+
+#define STRBUF_INIT(_buf, _size) { _buf, _buf, _buf + _size } 
+
+static inline size_t strbuf_avail(struct strbuf *buf)
+{
+    return buf->end - buf->wptr;
+}
+
+// bytes writen to buffer available to read
+static inline size_t strbuf_used(struct strbuf *buf)
+{
+    return buf->wptr - buf->data;
+}
+
+static inline struct strbuf *strbuf_putmem(struct strbuf *buf, const char *mem, size_t len)
+{
+    if (len > strbuf_avail(buf)) return NULL;
+
+    memcpy(buf->wptr, mem, len);
+    buf->wptr += len;
+
+    return buf;
+}
+
+static inline struct strbuf *strbuf_putstr(struct strbuf *buf, const char *str)
+{
+    return str ? strbuf_putmem(buf, str, strlen(str)) : NULL;
+}
+
+static inline struct strbuf *strbuf_putsep(struct strbuf *buf, int ch, const char *mem, size_t len)
+{
+    if (strbuf_used(buf)) {
+        if (!strbuf_avail(buf)) return NULL;
+        *buf->wptr++ = ch;
+    }
+    return strbuf_putmem(buf, mem, len);
+}
+
+
+/*
+ * String slice handling code
+ *
+ */
 struct str_slice {
     char *ptr;
     size_t len;
