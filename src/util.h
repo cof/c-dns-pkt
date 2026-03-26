@@ -461,10 +461,9 @@ struct cmd_argv {
     struct cmd_opt *opts;
     int argv_idx;
     int opt_idx;
-    int val_idx;
-    const char *name;
-    const char *desc;
-    const char *value;
+    struct cmd_opt *opt; // match opt
+    const char *name;    // argv name
+    const char *value;   // argv value
 };
 
 int cmd_argv_next(struct cmd_argv *parse);

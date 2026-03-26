@@ -174,7 +174,7 @@ static int find_opt(const char *name, const struct cmd_opt opts[])
             return i;
         }
     }
-
+    // not found
     return -1;
 }
 
@@ -191,26 +191,23 @@ int cmd_argv_next(struct cmd_argv *parse)
     if (parse->opt_idx == -1) {
         return log_error_re(OPT_UNSUPP, "Error: Unknown option %s", parse->name);
     }
+    parse->opt = parse->opts + parse->opt_idx;
 
     // get value
     parse->value = NULL;
-    parse->val_idx = -1;
-    if (parse->opts[parse->opt_idx].has_arg) {
+    if (parse->opt->has_arg) {
         if (parse->argv_idx >= parse->argc) {
             return log_error_re(OPT_MISSVAL, "Option: --%s Missing a value", parse->name);
         }
         if (parse->argv[parse->argv_idx][0] == '-') { 
             return log_error_re(OPT_MISSVAL, "Option: --%s Missing value", parse->name);
         }
-        // save value index
-        parse->value = parse->argv[parse->argv_idx];
-        parse->val_idx = parse->argv_idx++;
+        // save value
+        parse->value = parse->argv[parse->argv_idx++];
     }
 
-    parse->desc = parse->opts[parse->opt_idx].desc;
-
     // tell user
-    return parse->opts[parse->opt_idx].code ? parse->opts[parse->opt_idx].code : parse->opt_idx;
+    return parse->opt->code ? parse->opt->code : parse->opt_idx;
 }
 
 void print_usage(const char *cmd, const struct cmd_opt opts[], const char *examples[])
