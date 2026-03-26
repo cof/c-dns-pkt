@@ -346,14 +346,14 @@ static int gen_recv_resp(struct dns_gen *gen)
     // check msg is response
     struct dns_header *rcv_hdr = &gen->rcv_msg.hdr;
     if ((rcv_hdr->flags & DNS_FLAGS_QR) == 0) {
-        return log_info_rz("dns-gen", 
+        return log_info_rc("dns-gen", 1,
             "Unexpected DNS message ID: 0x%04x Flags: 0x%04x Len %zu",
             rcv_hdr->id, rcv_hdr->flags, gen->recv_len);
     }
 
     // check Transaction ID
     if (rcv_hdr->id != gen->tid_sent) {
-        return log_info_rz("dng-gen",
+        return log_info_rc("dng-gen", 2,
             "Response ID 0x%04x does not match Request ID 0x%04x", 
             rcv_hdr->id, gen->tid_sent);
     }
@@ -361,7 +361,7 @@ static int gen_recv_resp(struct dns_gen *gen)
     // check Result Code
     int rcode = rcv_hdr->flags & DNS_FLAGS_RCODE;
     if (rcode != DNS_RCODE_NOERROR) {
-        return log_info_rz("dng-gen", 
+        return log_info_rc("dng-gen", 3,
             "Response ID 0x%04x failed with error %s", 
             rcv_hdr->id, rcode_tostr(rcode));
     }

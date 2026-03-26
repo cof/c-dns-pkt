@@ -146,6 +146,7 @@ int int_setval(int *ival, const char *name, const char *val_str)
 
 int uint_setval(uint32_t *uval, const char *name, const char *val_str)
 {
+    (void) name;
     *uval = strtoul(val_str, NULL, 0);
     return 0;
 }
