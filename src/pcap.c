@@ -262,8 +262,7 @@ static uint64_t pcap_get_ts(struct pcap_file *file)
         log_errno_rf("clock_gettime MONOTTONIC failed");
         return 0;
     }
-
-    uint64_t mono_usec = (uint64_t) ts.tv_sec * 1000000 + (ts.tv_nsec / 1000);
+    uint64_t mono_usec = (uint64_t) ts.tv_sec * 1000000LL + (ts.tv_nsec / 1000);
 
     return mono_usec + file->epoch_usec;
 }
@@ -273,8 +272,8 @@ static int pcap_write_rec(struct pcap_file *file, void *buf, size_t len)
     uint64_t usec_ts = pcap_get_ts(file);
 
     struct pcap_rec rec = {
-        .ts_sec   = usec_ts >> 32,
-        .ts_usec  = usec_ts & 0xFFFFFFFF,
+        .ts_sec   = usec_ts / 1000000,
+        .ts_usec  = usec_ts % 1000000,
         .incl_len = len,
         .orig_len = len
     };
