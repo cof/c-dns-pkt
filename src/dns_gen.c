@@ -859,37 +859,35 @@ enum {
     FUZZ_PCAPNG
 };
 
-
-
-struct get_opt query_opts[] = {
-    { "name",   "<NAME> A DNS name", 1,  QUERY_NAME },
-    { "type",  "<TYPE> A DNS type A|NS|CNAME|SOA|PTR|HINFO|MX|TXT|AAAA|SRV", 1, QUERY_TYPE },
-    { "class", "<CLASS> A DNS class IN|CS|CH|HS|ANY", 1, QUERY_CLASS },
-    { "flags", "<FLAGS> Query flags AD:0|CD:0|RD:0", 1, QUERY_FLAGS },
-    { "server", "<ADDR> Server IP address or name", 1, QUERY_SERVER },
-    { "timeout", "<TimeOut> Response timeout", 1, QUERY_TIMEOUT },
-    { "tcp",  "Use TCP to send msg (instead of UDP)", 0, QUERY_TCP },
-    { "log",  "Log DNS message that are sent", 0, QUERY_LOG },
+struct cmd_opt query_opts[] = {
+    { "--name",   "<NAME> A DNS name", 0, 1,  QUERY_NAME },
+    { "--type",  "<TYPE> A DNS type A|NS|CNAME|SOA|PTR|HINFO|MX|TXT|AAAA|SRV", 0, 1, QUERY_TYPE },
+    { "--class", "<CLASS> A DNS class IN|CS|CH|HS|ANY", 0, 1, QUERY_CLASS },
+    { "--flags", "<FLAGS> Query flags AD:0|CD:0|RD:0", 0, 1, QUERY_FLAGS },
+    { "--server", "<ADDR> Server IP address or name", 0, 1, QUERY_SERVER },
+    { "--timeout", "<TimeOut> Response timeout", 0, 1, QUERY_TIMEOUT },
+    { "--tcp",  "Use TCP to send msg (instead of UDP)", 0, 0, QUERY_TCP },
+    { "--log",  "Log DNS message that are sent", 0, 0, QUERY_LOG },
     { NULL }
 };
 
-struct get_opt resp_opts[] = {
-    { "id"        , "<ID> A DNS header id",  1, RESP_ID  },
-    { "name"      , "<NAME> A DNS name",     1, RESP_NAME },
-    { "flags"     , "<FLAGS> Query flags name:value name=AD|CD|RD and val=0|1", RESP_FLAGS },
-    { "answer"    , "<ANS>  answer record",  1, RESP_AN },
-    { "authority" , "<AUTH> auth record",    1, RESP_NS },
-    { "additional", "<ADD>  add record",     1, RESP_AR },
-    { "output"    , "<FILE> pcap file name", 1, RESP_OUTPUT },
-    { "pcapng"    , "Use pcapng file fmt",   0, RESP_PCAPNG  },
+struct cmd_opt resp_opts[] = {
+    { "--id"        , "<ID> A DNS header id",  0, 1, RESP_ID  },
+    { "--name"      , "<NAME> A DNS name",     0, 1, RESP_NAME },
+    { "--flags"     , "<FLAGS> Query flags name:value name=AD|CD|RD and val=0|1", 0, 1, RESP_FLAGS },
+    { "--answer"    , "<ANS>  answer record",  0, 1, RESP_AN },
+    { "--authority" , "<AUTH> auth record",    0, 1, RESP_NS },
+    { "--additional", "<ADD>  add record",     0, 1, RESP_AR },
+    { "--output"    , "<FILE> pcap file name", 0, 1, RESP_OUTPUT },
+    { "--pcapng"    , "Use pcapng file fmt",   0, 0, RESP_PCAPNG  },
     { NULL }
 };
 
-struct get_opt fuzz_opts[] = {
-    { "type",   "<FUZZ> type must be hdr-trunc|hdr-opcode|hdr-rcode|hdr-qdcnt|qd-cmploop|qd-badjmp", 1, FUZZ_TYPE },
-    { "server", "<ADDR> Server address to send pdu to",  1, FUZZ_SERVER },
-    { "output", "<FILE> pcap file name", 1, FUZZ_OUTPUT },
-    { "pcapng" , "Use pcapng file fmt",  0, FUZZ_PCAPNG  },
+struct cmd_opt fuzz_opts[] = {
+    { "--type",   "<FUZZ> type must be hdr-trunc|hdr-opcode|hdr-rcode|hdr-qdcnt|qd-cmploop|qd-badjmp", 0, 1, FUZZ_TYPE },
+    { "--server", "<ADDR> Server address to send pdu to", 0, 1, FUZZ_SERVER },
+    { "--output", "<FILE> pcap file name", 0, 1, FUZZ_OUTPUT },
+    { "--pcapng" , "Use pcapng file fmt",  0, 0, FUZZ_PCAPNG  },
     { NULL }
 };
 
@@ -899,13 +897,14 @@ static const char *examples[] = {
     "query --name example.com --type MX --server 8.8.8.8 --tcp",
     "fuzz --type qd-cmploop --server 127.0.0.1",
     "fuzz --type qd-badjmp --output f.pcapng --pcapng",
-    "response --id 0x1234 --name test.local --answer 192.168.1.1 --output packet.bin"
+    "response --id 0x1234 --name test.local --answer 192.168.1.1 --output packet.bin",
+    NULL
 };
 
 struct {
     int mode;
     int (*run)(struct dns_gen *sniff);
-    struct get_opt *opts;
+    struct cmd_opt *opts;
     char *name;
     char *desc;
 } cmds[] = {
@@ -933,16 +932,16 @@ static int gen_usage(char *path)
     // list options
     for (size_t i = 1; i < ARR_LEN(cmds); i++) {
         fprintf(out, "%s Options:\n", cmds[i].name);
-        struct get_opt *opts = cmds[i].opts;
+        struct cmd_opt *opts = cmds[i].opts;
         for (size_t j = 0; opts[j].name; j++) {
-            struct get_opt *opt = &opts[j];
-            fprintf(out, "  --%-*s %s\n", w, opt->name, opt->desc);
+            struct cmd_opt *opt = &opts[j];
+            fprintf(out, "  %-*s %s\n", w, opt->name, opt->desc);
         }
         fprintf(out, "\n");
     }
 
     fprintf(out, "Examples:\n");
-    for (size_t i = 0; i < ARR_LEN(examples); i++) {
+    for (int i = 0; examples[i]; i++)  {
         fprintf(out, "  %.*s %s\n", SLICE(prog_name), examples[i]);
     }
 
@@ -965,41 +964,41 @@ static int get_mode(const char *str)
     return 0;
 }
 
-static int set_dns_name(struct dns_gen *gen, struct get_opt *opt, const char *name)
+static int set_dns_name(struct dns_gen *gen, struct cmd_argv *parse)
 {
-    size_t len = strlen(name);
+    size_t len = strlen(parse->value);
 
     if (len >= DNS_NAME_MAXSTR) {
-       return log_cmd_err(mode_tostr[gen->mode], opt->name, "name too big");
+       return log_cmd_err(mode_tostr[gen->mode], parse->name, "name too big");
     }
 
-    memcpy(gen->dns_name, name, len);
+    memcpy(gen->dns_name, parse->value, len);
     gen->dns_name[len] = '\0';
 
     return 0;
 }
 
-static int set_dns_type(struct dns_gen *gen, struct get_opt *opt, const char *str)
+static int set_dns_type(struct dns_gen *gen,  struct cmd_argv *parse)
 {
-    gen->dns_type = dns_get_type(str);
+    gen->dns_type = dns_get_type(parse->value);
     if (!gen->dns_type) {
-        return log_cmd_err(mode_tostr[gen->mode], opt->name, "Unknown type");
+        return log_cmd_err(mode_tostr[gen->mode], parse->name, "Unknown type");
     }
     return 0;
 }
 
-static int set_dns_class(struct dns_gen *gen, struct get_opt *opt, const char *str)
+static int set_dns_class(struct dns_gen *gen, struct cmd_argv *parse)
 {
-    gen->dns_class = dns_get_class(str);
+    gen->dns_class = dns_get_class(parse->value);
     if (!gen->dns_type) {
-        return log_cmd_err(mode_tostr[gen->mode], opt->name, "Unknown class");
+        return log_cmd_err(mode_tostr[gen->mode], parse->name, "Unknown class");
     }
     return 0;
 }
 
-static int set_dns_flags(struct dns_gen *gen, struct get_opt *opt, char *str)
+static int set_dns_flags(struct dns_gen *gen, struct cmd_argv *parse)
 {
-    struct str_slice flags_str = slice_make_cstr(str);
+    struct str_slice flags_str = slice_make_cstr(parse->value);
     uint16_t flags = 0;
 
     while (flags_str.len) {
@@ -1009,7 +1008,7 @@ static int set_dns_flags(struct dns_gen *gen, struct get_opt *opt, char *str)
         slice_trim(&on_off);
         uint16_t mask = get_dns_flag(flag);
         if (!mask) {
-            return log_cmd_err(mode_tostr[gen->mode], opt->name, "Unknown flag %.*s", (int) flag.len, flag.ptr);
+            return log_cmd_err(mode_tostr[gen->mode], parse->name, "Unknown flag %.*s", (int) flag.len, flag.ptr);
         }
         if (mask && on_off.len) {
             if (*on_off.ptr == '0') {
@@ -1026,94 +1025,72 @@ static int set_dns_flags(struct dns_gen *gen, struct get_opt *opt, char *str)
     return 0;
 }
 
-static int set_server(struct dns_gen *gen, struct get_opt *opt, const char *str)
+static int set_timeout(struct dns_gen *gen, struct cmd_argv *parse)
 {
-    (void) opt;
-
-    if (gen->serv_addr) {
-        free(gen->serv_addr);
-    }
-    gen->serv_addr = strdup(str);
-    if (!gen->serv_addr) {
-        return log_errno_rf("strdup server failed");
-    }
-
-    return 0;
-}
-
-static int set_timeout(struct dns_gen *gen, struct get_opt *opt, const char *str)
-{
-    long val = strtol(str, NULL, 0);
+    long val = strtol(parse->value, NULL, 0);
     if (val < 0) {
-        return log_cmd_err(mode_tostr[gen->mode], opt->name, "timeout cannot be < 0");
+        return log_cmd_err(mode_tostr[gen->mode], parse->name, "timeout cannot be < 0");
     }
     gen->timeout = val;
 
     return 0;
 }
 
-static int set_id(struct dns_gen *gen, struct get_opt *opt, const char *str)
+
+
+
+static int set_id(struct dns_gen *gen, struct cmd_argv *parse)
 {
-    long val = strtol(str, NULL, 0);
+    long val = strtol(parse->value, NULL, 0);
     if (val < 0 || val > 0xffff) {
-        return log_cmd_err(mode_tostr[gen->mode], opt->name, "id must be range [0x0, 0xffff]");
+        return log_cmd_err(mode_tostr[gen->mode], parse->name, "id must be range [0x0, 0xffff]");
     }
     gen->id = val;
 
     return 0;
 }
 
-static int add_an(struct dns_gen *gen, struct get_opt *opt, const char *str)
+static int add_an(struct dns_gen *gen,  struct cmd_argv *parse)
 {
     struct dns_rec rec = { 0 };
 
-    int rc = gen_load_rec(gen, &rec, str);
-    if (rc) return log_cmd_err(mode_tostr[gen->mode], opt->name, "Bad format");
+    int rc = gen_load_rec(gen, &rec, parse->value);
+    if (rc) return log_cmd_err(mode_tostr[gen->mode], parse->name, "Bad format");
     rc =  dns_msg_add_an(&gen->send, &rec);
-    if (rc) return log_cmd_err(mode_tostr[gen->mode], opt->name, "Add failed");
+    if (rc) return log_cmd_err(mode_tostr[gen->mode], parse->name, "Add failed");
 
     return 0;
 }
 
-static int add_ns(struct dns_gen *gen, struct get_opt *opt, const char *str)
+static int add_ns(struct dns_gen *gen,  struct cmd_argv *parse)
 {
     struct dns_rec rec = { 0 };
 
-    int rc = gen_load_rec(gen, &rec, str);
-    if (rc) return log_cmd_err(mode_tostr[gen->mode], opt->name, "Bad format");
+    int rc = gen_load_rec(gen, &rec, parse->value);
+    if (rc) return log_cmd_err(mode_tostr[gen->mode], parse->name, "Bad format");
     rc =  dns_msg_add_ns(&gen->send, &rec);
-    if (rc) return log_cmd_err(mode_tostr[gen->mode], opt->name, "Add failed");
+    if (rc) return log_cmd_err(mode_tostr[gen->mode], parse->name, "Add failed");
 
     return 0;
 }
 
-static int add_ar(struct dns_gen *gen, struct get_opt *opt, const char *str)
+static int add_ar(struct dns_gen *gen, struct cmd_argv *parse)
 {
     struct dns_rec rec = { 0 };
 
-    int rc = gen_load_rec(gen, &rec, str);
-    if (rc) return log_cmd_err(mode_tostr[gen->mode], opt->name, "Bad format");
+    int rc = gen_load_rec(gen, &rec, parse->value);
+    if (rc) return log_cmd_err(mode_tostr[gen->mode], parse->name, "Bad format");
     rc =  dns_msg_add_ar(&gen->send, &rec);
-    if (rc) return log_cmd_err(mode_tostr[gen->mode], opt->name, "Add failed");
+    if (rc) return log_cmd_err(mode_tostr[gen->mode], parse->name, "Add failed");
 
     return 0;
 }
 
-static int set_output(struct dns_gen *gen, struct get_opt *opt, const char *str)
+static int set_fuzz_type(struct dns_gen *gen, struct cmd_argv *parse)
 {
-    (void) opt;
-    if (gen->output) free(gen->output);
-    gen->output = strdup(str);
-    if (!gen->output) return log_errno_rf("strdup failed for output");
-
-    return 0;
-}
-
-static int set_fuzz_type(struct dns_gen *gen, struct get_opt *opt, const char *str)
-{
-    gen->fuzz_type = get_fuzz_type(str);
+    gen->fuzz_type = get_fuzz_type(parse->value);
     if (!gen->fuzz_type) {
-        return log_cmd_err(mode_tostr[gen->mode], opt->name, "%s", opt->desc);
+        return log_cmd_err(mode_tostr[gen->mode], parse->name, "%s", parse->desc);
     }
 
     return 0;
@@ -1141,40 +1118,38 @@ static int gen_parse_argv(struct dns_gen *gen, int argc, char *argv[])
     }
 
     // process cmd-line options
-    struct getopt_parse parse;
-    int rc = getopt_init(&parse, argc, argv, 0, cmds[gen->mode].opts);
-    if (rc) fatal_error("cmd-line parser failed");
-    while ((rc = getopt_next(&parse)) >= 0) {
-        struct get_opt *opt = getopt_curopt(&parse);
+    struct cmd_argv parse = { argc, argv, cmds[gen->mode].opts, 2 } ;
+    int rc;
+    while ( (rc = cmd_argv_next(&parse)) >= 0) {
         switch(rc) {
         // query
-        case QUERY_NAME:    rc = set_dns_name(gen, opt, getopt_str(&parse)); break;
-        case QUERY_TYPE:    rc = set_dns_type(gen, opt, getopt_str(&parse)); break;
-        case QUERY_CLASS:   rc = set_dns_class(gen, opt, getopt_str(&parse)); break;
-        case QUERY_FLAGS:   rc = set_dns_flags(gen, opt, getopt_str(&parse)); break;
-        case QUERY_SERVER:  rc = set_server(gen, opt, getopt_str(&parse)); break;
-        case QUERY_TIMEOUT: rc = set_timeout(gen, opt, getopt_str(&parse)); break;
+        case QUERY_NAME:    rc = set_dns_name(gen, &parse); break;
+        case QUERY_TYPE:    rc = set_dns_type(gen, &parse); break;
+        case QUERY_CLASS:   rc = set_dns_class(gen, &parse); break;
+        case QUERY_FLAGS:   rc = set_dns_flags(gen, &parse); break;
+        case QUERY_SERVER:  rc = opt_setstr(&gen->serv_addr, &parse); break;
+        case QUERY_TIMEOUT: rc = set_timeout(gen, &parse); break;
         case QUERY_TCP: gen->use_tcp = 1; break;
         case QUERY_LOG: gen->log_msg = 1; break;
         // response
-        case RESP_ID:   rc = set_id(gen, opt, getopt_str(&parse)); break;
-        case RESP_NAME: rc = set_dns_name(gen, opt, getopt_str(&parse)); break;
-        case RESP_FLAGS: rc = set_dns_flags(gen, opt, getopt_str(&parse)); break;
-        case RESP_AN:  rc = add_an(gen, opt, getopt_str(&parse)); break;
-        case RESP_NS:  rc = add_ns(gen, opt, getopt_str(&parse)); break;
-        case RESP_AR:  rc = add_ar(gen, opt, getopt_str(&parse)); break;
-        case RESP_TTL: rc = set_timeout(gen, opt, getopt_str(&parse)); break;
-        case RESP_OUTPUT: rc = set_output(gen, opt, getopt_str(&parse)); break;
+        case RESP_ID:    rc = set_id(gen, &parse); break;
+        case RESP_NAME:  rc = set_dns_name(gen, &parse); break;
+        case RESP_FLAGS: rc = set_dns_flags(gen, &parse); break;
+        case RESP_AN:    rc = add_an(gen, &parse); break;
+        case RESP_NS:    rc = add_ns(gen, &parse); break;
+        case RESP_AR:    rc = add_ar(gen, &parse); break;
+        case RESP_TTL:   rc = set_timeout(gen, &parse); break;
+        case RESP_OUTPUT: rc = opt_setstr(&gen->output, &parse); break;
         case RESP_PCAPNG: gen->use_pcapng = 1; break;
         // fuzz
-        case FUZZ_TYPE:   rc = set_fuzz_type(gen, opt, getopt_str(&parse)); break;
-        case FUZZ_SERVER: rc = set_server(gen, opt, getopt_str(&parse)); break;
-        case FUZZ_OUTPUT: rc = set_output(gen, opt, getopt_str(&parse)); break;
+        case FUZZ_TYPE:   rc = set_fuzz_type(gen, &parse); break;
+        case FUZZ_SERVER: rc = opt_setstr(&gen->serv_addr, &parse); break;
+        case FUZZ_OUTPUT: rc = opt_setstr(&gen->output, &parse); break;
         case FUZZ_PCAPNG: gen->use_pcapng = 1; break;
         }
         if (rc < 0) break;
     }
-    if (rc != GETOPT_EOF) return rc;
+    if (rc != OPT_EOF) return rc;
 
     // final check
     switch(gen->mode) {

@@ -2,15 +2,15 @@
  * A util api for string and cmdline processing
  *
  */
-#ifndef __UTIL_H__
-#define __UTIL_H__
+#ifndef _UTIL_H_
+#define _UTIL_H_
 
 #include <stdio.h>
-#include <stdarg.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <getopt.h>
+#include <signal.h>
 
 // system errors
 #define UTIL_OK    0
@@ -85,9 +85,9 @@ static inline struct str_slice slice_make(char *str, size_t len)
     return dst;
 }
 
-static inline struct str_slice slice_make_cstr(char *str)
+static inline struct str_slice slice_make_cstr(const char *str)
 {
-    return slice_make(str, str ? strlen(str) : 0);
+    return slice_make(RMCONST(char *, str), str ? strlen(str) : 0);
 }
 
 static inline struct str_slice slice_copy(struct str_slice val)
@@ -277,11 +277,14 @@ static inline struct str_slice slice_tolower(struct str_slice str)
     return str;
 }
 
+
+//  misc
 char *slice_strdup(const struct str_slice str);
 char *itoa(char *buf, int len, int val);
 char *int_tostr(int val);
 
-char *gen_path(const char *dir, const char *name);
+int gen_str(char *buf, size_t len, const char *fmt, ...)
+    __attribute__((format(printf, 3, 4)));
 
 //  djb2a hash algorhtim
 static inline uint64_t dbj2a_hash(const void *key, const int klen)
@@ -307,160 +310,61 @@ static inline uint64_t dbj2a_hash_slice(const struct str_slice str)
     return dbj2a_hash(str.ptr, str.len);
 }
 
-// wrapper around getopt_long
-#define GETOPT_EOF     -1
-#define GETOPT_MISSVAL -2
-#define GETOPT_ERROPT  -3
+// signal handler API
+struct simple_sig {
+    volatile sig_atomic_t run;
+    int signo;
+    uid_t uid;
+    pid_t pid;
+};
 
-#define GETOPT_NOARG  0
-#define GETOPT_REQARG 1
-#define GETOPT_OPTARG 2
-#define GETOPT_MAX 20
-#define GETOPT_DEFINT(x) .def_type = 1, .def_int = (x)
-#define GETOPT_DEFSTR(x) .def_type = 2, .def_str = (x)
+int setup_signals(struct simple_sig *sig);
 
-struct get_opt {
+static inline const char *get_basename(const char *name)
+{
+    if (!name) return NULL;
+    const char *base = strrchr(name, '/');
+    return base ? base + 1 : name;
+}
+
+// generic setters
+int str_setval(char **str, const char *name, const char *val_str);
+int int_setval(int *ival, const char *name, const char *val_str);
+
+// cmd-line parsing
+#define OPT_NOARG  0
+#define OPT_REQARG 1
+#define OPT_OPTARG 2
+
+#define OPT_EOF     -2
+#define OPT_UNSUPP  -3
+#define OPT_MISSVAL -4
+
+struct cmd_opt {
     const char *name;
     const char *desc;
-    int has_arg;
-    int val;
-    int def_type;
-    union  {
-        const char *def_str;
-        int def_int;
-    };
+    const char *def_str;
+    int has_arg;  // 0=none, 1=requried, 2=optional
+    int code;
 };
 
-struct getopt_parse {
-    char **argv;
+struct cmd_argv {
     int argc;
-    size_t num_opt;
-    struct get_opt *opts;
-    struct str_slice val;
+    char **argv;
+    struct cmd_opt *opts;
+    int argv_idx;
     int opt_idx;
-    struct option long_opts[GETOPT_MAX+1];
+    int val_idx;
+    const char *name;
+    const char *desc;
+    const char *value;
 };
 
-int getopt_init(struct getopt_parse *parse, 
-    int argc, char *argv[],
-    size_t num_opt, struct get_opt opts[num_opt]);
-int getopt_next(struct getopt_parse *parse);
+int cmd_argv_next(struct cmd_argv *parse);
+int opt_setstr(char **str, struct cmd_argv *parse);
+int opt_setint(int *iptr, struct cmd_argv *parse);
 
-static inline struct str_slice getopt_val(struct getopt_parse *parse)
-{
-    return parse->val;
-}
+void print_usage(const char *cmd, const struct cmd_opt opts[], const char *examples[]);
 
-static inline char *getopt_str(struct getopt_parse *parse)
-{
-    return parse->val.ptr;
-}
-
-static inline struct get_opt *getopt_curopt(struct getopt_parse *parse)
-{
-    int idx = parse->opt_idx;
-    if (idx < 0 || (size_t) idx > parse->num_opt) return NULL;
-    return &parse->opts[idx];
-}
-
-
-static inline char *getopt_erropt(struct getopt_parse *parse)
-{
-    int idx = optind - 1;
-
-    if (idx < 0) return "<null>";
-    if (idx >= parse->argc) return "<null>";
-
-    return parse->argv[idx];
-}
-
-void print_usage(const char *cmd, 
-    int num_opt, const struct get_opt opt[num_opt],
-    int num_exa, char *examples[num_exa]);
-
-// buffer code
-struct rwbuf {
-    char *data;
-    int cap; // fixed size 
-    int widx;  // start of bytes to read
-    int ridx;
-};
-
-static inline void rwbuf_init(struct rwbuf *buf, char *data, int len)
-{
-    buf->data = data;
-    buf->cap = len;
-    buf->widx = 0;
-    buf->ridx = 0;
-}
-
-#define RWBUF_INIT(_buf, _len) { .data = (_buf), .cap = (_len), .widx = 0, .ridx = 0 }
-
-
-static inline char *rwbuf_wpos(struct rwbuf *buf)
-{
-    return buf->data + buf->widx;
-}
-
-static inline int rwbuf_wrem(struct rwbuf *buf)
-{
-    return buf->cap - buf->widx;
-}
-
-// bytes writen to buffer available to read
-static inline int rwbuf_avail(struct rwbuf *buf)
-{
-    return buf->widx - buf->ridx;
-}
-
-static inline char *rwbuf_rpos(struct rwbuf *buf)
-{
-    return buf->data + buf->ridx;
-}
-
-static inline int rwbuf_rrem(struct rwbuf *buf)
-{
-    return buf->widx - buf->ridx;
-}
-
-// resever len bytes in buf or error
-static inline char *rwbuf_wres(struct rwbuf *buf, int len)
-{
-    int wrem = buf->cap - buf->widx;
-
-    if (wrem < len) {
-        // not enough space
-        return  NULL;
-    }
-
-    char *wptr = buf->data + buf->widx;
-    buf->widx += len;
-
-    return wptr;
-}
-
-static inline char *rwbuf_strcat(struct rwbuf *buf, const char *str, int len)
-{
-    char *wptr = rwbuf_wres(buf, len);
-
-    if (wptr) {
-        memcpy(wptr, str, len);
-    }
-
-    return wptr;
-}
-
-static inline char *rwbuf_strcat_sep(struct rwbuf *buf, int ch, const char *str, int len)
-{
-    int add_ch = (buf->widx > 0) ? 1 : 0;
-    char *wptr = rwbuf_wres(buf, len + add_ch);
-
-    if (wptr) {
-        if (add_ch) *wptr++ = ch;
-        memcpy(wptr, str, len);
-    }
-
-    return wptr;
-}
 
 #endif

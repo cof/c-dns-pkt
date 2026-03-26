@@ -1,6 +1,7 @@
 /*
  *
  */
+
 #include <stdio.h>
 #include <string.h>
 #include <stdarg.h>
@@ -9,19 +10,55 @@
 #include "util.h"
 #include "log.h"
 
-char *gen_path(const char *dir, const char *name)
+int verbose = 0;
+
+// signal handling
+static struct simple_sig *glob_sig = NULL;
+
+static void handle_signal(int signo, siginfo_t *info, void *ucontext)
 {
-    if (!dir || !name) return NULL;
+    (void) ucontext;
 
-    char *path = NULL;
-    int rc = asprintf(&path, "%s/%s", dir, name);
+    if (!glob_sig) return;
 
-    if (rc == -1) {
-        // out of memory ?
-        return NULL;
+    glob_sig->signo = signo;
+    glob_sig->pid = 0;
+    glob_sig->uid = 0;
+
+    if (info && info->si_code <= 0) {
+        glob_sig->pid = info->si_pid;
+        glob_sig->uid = info->si_uid;
     }
 
-    return path;
+    glob_sig->run = 0;
+}
+
+int setup_signals(struct simple_sig *sig)
+{
+    if (!sig) return -1;
+    struct sigaction sa = { 0 };
+
+    sa.sa_sigaction = handle_signal;
+    sa.sa_flags = SA_SIGINFO;
+    if (sigaction(SIGINT, &sa, NULL) == -1) {
+        return log_errno_rf("setup sigint");
+    }
+    if (sigaction(SIGTERM, &sa, NULL) == -1) {
+        return log_errno_rf("setup sigterm");
+    }
+
+    // XXX prevent write(fd) trigger a signal
+    sa.sa_handler = SIG_IGN;
+    sa.sa_flags = 0;
+    if (sigaction(SIGPIPE, &sa, NULL) == -1) {
+        return log_errno_rf("setup SIGPIPE");
+    }
+
+    sig->run = 1;
+    glob_sig = sig;
+
+    // all done
+    return 0;
 }
 
 char *slice_strdup(const struct str_slice str)
@@ -65,121 +102,123 @@ char *int_tostr(int val)
     return itoa(str, sizeof(bufs[0][0]), val);
 }
 
-// wrapper around getopt_long
-static struct get_opt *getopt_missopt(struct getopt_parse *parse)
+int gen_str(char *buf, size_t len, const char *fmt, ...)
 {
-    int val = optopt;
+    va_list args;
 
-    for (size_t i = 0; i < parse->num_opt; i++) {
-        if (parse->opts[i].val == val) {
-            parse->opt_idx = i;
-            return &parse->opts[i];
-        }
+    va_start(args, fmt);
+    int rc = vsnprintf(buf, len, fmt, args);
+    va_end(args);
+
+    if (rc < 0) {
+        return log_errno_rf("gen-str printf failed");
     }
 
-    return NULL;
-}
-
-int getopt_init(struct getopt_parse *parse, 
-    int argc, char *argv[],
-    size_t num_opt, struct get_opt opts[num_opt])
-{
-    memset(parse->long_opts, 0, sizeof(parse->long_opts));
-
-    parse->argc = argc >= 0 ? argc : 0;
-    parse->argv = argv;
-
-    parse->opts = opts;
-    parse->num_opt = num_opt;
-    parse->opt_idx = 0;
-
-    if (num_opt > GETOPT_MAX) {
-        return log_error_rf("Num opts %zu > max %d", num_opt, GETOPT_MAX);
+    if ((size_t) rc >= len) {
+        return log_error_rf("gen-str no space");
     }
 
-    // disable getopt error reporiing
-    opterr = 0;
-
-    // convert to getopt_long fmt
-    size_t i = 0;
-    while (1) {
-        struct option *lopt = &parse->long_opts[i];
-        struct get_opt *opt = &opts[i];
-        // 3 exit condtions
-        if (num_opt && i >= num_opt) break;
-        if (opt->name == NULL) break;
-        if (parse->num_opt >= GETOPT_MAX) {
-            return log_error_rf("Num opts %zu > max %d", num_opt, GETOPT_MAX);
-        }
-        // safe to load
-        lopt->name = opt->name;
-        lopt->has_arg = opt->has_arg;
-        lopt->val = opt->val;
-        if (!num_opt) parse->num_opt++;
-        i++;
-    }
-
-    // all done
     return 0;
 }
 
-int getopt_next(struct getopt_parse *parse)
+// generic setters
+int str_setval(char **str, const char *name, const char *val_str)
 {
-    int rc = getopt_long_only(
-        parse->argc, parse->argv,
-        ":", parse->long_opts, 
-        &parse->opt_idx
-    );
-
-    if (rc == -1) {
-        // all cmd-line options parsed
-        return GETOPT_EOF;
+    if (*str) free(*str);
+    *str = strdup(val_str);
+    if (!*str) {
+        return log_errno_rf("%s strdup failed", name);
     }
 
-    if (rc == ':') {
-        //  Missing value
-        struct get_opt *opt = getopt_missopt(parse);
-        return log_error_re(GETOPT_MISSVAL, "Option: --%s requries an arg", opt->name);
-    }
-
-    if (rc == '?') {
-        // Unknown option
-        const char *opt = getopt_erropt(parse);
-        return log_error_re(GETOPT_ERROPT, "Error: Unknown option %s", opt);
-    }
-    
-    parse->val = slice_make_cstr(optarg);
-
-    // option code
-    return rc;
+    return 0;
 }
 
-void print_usage(const char *cmd, 
-    int num_opt, const struct get_opt opts[num_opt],
-    int num_exa, char *examples[num_exa])
+int int_setval(int *ival, const char *name, const char *val_str)
 {
-    const char *base = strrchr(cmd, '/');
-    const char *prog_name = (base) ? base + 1 : cmd;
+    int val = strtol(val_str, NULL, 0);
+    if (val < 0) {
+        return log_error_rf("%s cannot be negative", name);
+    }
+    *ival = val;
+
+    return 0;
+}
+
+// cmd-line parsing
+int opt_setstr(char **str, struct cmd_argv *parse)
+{
+    return str_setval(str, parse->name, parse->value);
+}
+
+int opt_setint(int *iptr, struct cmd_argv *parse)
+{
+    return int_setval(iptr, parse->name, parse->value);
+}
+
+static int find_opt(const char *name, const struct cmd_opt opts[])
+{
+    for (int i = 0; opts[i].name; i++) {
+        if (strcmp(name, opts[i].name) == 0) {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+// a simple stateful iterator over cmd-line args
+int cmd_argv_next(struct cmd_argv *parse) 
+{
+    // skip prog name
+    if (parse->argv_idx == 0) parse->argv_idx++;
+    if (parse->argv_idx >= parse->argc) return OPT_EOF;
+
+    // match name
+    parse->name = parse->argv[parse->argv_idx++];
+    parse->opt_idx = find_opt(parse->name, parse->opts);
+    if (parse->opt_idx == -1) {
+        return log_error_re(OPT_UNSUPP, "Error: Unknown option %s", parse->name);
+    }
+
+    // get value
+    parse->value = NULL;
+    parse->val_idx = -1;
+    if (parse->opts[parse->opt_idx].has_arg) {
+        if (parse->argv_idx >= parse->argc) {
+            return log_error_re(OPT_MISSVAL, "Option: --%s Missing a value", parse->name);
+        }
+        if (parse->argv[parse->argv_idx][0] == '-') { 
+            return log_error_re(OPT_MISSVAL, "Option: --%s Missing value", parse->name);
+        }
+        // save value index
+        parse->value = parse->argv[parse->argv_idx];
+        parse->val_idx = parse->argv_idx++;
+    }
+
+    parse->desc = parse->opts[parse->opt_idx].desc;
+
+    // tell user
+    return parse->opts[parse->opt_idx].code ? parse->opts[parse->opt_idx].code : parse->opt_idx;
+}
+
+void print_usage(const char *cmd, const struct cmd_opt opts[], const char *examples[])
+{
+    const char *prog_name = get_basename(cmd);
     int w= 15;
 
     printf("Usage: %s [OPTIONS]\n\n", prog_name);
     printf("Options:\n");
 
-    for (int i = 0; i < num_opt; i++) {
-        printf(" --%-*s %s", w, opts[i].name, opts[i].desc);
-        if (opts[i].def_type) {
-            const char *def_str = opts[i].def_type == 1
-                ? int_tostr(opts[i].def_int)
-                : opts[i].def_str;
-            printf(" (default=%s)", def_str);
+    for (int i = 0; opts[i].name; i++)  {
+        printf(" %-*s %s", w, opts[i].name, opts[i].desc);
+        if (opts[i].def_str) {
+            printf(" (default=%s)", opts[i].def_str);
         }
         printf("\n");
     }
 
-    if (!num_exa) return;
-
     printf("\nExamples:\n");
-    for (int i = 0; i < num_exa; i++) {
+    for (int i = 0; examples[i]; i++)  {
         printf("  %s %s\n", prog_name, examples[i]);
     }
 }

@@ -14,9 +14,12 @@
 
 #include <errno.h>
 #include <arpa/inet.h>   
+#include <arpa/inet.h> 
+#include <stdarg.h>
 
 #include "util.h"
 #include "log.h"
+#include "strbuf.h"
 #include "dns_proto.h"
 
 // flag decoder error
@@ -30,7 +33,6 @@
 #define DNS_MAX_EMSG  10
 #define DNS_NAME_SIZE 256
 #define DNS_MSG_SIZE (4 * DNS_NAME_SIZE + 100) // big enough for names + extra
-
 
 struct dns_err {
     int group;
@@ -55,9 +57,8 @@ struct dns_dec {
     size_t udp_size;
     uint8_t ext_rcode;
     uint8_t edns_ver;
-    // track what we write into emsg
+    struct strbuf emsg; // track what we write into emsg
     struct dns_header hdr;
-    struct rwbuf emsg;
     char msg[DNS_MSG_SIZE]; // parse_dns_name + dns_err_tostr
 };
 
@@ -259,21 +260,21 @@ const char *opcode_tostr(int opcode)
 static char *dns_wmsg(struct dns_dec *dec, const char *fmt, ...) 
 {
     va_list args;
-    struct rwbuf *buf;
+    struct strbuf *buf;
     int nw;
 
     buf = &dec->emsg;
     va_start(args, fmt);
-    nw = vsnprintf(rwbuf_wpos(buf), rwbuf_wrem(buf), fmt, args);
+    nw = vsnprintf(strbuf_wpos(buf), strbuf_wrem(buf), fmt, args);
     va_end(args);
 
-    if (nw < 0 || nw >= rwbuf_wrem(buf)) {
+    if (nw < 0 || nw >= strbuf_wrem(buf)) {
         errno = ENOBUFS;
         return log_errno_rn("dns_wnsg: writer failed");
     }
 
     // return ptr where we stored messge
-    return rwbuf_wres(buf, nw);
+    return strbuf_wres(buf, nw);
 }
 
 int dns_dec_err(struct dns_dec *dec, int group, int field, int ec)
@@ -312,7 +313,7 @@ char *dns_err_tostr(struct dns_dec *dec, struct dns_err *err)
 static int dns_dec_genmsg(struct dns_dec *dec)
 {
     if (!dec->nerr) {
-        if (!rwbuf_avail(&dec->emsg)) {
+        if (!strbuf_avail(&dec->emsg)) {
             // decoders desc failed ?
             dns_wmsg(dec, "[ERROR] Missing PDU desc");
         }
@@ -1139,7 +1140,7 @@ static int decode_header(struct dns_dec *dec, struct dns_msg *msg)
     const char *type_str = qr ? "RESPONSE" : "QUERY";
 
     char extra[100];
-    struct rwbuf buf = RWBUF_INIT(extra, sizeof(extra));
+    struct strbuf buf = STRBUF_INIT(extra, sizeof(extra));
     extra[0] = '\0';
 
     if (qr) {
@@ -1151,24 +1152,24 @@ static int decode_header(struct dns_dec *dec, struct dns_msg *msg)
         int rcode = flags & DNS_FLAGS_RCODE;
 
         // add flags
-        if (as) rwbuf_strcat_sep(&buf, ' ', STR_LIT("AS:1"));
-        if (tc) rwbuf_strcat_sep(&buf, ' ', STR_LIT("TC:1"));
-        if (rd) rwbuf_strcat_sep(&buf, ' ', STR_LIT("RD:1"));
-        if (ra) rwbuf_strcat_sep(&buf, ' ', STR_LIT("RA:1"));
+        if (as) strbuf_strcat_sep(&buf, ' ', STR_LIT("AS:1"));
+        if (tc) strbuf_strcat_sep(&buf, ' ', STR_LIT("TC:1"));
+        if (rd) strbuf_strcat_sep(&buf, ' ', STR_LIT("RD:1"));
+        if (ra) strbuf_strcat_sep(&buf, ' ', STR_LIT("RA:1"));
 
         // convert RCODE to str
         const char *rcode_str = rcode_tostr(rcode);
-        rwbuf_strcat_sep(&buf, ' ', STR_LIT("RCODE:"));
-        rwbuf_strcat(&buf, rcode_str, strlen(rcode_str));
+        strbuf_strcat_sep(&buf, ' ', STR_LIT("RCODE:"));
+        strbuf_strcat(&buf, rcode_str, strlen(rcode_str));
 
         // validate OPCODE range
         if (opcode == 3 || opcode > 5) {
-            rwbuf_strcat_sep(&buf, ' ', STR_LIT("bad-opcode"));
+            strbuf_strcat_sep(&buf, ' ', STR_LIT("bad-opcode"));
         }
 
         // validate RCODE range
         if (rcode > 10) {
-            rwbuf_strcat_sep(&buf, ' ', STR_LIT("bad-rcode"));
+            strbuf_strcat_sep(&buf, ' ', STR_LIT("bad-rcode"));
             dns_dec_err(dec, DNS_DEC_PDU, DNS_DEC_HDR, DNS_ERR_BADRCODE);
         }
     }
@@ -1180,14 +1181,14 @@ static int decode_header(struct dns_dec *dec, struct dns_msg *msg)
         int ad = flags & DNS_FLAGS_AD ? 1 : 0;   
 
         // add flags
-        if (tc) rwbuf_strcat_sep(&buf, ' ', STR_LIT("TC:1"));
-        if (rd) rwbuf_strcat_sep(&buf, ' ', STR_LIT("RD:1"));
-        if (cd) rwbuf_strcat_sep(&buf, ' ', STR_LIT("CD:1"));
-        if (ad) rwbuf_strcat_sep(&buf, ' ', STR_LIT("AD:1"));
+        if (tc) strbuf_strcat_sep(&buf, ' ', STR_LIT("TC:1"));
+        if (rd) strbuf_strcat_sep(&buf, ' ', STR_LIT("RD:1"));
+        if (cd) strbuf_strcat_sep(&buf, ' ', STR_LIT("CD:1"));
+        if (ad) strbuf_strcat_sep(&buf, ' ', STR_LIT("AD:1"));
 
         // validate OPCODE range
         if (opcode == 3 || opcode > 5) {
-            rwbuf_strcat_sep(&buf, ' ', STR_LIT("bad-opcode"));
+            strbuf_strcat_sep(&buf, ' ', STR_LIT("bad-opcode"));
             dns_dec_err(dec, DNS_DEC_PDU, DNS_DEC_HDR, DNS_ERR_BADOPCODE);
         }
     }
@@ -1195,7 +1196,7 @@ static int decode_header(struct dns_dec *dec, struct dns_msg *msg)
     // desc PDU as we decode
     dns_wmsg(dec,
         "[%s] ID 0x%04x QR:%d OPCODE:%s %.*s\n",
-        type_str, hdr->id, qr, opcode_str, buf.widx, buf.data);
+        type_str, hdr->id, qr, opcode_str, strbuf_avail(&buf), buf.data);
 
     return 0;
 }
@@ -1234,7 +1235,7 @@ int validate_dns_packet(const uint8_t *pkt_buf, size_t pkt_len, char *emsg)
         .pkt_len = pkt_len,
         .udp_size = DNS_MAX_UDP,
         .need_emsg = 1,
-        .emsg = RWBUF_INIT(emsg, DNS_EMSG_MAXLEN)
+        .emsg = STRBUF_INIT(emsg, DNS_EMSG_MAXLEN)
     };
 
     struct dns_msg msg = { 0 };

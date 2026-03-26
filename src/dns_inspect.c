@@ -366,44 +366,37 @@ static int run_unsupp(struct dns_sniff *sniff)
  * cmd-line options
  *
  */
-static struct get_opt capt_opts[] = {
-    { "interface", "Name of interface to sniff DNS msgs", 1, 'i' },
+enum { opt_ifname, opt_fname };
+
+static struct cmd_opt capt_opts[] = {
+    { "--interface", "Name of interface to sniff DNS msgs", 0, 1, opt_ifname },
     { NULL } 
 };
 
-static struct get_opt pcap_opts[] = {
-    { "file", "Name of packet capture file", 1, 'f' },
+static struct cmd_opt pcap_opts[] = {
+    { "--file", "Name of packet capture file", 0, 1, opt_fname },
     { NULL } 
 };
 
 static const char *examples[] = {
     "capture --interface eth0",
     "readpcap --file dns.pcap",
-    "tracepcap --file dns.pcap"
+    "tracepcap --file dns.pcap",
+    NULL
 };
 
 static int sniff_usage(char *path);
 
-static int set_filename(struct dns_sniff *sniff, struct get_opt *opt, const char *filename)
+static int set_interface(struct dns_sniff *sniff, struct cmd_argv *parse)
 {
-    if (sniff->filename) free(sniff->filename);
-    sniff->filename = strdup(filename);
-    if (!sniff->filename) {
-        return log_errno_rf("strdup failed to set %s", opt->name);
-    }
-
-    return 0;
-}
-
-static int set_interface(struct dns_sniff *sniff, struct get_opt *opt, const char *name)
-{
-    size_t len = strlen(name);
+    const char *dev_name = parse->value;
+    size_t len = strlen(dev_name);
 
     if (len >= sizeof(sniff->dev_name)) {
-       return log_error_rf("%s bigger than max %zu", opt->name, sizeof(sniff->dev_name) - 1);
+       return log_error_rf("%s bigger than max %zu", parse->name, sizeof(sniff->dev_name) - 1);
     }
 
-    memcpy(sniff->dev_name, name, len);
+    memcpy(sniff->dev_name, dev_name, len);
     sniff->dev_name[len] = '\0';
 
     sniff->dev_index = if_nametoindex(sniff->dev_name);
@@ -417,7 +410,7 @@ static int set_interface(struct dns_sniff *sniff, struct get_opt *opt, const cha
 struct {
     int mode;
     int (*run)(struct dns_sniff *sniff);
-    struct get_opt *opts;
+    struct cmd_opt *opts;
     char *name;
     char *desc;
 } cmds[] = {
@@ -447,16 +440,16 @@ static int sniff_usage(char *path)
     fprintf(out, "MODE:\n");
     for (size_t i = 1; i < ARR_LEN(cmds); i++) {
         fprintf(out, "  %-*s", w, cmds[i].name);
-        struct get_opt *opts = cmds[i].opts;
+        struct cmd_opt *opts = cmds[i].opts;
         for (size_t j = 0; opts[j].name; j++) {
-            fprintf(out, " --%s %s", opts[j].name, opts[j].desc);
+            fprintf(out, " %s %s", opts[j].name, opts[j].desc);
         }
         fprintf(out, "\n");
     }
     fprintf(out, "\n");
 
     fprintf(out, "Examples:\n");
-    for (size_t i = 0; i < ARR_LEN(examples); i++) {
+    for (int i = 0; examples[i]; i++)  {
         fprintf(out, "  %.*s %s\n", SLICE(name), examples[i]);
     }
 
@@ -477,18 +470,16 @@ static int sniff_parse_argv(struct dns_sniff *sniff, int argc, char *argv[])
     }
 
     // process cmd-line options
-    struct getopt_parse parse;
-    int rc = getopt_init(&parse, argc, argv, 0, cmds[sniff->mode].opts);
-    if (rc) fatal_error("cmd-line parser failed");
-    while ((rc = getopt_next(&parse)) >= 0) {
-        struct get_opt *opt = getopt_curopt(&parse);
+    int rc;
+    struct cmd_argv parser = { argc, argv, cmds[sniff->mode].opts, 2 } ;
+    while ( (rc = cmd_argv_next(&parser)) >= 0) {
         switch(rc) {
-        case 'i': rc = set_interface(sniff, opt, getopt_str(&parse)); break;
-        case 'f': rc = set_filename(sniff, opt, getopt_str(&parse)); break;
+        case opt_ifname: rc = set_interface(sniff, &parser); break;
+        case opt_fname:  rc = opt_setstr(&sniff->filename, &parser); break;
         }
         if (rc < 0) break;
     }
-    if (rc != GETOPT_EOF) return rc;
+    if (rc != OPT_EOF) return rc;
 
     // final checks
     switch(sniff->mode) {
