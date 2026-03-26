@@ -52,7 +52,6 @@ CFLAGS  = -O2 $(COMMON_CFLAGS) $(EXTRA_CFLAGS)
 
 MAKEFLAGS += --no-print-directory
 
-
 # Default target - build cmds
 # --------------------------
 .PHONY: all
@@ -92,7 +91,7 @@ $(DNS_INSPECT): $(DNS_INSPECT_OBJS) | $(BUILD_DIR)
 
 # dns-gen
 # -------
-DNS_GEN_SRCS = src/util.c src/log.c src/pcap.c src/dns_proto.c  src/dns_gen.c
+DNS_GEN_SRCS = src/util.c src/log.c src/pcap.c src/rwbuf.c src/sock.c src/dns_proto.c  src/dns_gen.c
 DNS_GEN_OBJS = $(DNS_GEN_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 DNS_GEN_DEPS = $(DNS_GEN_OBJS:.o=.d)
 -include $(DNS_GEN_DEPS)

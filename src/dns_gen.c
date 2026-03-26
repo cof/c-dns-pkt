@@ -29,16 +29,12 @@
 #include "log.h"
 #include "pcap.h"
 #include "dns_proto.h"
+#include "sock.h"
 
 #define GEN_FAIL -1
 #define MSG_TIMEOUT 5
 
-// socker errors
-#define SOCK_NONE     0
-#define SOCK_DATA     1
-#define SOCK_CLOSED  -1
-#define SOCK_ERROR   -2
-#define SOCK_TIMEOUT -3
+// socket errors
 #define SOCK_ENCODE  -4
 
 // supported cmds
@@ -72,9 +68,9 @@ struct dns_gen {
     uint32_t ttl;
     char *output;
     struct pcap_file *pcap;
-    struct dns_msg send;  // msg to encode into pkt_buf
-    struct dns_msg recv;  // decoded msg read from pkt_buf
-    uint32_t timeout;     // send / recv message timeout 
+    struct dns_msg snd_msg; // msg to encode into pkt_buf
+    struct dns_msg rcv_msg; // decoded msg read from pkt_buf
+    uint32_t timeout;       // send / recv message timeout in ms
     int fuzz_type;
     uint8_t pkt_buf[DNS_MAX_PDUSIZE];
     char emsg[DNS_EMSG_MAXLEN];
@@ -86,13 +82,9 @@ struct dns_gen {
     size_t recv_len;
     struct timespec ts_sent;
     struct timespec ts_recv;
-    struct sockaddr_storage sock_addr;
-    socklen_t sock_addr_len;
-    int sock_fd;
+    struct simple_sock sock;
     // flags
     unsigned int use_tcp    : 1; // Guess ....
-    unsigned int sock_err   : 1; // socket error
-    unsigned int recv_close : 1; // peer closed
     unsigned int log_msg    : 1; // log all msg to stdout
     unsigned int use_pcapng : 1; // use pcapng for output fmt
 };
@@ -236,7 +228,7 @@ static int gen_load_rec(struct dns_gen *gen, struct dns_rec *rec, const char *as
 
 static int gen_print_dnsrsp(struct dns_gen *gen)
 {
-    struct dns_msg *rsp = &gen->recv;
+    struct dns_msg *rsp = &gen->rcv_msg;
     struct dns_rec *rec = dns_msg_get_rec(rsp);
 
     char *desc = gen->emsg;
@@ -263,105 +255,27 @@ static int gen_print_dnsrsp(struct dns_gen *gen)
     return 0;
 }
 
-static int sock_read(struct dns_gen *gen, void *buf, size_t buf_len)
-{
-    // joker check
-    if (gen->sock_err) return SOCK_ERROR;
-    if (gen->recv_close) return SOCK_CLOSED;
-
-    uint8_t *buf_ptr = buf;
-    size_t tread = 0;
-
-    while (tread < buf_len) {
-
-        ssize_t nread = recv(gen->sock_fd, buf_ptr, buf_len, 0);
-        if (nread < 0) {
-            // read failed
-            int ec = SOCK_ERROR;
-            gen->sock_err = 1;
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                // recive timeout
-                ec = SOCK_TIMEOUT;
-            }
-            else if (errno != EINTR) {
-                // general error
-                log_errno("recvfrom fd=%d failed", gen->sock_fd);
-            }
-            // stop read
-            return ec;
-        }
-
-        if (nread == 0) {
-            // peer closed
-            gen->recv_close = 1;
-            return SOCK_CLOSED;
-        }
-
-        // update read buffer
-        gen->recv_len += nread;
-        buf_ptr += nread;
-        buf_len -= nread;
-        tread += nread;
-
-        // UDP is one shot
-        if (!gen->use_tcp) break;
-    }
-
-    // have data
-    return SOCK_DATA;
-}
-
-static int sock_write(struct dns_gen *gen, void *buf, size_t buf_len)
-{
-    struct sockaddr *sock_addr = (struct sockaddr *) &gen->sock_addr;
-    socklen_t addr_len = gen->sock_addr_len;
-
-    ssize_t nsent = sendto(gen->sock_fd, buf, buf_len, 0, sock_addr, addr_len);
-    if (nsent < 0) {
-        // write failed
-        int ec = SOCK_ERROR;
-        gen->sock_err = 1;
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            // write timeout
-            ec = SOCK_TIMEOUT;
-        }
-        else if (errno != EINTR) {
-            // general error
-            log_errno("recvfrom fd=%d failed", gen->sock_fd);
-        }
-        return ec;
-    }
-
-    // update write buffer
-    gen->sent_len += nsent; 
-
-    // data writen
-    return SOCK_DATA;
-}
-
 static int gen_send_dnspdu(struct dns_gen *gen)
 { 
-    uint8_t *pkt = gen->pkt_buf;
-    size_t pkt_len = gen->pkt_len;
-
-    gen->sent_len = 0;
+    uint16_t dns_len;
+    struct iovec iovs[2];
+    int num_iov = 0;
 
     if (gen->use_tcp) {
-        // send the 2 byte dns prefix
-        uint16_t dns_len = ntohs(pkt_len);
-        int rc = sock_write(gen, &dns_len, sizeof(dns_len));
-        if (rc != SOCK_DATA) return rc;
-        if (gen->sent_len != sizeof(dns_len)) {
-            // should not happen ?
-            return SOCK_ERROR;
-        }
+        // send the 2 byte dns length prefix
+        dns_len = ntohs(gen->pkt_len);
+        iov_load(iovs + 0, &dns_len, sizeof(dns_len));
+        num_iov++;
     }
 
-    // send pdu
-    int rc = sock_write(gen, pkt, pkt_len);
-    if (rc != SOCK_DATA) return rc;
+    iov_load(iovs + num_iov, gen->pkt_buf, gen->pkt_len);
+    num_iov++;
 
-    return 0;
+    // send pdu
+    ssize_t rc = sock_send_iovs(&gen->sock, num_iov, iovs);
+    if (rc >= 0) rc = 0;
+
+    return rc;
 }
 
 static int gen_recv_err(struct dns_gen *gen, int err)
@@ -388,35 +302,26 @@ static int gen_recv_err(struct dns_gen *gen, int err)
 static int gen_recv_dnspdu(struct dns_gen *gen)
 {
     size_t read_len = sizeof(gen->pkt_buf);
-    gen->recv_len = 0;
+    ssize_t rc;
 
     if (gen->use_tcp) {
         // read 2-byte prefix
         uint16_t dns_len;
-        int rc = sock_read(gen, &dns_len, sizeof(dns_len));
-        if (rc != SOCK_DATA) {
-            return gen_recv_err(gen, rc);
-        }
-        if (gen->recv_len != sizeof(dns_len)) {
-            // should not happen ?
-            return gen_recv_err(gen, SOCK_DATA);
-        }
+        rc = sock_recv_data(&gen->sock, &dns_len, sizeof(dns_len));
+        if (rc != sizeof(dns_len)) return gen_recv_err(gen, rc);
         read_len = ntohs(dns_len);
-        gen->recv_len = 0;
     }
 
-    // read the PDU
-    int rc = sock_read(gen, gen->pkt_buf, read_len);
-    if (rc != SOCK_DATA) {
-        return gen_recv_err(gen, rc);
-    }
+    // read PDU
+    rc = sock_recv_data(&gen->sock, gen->pkt_buf, read_len);
+    if (rc <= 0) return gen_recv_err(gen, rc);
+
+    // record pkt len
+    gen->recv_len = rc;
 
     // read a message
     rc = clock_gettime(CLOCK_MONOTONIC, &gen->ts_recv);
-    if (rc != 0) {
-        // keep going ?
-        log_errno("clock_gettime ts_recv failed");
-    }
+    if (rc != 0) log_errno("clock_gettime ts_recv failed");
 
     // all done
     return 0;
@@ -424,55 +329,14 @@ static int gen_recv_dnspdu(struct dns_gen *gen)
 
 static int gen_serv_connect(struct dns_gen *gen)
 {
-    // resolve hostname+ port string to list of (ip+port)
-    struct addrinfo hints, *res;
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = gen->use_tcp ? SOCK_STREAM : SOCK_DGRAM;
+    // select TCP or UDP connection
+    uint32_t mode = gen->use_tcp ? SOCK_TCP : SOCK_UDP | SOCK_UDPCON;
     const char *port = "53";
 
-    int rc = getaddrinfo(gen->serv_addr, port, &hints, &res);
-    if (rc != 0) {
-        return log_error_rf("getaddrinfo(%s,%s) : %s\n", gen->serv_addr, port, gai_strerror(rc));
-    }
-
-    // get a UDP or TCP connection
-    int sock_fd = -1;
-    for (struct addrinfo *ai = res; ai; ai = ai->ai_next) {
-        sock_fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
-        if (sock_fd == -1) continue;
-        if (!gen->use_tcp) break;
-        rc = connect(sock_fd, ai->ai_addr, ai->ai_addrlen);
-        if (rc != -1) break;
-        log_errno("connect(%s:%s) failed", gen->serv_addr, port);
-        close(sock_fd);
-        sock_fd = -1;
-    }
-
-    // connect failed
-    if (sock_fd == -1) {
-        freeaddrinfo(res);
-        return log_error_rf("Connect to %s:%s failed", gen->serv_addr, port);
-    }
-
-    // connected
-    memcpy(&gen->sock_addr, res->ai_addr, res->ai_addrlen);
-    gen->sock_addr_len = res->ai_addrlen;
-    gen->sock_fd = sock_fd;
-    freeaddrinfo(res);
-
-    // set send and receive timeout
-    struct timeval tv = {
-        .tv_sec = gen->timeout
-    };
-    if (setsockopt(gen->sock_fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) == -1) {
-        return log_errno_rf("setsockopt SO_SNDTIMEO on %d failed", gen->sock_fd);
-    }
-    if (setsockopt(gen->sock_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) == -1) {
-        return log_errno_rf("setsockopt SO_RCVTIMEO on %d failed", gen->sock_fd);
-    }
-
-    //printf("Connected to %s\n", gen->serv_addr);
+    int rc;
+    if ((rc = sock_connect(&gen->sock, mode, gen->serv_addr, port))) return rc;
+    if ((rc = sock_set_sndto(&gen->sock, gen->timeout))) return rc;
+    if ((rc = sock_set_rcvto(&gen->sock, gen->timeout))) return rc;
 
     // all done
     return 0;
@@ -481,15 +345,11 @@ static int gen_serv_connect(struct dns_gen *gen)
 // encode send msg into packet buffer
 static int gen_enc_dnsmsg(struct dns_gen *gen)
 {
-    uint8_t *wptr = gen->pkt_buf + gen->pkt_len;
-    size_t  wlen = sizeof(gen->pkt_buf) - gen->pkt_len;
+    void *buf = gen->pkt_buf + gen->pkt_len;
+    size_t space = sizeof(gen->pkt_buf) - gen->pkt_len;
 
-    ssize_t pkt_len = dns_msg_encode(&gen->send, wptr, wlen);
-
-    if (pkt_len <= 0) {
-        // encoder failed ?
-        return SOCK_ENCODE;
-    }
+    ssize_t pkt_len = dns_msg_encode(&gen->snd_msg, buf, space);
+    if (pkt_len <= 0) return SOCK_ENCODE;
 
     gen->pkt_len += pkt_len;
 
@@ -499,10 +359,7 @@ static int gen_enc_dnsmsg(struct dns_gen *gen)
 // decode packet buffer into recv msg
 static int gen_dec_dnsmsg(struct dns_gen *gen)
 {
-    int rc = dns_msg_decode(&gen->recv, gen->pkt_buf, gen->recv_len);
-    if (rc) return rc;
-
-    return 0;
+    return dns_msg_decode(&gen->rcv_msg, gen->pkt_buf, gen->recv_len);
 }
 
 static int gen_pcap_rec(struct dns_gen *gen)
@@ -524,13 +381,15 @@ static int gen_pcap_rec(struct dns_gen *gen)
 }
 
 // make space for ETH+IP+UDP headers
-static void pcap_start_pkt(struct dns_gen *gen)
+static int pcap_start_pkt(struct dns_gen *gen)
 {
     gen->pkt_len = ETHIPUDP_LEN;
+
+    return 0;
 }
 
 // encode ETH+IP+UDP headers
-static void pcap_end_pkt(struct dns_gen *gen)
+static int pcap_end_pkt(struct dns_gen *gen)
 {
     size_t start = ETHIPUDP_LEN;
     uint8_t *wptr = gen->pkt_buf + start;
@@ -568,6 +427,8 @@ static void pcap_end_pkt(struct dns_gen *gen)
     };
     wptr -= sizeof(eth);
     memcpy(wptr, &eth, sizeof(eth));
+
+    return 0;
 }
 
 static int gen_verify_encmsg(struct dns_gen *gen)
@@ -583,64 +444,61 @@ static int gen_verify_encmsg(struct dns_gen *gen)
 static int gen_send_query(struct dns_gen *gen)
 {
     // next tid
-    gen->send.hdr.id =  rand() % 65536;
+    gen->snd_msg.hdr.id =  rand() % 65536;
 
-    int rc = gen_enc_dnsmsg(gen);
-    if (rc) return rc;
-
-    rc = gen_verify_encmsg(gen);
-    if (rc) return rc;
+    int rc;
+    if ((rc = gen_enc_dnsmsg(gen))) return rc;
+    if ((rc = gen_verify_encmsg(gen))) return rc;
 
     // tell user
     printf("Send query (%s) ID:0x%04x for %s %s %s\n", 
         gen->use_tcp ? "TCP" : "UDP",
-        gen->send.hdr.id, str_def(gen->dns_name, "<null>"),
+        gen->snd_msg.hdr.id, str_def(gen->dns_name, "<null>"),
         dns_class_tostr(gen->dns_class),
         dns_type_tostr(gen->dns_type));
 
     // send DNS msg
-    rc = gen_send_dnspdu(gen);
-    if (rc) return rc;
+    if ((rc = gen_send_dnspdu(gen))) return rc;
 
-    // sent
-    gen->tid_sent = gen->send.hdr.id;
+    // sent - as far as we know
+    gen->tid_sent = gen->snd_msg.hdr.id;
     if (clock_gettime(CLOCK_MONOTONIC, &gen->ts_sent) != 0) {
         log_errno("clock_gettime ts_sent failed");
         // keep going ?
     }
 
+    // all done
     return 0;
 }
 
 static int gen_recv_resp(struct dns_gen *gen)
 {
-    int rc = gen_recv_dnspdu(gen);
-    if (rc) return rc;
+    int rc;
 
-    rc = gen_dec_dnsmsg(gen);
-    if (rc) return rc;
+    if ((rc = gen_recv_dnspdu(gen))) return rc;
+    if ((rc = gen_dec_dnsmsg(gen))) return rc;
 
     // check msg is response
-    struct dns_header *recv_hdr = &gen->recv.hdr;
-    if ((recv_hdr->flags & DNS_FLAGS_QR) == 0) {
+    struct dns_header *rcv_hdr = &gen->rcv_msg.hdr;
+    if ((rcv_hdr->flags & DNS_FLAGS_QR) == 0) {
         return log_info_rz("dns-gen", 
             "Unexpected DNS message ID: 0x%04x Flags: 0x%04x Len %zu",
-            recv_hdr->id, recv_hdr->flags, gen->recv_len);
+            rcv_hdr->id, rcv_hdr->flags, gen->recv_len);
     }
 
     // check Transaction ID
-    if (recv_hdr->id != gen->tid_sent) {
+    if (rcv_hdr->id != gen->tid_sent) {
         return log_info_rz("dng-gen",
             "Response ID 0x%04x does not match Request ID 0x%04x", 
-            recv_hdr->id, gen->tid_sent);
+            rcv_hdr->id, gen->tid_sent);
     }
 
     // check Result Code
-    int rcode = recv_hdr->flags & DNS_FLAGS_RCODE;
+    int rcode = rcv_hdr->flags & DNS_FLAGS_RCODE;
     if (rcode != DNS_RCODE_NOERROR) {
         return log_info_rz("dng-gen", 
             "Response ID 0x%04x failed with error %s", 
-            recv_hdr->id, rcode_tostr(rcode));
+            rcv_hdr->id, rcode_tostr(rcode));
     }
 
     double delta_ms = time_diff_ms(&gen->ts_sent, &gen->ts_recv);
@@ -653,29 +511,23 @@ static int gen_recv_resp(struct dns_gen *gen)
 
 static int run_query(struct dns_gen *gen)
 {
-    int rc = gen_serv_connect(gen);
-    if (rc) return rc;
+    int rc;
 
-    rc = gen_send_query(gen);
-    if (rc) return rc;
-
-    rc = gen_recv_resp(gen);
-    if (rc) return rc;
+    if ((rc = gen_serv_connect(gen))) return rc;
+    if ((rc = gen_send_query(gen))) return rc;
+    if ((rc = gen_recv_resp(gen))) return rc;
 
     return 0;
 }
 
 static int run_resp(struct dns_gen *gen)
 {
-    pcap_start_pkt(gen);
+    int rc; 
 
-    int rc = gen_enc_dnsmsg(gen);
-    if (rc) return rc;
-
-    pcap_end_pkt(gen);
-
-    rc = gen_pcap_rec(gen);
-    if (rc) return rc;
+    if ((rc = pcap_start_pkt(gen))) return rc;
+    if ((rc = gen_enc_dnsmsg(gen))) return rc;
+    if ((rc = pcap_end_pkt(gen))) return rc;
+    if ((rc = gen_pcap_rec(gen))) return rc;
 
     printf("Wrote %zu bytes to %s\n", gen->pkt_len - ETHIPUDP_LEN, gen->output);
 
@@ -753,26 +605,21 @@ static int gen_enc_badmsg(struct dns_gen *gen)
 
 static int run_fuzz(struct dns_gen *gen)
 {
-    int rc;
+    int rc = 0;
 
     if (gen->output) {
         pcap_start_pkt(gen);
-        rc = gen_enc_badmsg(gen);
-        if (rc) return rc;
+        if ((rc = gen_enc_badmsg(gen))) return rc;
         pcap_end_pkt(gen);
-        rc = gen_pcap_rec(gen);
+        if ((rc = gen_pcap_rec(gen))) return rc;
         printf("Wrote %zu bytes to %s\n", gen->pkt_len - ETHIPUDP_LEN, gen->output);
     }
     else {
-        rc = gen_enc_badmsg(gen);
-        if (rc) return rc;
-        rc = gen_serv_connect(gen);
-        if (rc) return rc;
-        gen_verify_encmsg(gen);
-        if (rc) return rc;
-        rc = gen_send_dnspdu(gen);
-        if (rc) return rc;
-        rc = gen_recv_resp(gen);
+        if ((rc = gen_enc_badmsg(gen))) return rc;
+        if ((rc = gen_serv_connect(gen))) return rc;
+        if ((rc = gen_verify_encmsg(gen))) return rc;
+        if ((rc = gen_send_dnspdu(gen))) return rc;
+        if ((rc = gen_recv_resp(gen)))  return rc;
     }
 
     return rc;
@@ -819,7 +666,7 @@ struct cmd_opt query_opts[] = {
     { "--class", "<CLASS> A DNS class IN|CS|CH|HS|ANY", 0, 1, QUERY_CLASS },
     { "--flags", "<FLAGS> Query flags AD:0|CD:0|RD:0", 0, 1, QUERY_FLAGS },
     { "--server", "<ADDR> Server IP address or name", 0, 1, QUERY_SERVER },
-    { "--timeout", "<TimeOut> Response timeout", 0, 1, QUERY_TIMEOUT },
+    { "--timeout", "<TimeOut> Response timeout in ms", 0, 1, QUERY_TIMEOUT },
     { "--tcp",  "Use TCP to send msg (instead of UDP)", 0, 0, QUERY_TCP },
     { "--log",  "Log DNS message that are sent", 0, 0, QUERY_LOG },
     { NULL }
@@ -990,9 +837,6 @@ static int set_timeout(struct dns_gen *gen, struct cmd_argv *parse)
     return 0;
 }
 
-
-
-
 static int set_id(struct dns_gen *gen, struct cmd_argv *parse)
 {
     long val = strtol(parse->value, NULL, 0);
@@ -1010,7 +854,7 @@ static int add_an(struct dns_gen *gen,  struct cmd_argv *parse)
 
     int rc = gen_load_rec(gen, &rec, parse->value);
     if (rc) return log_cmd_err(mode_tostr[gen->mode], parse->name, "Bad format");
-    rc =  dns_msg_add_an(&gen->send, &rec);
+    rc =  dns_msg_add_an(&gen->snd_msg, &rec);
     if (rc) return log_cmd_err(mode_tostr[gen->mode], parse->name, "Add failed");
 
     return 0;
@@ -1022,7 +866,7 @@ static int add_ns(struct dns_gen *gen,  struct cmd_argv *parse)
 
     int rc = gen_load_rec(gen, &rec, parse->value);
     if (rc) return log_cmd_err(mode_tostr[gen->mode], parse->name, "Bad format");
-    rc =  dns_msg_add_ns(&gen->send, &rec);
+    rc =  dns_msg_add_ns(&gen->snd_msg, &rec);
     if (rc) return log_cmd_err(mode_tostr[gen->mode], parse->name, "Add failed");
 
     return 0;
@@ -1034,7 +878,7 @@ static int add_ar(struct dns_gen *gen, struct cmd_argv *parse)
 
     int rc = gen_load_rec(gen, &rec, parse->value);
     if (rc) return log_cmd_err(mode_tostr[gen->mode], parse->name, "Bad format");
-    rc =  dns_msg_add_ar(&gen->send, &rec);
+    rc =  dns_msg_add_ar(&gen->snd_msg, &rec);
     if (rc) return log_cmd_err(mode_tostr[gen->mode], parse->name, "Add failed");
 
     return 0;
@@ -1110,21 +954,21 @@ static int gen_parse_argv(struct dns_gen *gen, int argc, char *argv[])
     case MODE_QUERY:
         if (!*gen->dns_name) return log_cmd_err(cmd, "--name <dns-name>", "is required");
         if (!gen->serv_addr) return log_cmd_err(cmd, "--server <ip-addr>", "is required");
-        dns_msg_set_id_flags(&gen->send, 0, gen->dns_flags);
-        rc = dns_msg_add_qd(&gen->send, gen->dns_name, gen->dns_type, gen->dns_class);
+        dns_msg_set_id_flags(&gen->snd_msg, 0, gen->dns_flags);
+        rc = dns_msg_add_qd(&gen->snd_msg, gen->dns_name, gen->dns_type, gen->dns_class);
         if (rc) return rc;
         break;
     case MODE_RESP:
         if (!*gen->dns_name) {
             return log_cmd_err(cmd, resp_opts[1].name, "is required");
         }
-        if (!dns_msg_cnt_rec(&gen->send)) {
+        if (!dns_msg_cnt_rec(&gen->snd_msg)) {
             return log_cmd_err(cmd, "answer|authority|additional", "is required");
         }
         if (!gen->output) {
             return log_cmd_err(cmd, resp_opts[6].name, "is required");
         }
-        dns_msg_set_id_flags(&gen->send, gen->id, gen->dns_flags);
+        dns_msg_set_id_flags(&gen->snd_msg, gen->id, gen->dns_flags);
         break;
     case MODE_FUZZ:
         if (!gen->fuzz_type) {
@@ -1142,10 +986,7 @@ static int gen_parse_argv(struct dns_gen *gen, int argc, char *argv[])
 
 void gen_free(struct dns_gen *gen)
 {
-    if (gen->sock_fd != -1) {
-        close(gen->sock_fd);
-    }
-
+    sock_close(&gen->sock, 0);
     if (gen->output) free(gen->output);
     if (gen->pcap) pcap_close(gen->pcap);
 
@@ -1155,7 +996,9 @@ void gen_free(struct dns_gen *gen)
 static int gen_init(struct dns_gen *gen)
 {
     memset(gen, 0, sizeof(*gen));
-    gen->sock_fd = -1;
+
+    // init all fds to -1
+    gen->sock.fd = -1;
 
     // needed for tids
     srand(time(NULL));
