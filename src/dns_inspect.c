@@ -4,13 +4,6 @@
  * Example    : ./dns-inpsect capture --interface eth0
  *
  */
-#include <stdio.h>
-#include <stdlib.h> 
-#include <stdarg.h>
-#include <stddef.h>
-#include <string.h> 
-#include <signal.h>
-
 #include <sys/types.h> 
 #include <sys/socket.h>
 #include <netpacket/packet.h>
@@ -254,15 +247,12 @@ int sniff_attach(struct dns_sniff *sniff)
     return 0;
 }
 
-
 static int run_readpcap(struct dns_sniff *sniff)
 {
     size_t pkt_len;
 
     sniff->pcap = pcap_open(sniff->filename, PCAP_READ);
-    if (!sniff->pcap) {
-        return -1;
-    }
+    if (!sniff->pcap) return -1;
 
     // select a buffer
     uint8_t *buf = sniff->bufs[0];
@@ -284,9 +274,7 @@ static int run_tracepcap(struct dns_sniff *sniff)
     size_t pkt_len;
 
     sniff->pcap = pcap_open(sniff->filename, PCAP_READ | PCAP_TRACE);
-    if (!sniff->pcap) {
-        return -1;
-    }
+    if (!sniff->pcap) return -1;
 
     // select a buffer
     uint8_t *buf = sniff->bufs[0];
@@ -304,9 +292,11 @@ static int run_tracepcap(struct dns_sniff *sniff)
 
 static int run_capture(struct dns_sniff *sniff)
 {
-    if (setup_signals(&sniff->sig) != 0) return 4;
-    if (sniff_attach(sniff) != 0)  return 4;
-    if (sniff_capture(sniff) != 0) return 4;
+    int rc;
+
+    if ((rc = setup_signals(&sniff->sig))) return rc;
+    if ((rc = sniff_attach(sniff)))  return rc;
+    if ((rc = sniff_capture(sniff))) return rc;
 
     return 0;
 }

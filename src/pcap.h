@@ -192,12 +192,10 @@ static inline int pcapng_isnative(uint32_t magic)
     return magic == PCAP_BOM_NATIVE;
 }
 
-
 // API
 struct pcap_file *pcap_open(const char *path, uint32_t mode);
 int pcap_close(struct pcap_file *pf);
 size_t pcap_read(struct pcap_file *pf, void *buf, size_t len);
 int pcap_write(struct pcap_file *pf, void *buf, size_t len);
-
 
 #endif

@@ -748,8 +748,6 @@ static int pcap_setup_fmt(struct pcap_file *file)
         return log_error_rf("pcap fmt %d unsupported", file->fmt);
     }
 
-
-
     return 0;
 }
 
@@ -821,7 +819,6 @@ int pcap_close(struct pcap_file *file)
     return rc;
 }
 
-
 size_t pcap_read(struct pcap_file *file, void *buf, size_t len)
 {
     if (file->sys_err || file->have_eof) {
@@ -832,9 +829,7 @@ size_t pcap_read(struct pcap_file *file, void *buf, size_t len)
     ssize_t nread = file->read_pkt(file, buf, len);
 
     if (nread < 0) nread = 0;
-    if (nread > 0) {
-        file->pkt_cnt++;
-    }
+    if (nread > 0) file->pkt_cnt++;
 
     // all done
     return nread;
@@ -842,9 +837,7 @@ size_t pcap_read(struct pcap_file *file, void *buf, size_t len)
 
 int pcap_write(struct pcap_file *file, void *buf, size_t len)
 {
-    if (file->sys_err) {
-        return  -1;
-    }
+    if (file->sys_err) return  -1;
 
     int rc = file->write_pkt(file, buf, len);
     if (rc) return rc;
