@@ -238,16 +238,17 @@ static int gen_print_dnsrsp(struct dns_gen *gen)
     }
     else if ((rec = dns_msg_get_rec(rsp)) != NULL)  {
         // one section
-        char *desc = gen->emsg; *desc = '\0';
+        desc = gen->emsg; *desc = '\0';
         rc = dns_rec_tostr(rec, 0, desc, sizeof(gen->emsg));
-        if (rc) return rc;
+        if (rc < 0) return rc;
+        while (*desc && *desc == ' ') desc++;
     }
     else {
         // multiple sections
-        char *desc = gen->emsg; *desc = '\0';
+        desc = gen->emsg; *desc = '\0';
         printf("\n");
         rc = dns_msg_sects_tostr(rsp, desc, sizeof(gen->emsg));
-        if (rc) return rc;
+        if (rc < 0) return rc;
     }
 
     rc = printf("%s\n", desc);
