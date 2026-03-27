@@ -37,8 +37,8 @@
  * - draft-ietf-opsawg-pcapng-04 - PCAP Now Generic (pcapng) Capture File Format
 */
 
-#ifndef __PCAP_H__
-#define __PCAP_H__
+#ifndef _PCAP_H_
+#define _PCAP_H_
 
 #include <stdio.h>
 #include <stdint.h>

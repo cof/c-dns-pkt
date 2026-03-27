@@ -1,5 +1,5 @@
-#ifndef __DNS_PROTO_H__
-#define __DNS_PROTO_H__
+#ifndef _DNS_PROTO_H_
+#define _DNS_PROTO_H_
 /*
  * A DNS message encoder and decoder.
  *
