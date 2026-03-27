@@ -1,20 +1,59 @@
-#ifndef _DNS_PROTO_H_
-#define _DNS_PROTO_H_
 /*
  * A DNS message encoder and decoder.
  *
  * General idea is use a dns_msg struture to read/write DNS messages.
+ * User gives api
  *   
  * API
  * ---
- * dns_msg_decode - decode a buffer into a DNS message
- * dns_msg_encode - encode a DNS message int a buffer
+ * validate_dns_packet(pkt_buf, pkt_len, emsg) : check pkt valid and print desc to esmg
+ * dns_msg_decode(msg, buf, len) : decode buffer into a DNS message
+ * dns_msg_encode(msg, buf, len) : encode DNS message into buffer
+ *
+ * DNS msg
+ * -------
+ * msg is a stucture defined as follows:
+ *
+ *  DNS msg - struct dns_msg 
+ *   - hdr (id, flags, qd_count, an_count, ns_count, ar_count)
+ *   - qd_recs - question section 
+ *   - an_recs - answer section 
+ *   - ns_recs - authority section
+ *   - ar_recs - additional section
+ *
+ * Queston Section:
+ *    num_qd - number of dns_quest
+ *    qd_recs - array of dns_quest
+ *    dns_quest - struct dns_quest
+ *    - qname 
+ *    - qtype
+ *    - qclas
+ *
+ * an|ns|ar Sections - struct dns_sect
+ *  num_rec - number of dns_rec
+ *  rec     - array of dns_rec
+ *
+ * Record - struct dns_rec
+ *  name, type,class ttl, rdlen
+ *  Uses a union type to store RDATA
+ *
+ * Helpers
+ * --------
+ * dns_msg_sects_tostr(msg,buf,len) : print sections to str buffer
+ * dns_msg_get_rec(msg) : get first rec if available
+ * dns_msg_add_qd(msg,name, qtype, qclass) : add qd section
+ * dns_msg_add_rec(msg, sc, rec) : add record to an|ns|ar section
+ *
+ * dns_msg_cnt_rec(mg) - count total records in msg
+ * dns_rec_load(rec, sc, str) - load str repr of rec into record
  *
  * References
  * ---------
  * rf1035 - DOMAIN NAMES - IMPLEMENTATION AND SPECIFICATION
  *
  */
+#ifndef _DNS_PROTO_H_
+#define _DNS_PROTO_H_
 
 // Protocol Size limits
 #define DNS_NAME_MAXLEN  255  // names  255 octets or less
@@ -115,7 +154,6 @@ int parse_dns_name(
 int validate_dns_packet(const uint8_t *pkt, size_t len, char *error_msg);
 
 
-
 /*  
   A simple DNS message api
 
@@ -207,6 +245,7 @@ struct dns_msg {
 int dns_msg_decode(struct dns_msg *msg, uint8_t *buf, size_t len);
 ssize_t dns_msg_encode(struct dns_msg *msg, uint8_t *buf, size_t len);
 
+// helper functions
 int dns_msg_sects_tostr(struct dns_msg *msg,  char *buf, size_t len);
 
 static inline void dns_msg_set_id_flags(struct dns_msg *msg, uint16_t id, uint16_t flags)

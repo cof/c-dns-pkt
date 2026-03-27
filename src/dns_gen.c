@@ -3,6 +3,15 @@
  * Usage:   : ./dns-gen --help
  * Example  : ./dns-gen query --name example.com --type A --server 8.8.8.8
  *
+ * Overview
+ * --------
+ * Basicaly a DNS packet generator for testing DNS servers or dns-inspect.
+ *
+ * Notes
+ * -----
+ * Uses SOCK api to create a UDP or TCP socket
+ * Uses DNS api to encode DNS messages
+ * Uses PCAP api to generate pcap files
  */
 #include <time.h>
 

@@ -3,6 +3,18 @@
  * Usage:     : ./dns-inspect --help
  * Example    : ./dns-inpsect capture --interface eth0
  *
+ * Overview
+ * --------
+ * Implements a DNS message packet sniffer on a network interface.
+ * Basicaly attachs to a network interface and validates DNS messages.
+ *
+ * Notes
+ * -----
+ * - Uses AF_PACKET, SOCK_RAW socket to monitor interface
+ * - Uses EBF sock_filter for UDP DNS port 53
+ * - Uses PROMISC mode
+ * - Uses DNS api to decode,validate and print DNS messages
+ * - Uses PCAP api to read|trace pcap files
  */
 #include <sys/types.h> 
 #include <sys/socket.h>

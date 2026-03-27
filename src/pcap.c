@@ -11,6 +11,8 @@
  * - pcap_read  : read a packet
  * - pcap_write : write a packet
  * - pcap_close : close file
+ *
+ * See pcap.h for more defails
  */
 
 #include <stdlib.h>
