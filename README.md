@@ -15,15 +15,17 @@ A DNS packet inspector and DNS message generator.
 - **make all** (Default): Compiles dns-inspect and dns-gen
 - **make test** : Compiles and test dns-inspect and dns-gen
 - **make clean**: Removes all compiled binaries, object files and test logs
+- **make debug**: Comple all code with debug flags
 
 ## Design Notes
 
-- Full rfc1035 DNS message encode/decode in dns_proto.c and API exposed in dns_proto.h
-- PCAP/PCAPNG read/write support in pcap.c and API exposed in pcap.h
-- String processing, cmd-line parsing and logging in util.c and API exposed in util.h
-- Both dns-inspect and dns-gen use UTIL api for strings,cmd-lines and error logging.
-- Both dns-inspect and dns-gen use DNS api to read/write DNS messages
-- Both dns-inspect and dns-gen use PCAP api to read/write pcap files.
+- All code written in C.
+- Both dns-inspect and dns-gen use custom apis
+- DNS api  - DNS message encode/decode in dns_proto(.h|.c)
+- PCAP api - PCAP/PCAPNG read/write support in pcap(.h|.c)
+- SOCK api - socket layer wrapper in sock(.h|,c)
+- UTIL api - string process,cmd-line parsing, signal handling
+- LOG api - info and erro loggin in log(.h|.c)
 
 ## 1. dns-inspect
 A DNS packet inspector that capture DNS messages from a local interface and displays them.
@@ -47,16 +49,16 @@ Captures, decodes, and prints DNS traffic from a local network interface in real
 
 **Design**
 
-- Uses signal to catch SIGTERM and SIGINT
+- Uses signal API to catch SIGTERM and SIGINT
 - Uses AF_PACKET raw socket to receive ethernet packets
 - Uses BPF to only receive UDP packets for port 53
 - Uses SO_RCVBUF to set receive buffer size
 - Sets promisc mode on interface
-- Uses recvmmsg to read a block of ethrnet packets
+- Uses recvmmsg to read a block of packets from socket
 - Extracts the DNS message from the packet
-- Uses validate_dns_packet to decode DNS message
-- Displays text version of decoded message to stdout
-- Captures all error and logs them to stderr
+- Uses validate_dns_packet to decode and describe DNS message
+- Displays described version of DNS message to stdout
+- Uses LOG api to catch all error and logs them to stderr
 
 **Example usage**
 
@@ -80,14 +82,12 @@ Reads a packet capture flle, decodes and prints DNS trafic
 
 - Can read both legacy pcap and pcapng files
 - Can detect if a file is pcap or pcapng:
-- Uses validate_dns_packet to decode message
 - Displays text version of decoded message to stdout
 
 **Design**
 
-- Uses pcap api to open a pcap file and read packets
-- Uses validate_dns_packet to decode message
-- Displays text version of decoded message to stdout
+- Uses PCAP api to read packets
+- Uses DNS api tor decode and validate DNS message
 
 **Example usage**
 
@@ -189,12 +189,13 @@ Sends a DNS query message to a server
 
 **Design**
 
-- Uses getaddrinfo() to get a server address TCP/UDP 
-- Uses setsockopt SO_SNDTIMEO to set a send timeout
-- Uses setsockopt SO_RCVTIMEO to set a recv timeout
+- Uses SOCK api to create UDP|TCP connections to DNS server
+- Uses SOCK api to set send|recv timeouts
+- Uses blocking sockets for simple send|recv state
 - Uses clock_gettime() for timestamps
-- Uses socket/pdu wrapper code to track/log errors 
-- Captures all error and logs them to stderr
+- Uses DNS api to encode|decode query|resp
+- Uses SOCK api to send|recv DNS pdu's
+- Uses LOG api to catch and logs them to stderr
 
 
 **Example usage**
@@ -218,9 +219,9 @@ Generates DNS messages and save them to packet capture file.
 
 **Design**
 
-- Uses cmd line option to create a DNS message
-- USes DNS api to encode a raw DNS message
-- Uses pcap api to generate pcap file
+- Uses UTIL api to gather cmd-line options
+- Uses DNS api to build and encode a DNS message
+- Uses PCAP api to generate pcap file
 
 **Example usage**
 
