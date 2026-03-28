@@ -1,6 +1,8 @@
 /*
  * A DNS message decoder and encoder API
  *
+ * See dns_proto.h for full API description.
+ *
  * API
  * ---
  * dns_msg_decode - decode a buffer into a DNS message
