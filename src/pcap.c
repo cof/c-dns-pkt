@@ -1,20 +1,8 @@
 /*
- * PCAP - A packet capture file reader and writer
- *
- * Supports
- * - read | write classic/legacy pcap file format
- * - read | write pcapng file format
- *
- * API
- * ---
- * - pcap_open  : open file (path, mode)
- * - pcap_read  : read a packet
- * - pcap_write : write a packet
- * - pcap_close : close file
- *
- * See pcap.h for more defails
+ * PCAP - A packet capture file API 
+ * --------------------------------
+ * See pcap.h for API description
  */
-
 #include <stdlib.h>
 #include <time.h>
 #include <errno.h>
@@ -39,11 +27,15 @@
     UTIL_FAIL; \
 })
 
+
+// calc padding
 static inline uint32_t calc_padlen(uint32_t cap_len)
 {
     return  (4 - (cap_len % 4)) % 4;
 }
 
+
+// open pcap file
 static int pcap_open_file(struct pcap_file *file, const char *path_name)
 {
     char *open_mode = file->is_reader ? "rb" : "wb";
@@ -154,7 +146,8 @@ static int pcap_detect_fmt(struct pcap_file *file)
 }
 
 /*  
- * classic pcap
+ * legacy/classic pcap
+ * -------------------
  *  pcap_read_hdr
  *  pcap_read_rec
  *  pcap_write_hdr
@@ -193,6 +186,7 @@ static int pcap_read_hdr(struct pcap_file *file)
     return 0;
 }
 
+// read pcap record
 static ssize_t pcap_read_rec(struct pcap_file *file, void *buf, size_t len)
 {
     struct pcap_rec rec;
@@ -256,6 +250,7 @@ static int pcap_write_hdr(struct pcap_file *file)
     return 0;
 }
 
+// get time-stamp for pkt
 static uint64_t pcap_get_ts(struct pcap_file *file)
 {
     struct timespec ts;
@@ -316,16 +311,15 @@ static int pcap_read_shb(struct pcap_file *file)
     int rc = pcap_read_block(file, "SHB", shb, sizeof(*shb));
     if (rc) return rc;
 
-    if (!pcap_bom_isng(shb->magic)) {
-        return log_error_rf("pcapng: Bad SHB bom 0x%08x", shb->magic);
+    if (!pcap_bom_isng(shb->bom)) {
+        return log_error_rf("pcapng: Bad SHB byte-order magic 0x%08x", shb->bom);
     }
-
-    file->must_swap = pcapng_isnative(shb->magic) ? 0 : 1; 
+    file->must_swap = pcap_bom_isnative(shb->bom) ? 0 : 1; 
 
     if (file->must_swap) {
         shb->type = __builtin_bswap32(shb->type);
         shb->tot_len = __builtin_bswap32(shb->tot_len);
-        shb->magic = __builtin_bswap32(shb->magic);
+        shb->bom = __builtin_bswap32(shb->bom);
         shb->ver_major = __builtin_bswap16(shb->ver_major);
         shb->ver_minor = __builtin_bswap16(shb->ver_minor);
         shb->sec_len = (int64_t) __builtin_bswap64(shb->sec_len);
@@ -335,7 +329,7 @@ static int pcap_read_shb(struct pcap_file *file)
         pcap_log("PCAPNG",
             "blk=%lu name=%s type=0x%08x tot_len=%u magic=0x%08x ver_major=%d ver_minor=%d sec_len=%ld", 
             file->rec_cnt, "SHB", shb->type, shb->tot_len, 
-            shb->magic, shb->ver_major, shb->ver_minor, (signed long) shb->sec_len);
+            shb->bom, shb->ver_major, shb->ver_minor, (signed long) shb->sec_len);
     }
 
     if (shb->tot_len < sizeof(*shb)) {
@@ -346,6 +340,7 @@ static int pcap_read_shb(struct pcap_file *file)
     return pcap_data_skip(file, "SHB", shb->tot_len - sizeof(*shb));
 }
 
+// write a section header block
 static int pcap_write_shb(struct pcap_file *file)
 {
     struct pcap_shb_hdr *shb = &file->shb;
@@ -354,7 +349,7 @@ static int pcap_write_shb(struct pcap_file *file)
     shb->tot_len   = sizeof(*shb) + 4;
     shb->ver_major = 1;
     shb->ver_minor = 0;
-    shb->magic     =  PCAP_BOM_NATIVE;
+    shb->bom       = PCAP_BOM_NATIVE;
     shb->sec_len   = -1;
   
     // write hdr + footer
@@ -368,14 +363,17 @@ static int pcap_write_shb(struct pcap_file *file)
 
     if (file->trace_rec) {
         pcap_log("PCAPNG",
-            "blk=%lu name=%s type=0x%08x tot_len=%u magic=0x%08x ver_major=%d ver_minor=%d sec_len=%ld", 
+            "blk=%lu name=%s type=0x%08x tot_len=%u"
+            " magic=0x%08x ver_major=%d ver_minor=%d sec_len=%ld", 
             file->rec_cnt, "SHB", shb->type, shb->tot_len, 
-            shb->magic, shb->ver_major, shb->ver_minor, (signed long) shb->sec_len);
+            shb->bom, shb->ver_major, shb->ver_minor, 
+            (signed long) shb->sec_len);
     }
 
     return 0;
 }
 
+// read interface description block
 static int pcap_read_idb(struct pcap_file *file)
 {
     struct pcap_idb_hdr *idb = &file->idb;
@@ -408,6 +406,7 @@ static int pcap_read_idb(struct pcap_file *file)
     return pcap_data_skip(file, "IDB", idb->tot_len - sizeof(*idb));
 }
 
+// write interface description block
 static int pcap_write_idb(struct pcap_file *file)
 {
     struct pcap_idb_hdr *idb = &file->idb;
@@ -436,104 +435,7 @@ static int pcap_write_idb(struct pcap_file *file)
     return 0;
 }
 
-// return packet length or zero on error or eof
-static size_t pcap_read_epb(struct pcap_file *file, void *buf, size_t buf_len)
-{
-    if (!file->have_idb) {
-        return log_error_rz("pcapng: bad block %lu type %s %s", file->rec_cnt, "EPB", "missing IDB");
-    }
-
-    // read the header
-    struct pcap_epb_hdr epb;
-    int rc = pcap_read_block(file, "EPB", &epb, sizeof(epb));
-    if (rc) return 0;
-
-    if (file->must_swap) {
-        epb.type = __builtin_bswap32(epb.type);
-        epb.tot_len = __builtin_bswap32(epb.tot_len);
-        epb.if_id = __builtin_bswap32(epb.if_id);
-        epb.ts_high = __builtin_bswap32(epb.ts_high);
-        epb.ts_low = __builtin_bswap32(epb.ts_low);
-        epb.incl_len = __builtin_bswap32(epb.incl_len);
-        epb.orig_len = __builtin_bswap32(epb.orig_len);
-    }
-
-    if (file->trace_rec) {
-        pcap_log("PCAPNG",
-            "blk=%lu name=%s type=0x%08x tot_len=%u"
-            " if_id=%d ts_high=%d ts_low=%u inc_len=%u orig_len=%u",
-            file->rec_cnt, "EPB", epb.type, epb.tot_len, 
-            epb.if_id, epb.ts_high, epb.ts_low, epb.incl_len, epb.orig_len);
-    }
-
-    if (epb.tot_len < sizeof(epb)) {
-        return log_error_rz("pcapng: bad block %lu type %s len %u", file->rec_cnt, "EPB", epb.tot_len);
-    }
-
-    if (epb.incl_len > buf_len) {
-        return log_error_rz("pcapng: block %lu type %s len %u > buf %zu",
-            file->rec_cnt, "EPB", epb.incl_len, buf_len);
-    }
-
-    // read packet data
-    uint32_t cap_len = epb.incl_len;
-    rc = pcap_read_data(file, "EPB", buf, epb.incl_len);
-    if (rc) return 0;
-
-    // skip padding + options
-    uint32_t skip_len = epb.tot_len - (sizeof(epb) + cap_len);
-    rc = pcap_data_skip(file, "EPB", skip_len);
-    if (rc) return 0;
-
-    // report packet length
-    return epb.incl_len;
-}
-
-static int pcap_write_epb(struct pcap_file *file, void *buf, size_t buf_len)
-{
-    uint64_t usec_ts = pcap_get_ts(file);
-    uint32_t pad_len = calc_padlen(buf_len);
-
-    struct pcap_epb_hdr epb = {
-        .type = PCAP_EPB_TYPE,
-        .tot_len  = sizeof(epb) + buf_len + pad_len + 4,
-        .if_id    = 0,
-        .ts_high  = usec_ts >> 32,
-        .ts_low   = usec_ts & 0xFFFFFFFF,
-        .incl_len = buf_len,
-        .orig_len = buf_len
-    };
-
-    int rc = pcap_write_block(file, "EPB", &epb, sizeof(epb));
-    if (rc) return rc;
-
-    if (file->trace_rec) {
-        pcap_log("PCAPNG",
-            "blk=%lu name=%s type=0x%08x tot_len=%u"
-            " if_id=%d ts_high=%d ts_low=%u inc_len=%u orig_len=%u",
-            file->rec_cnt, "EPB", epb.type, epb.tot_len, 
-            epb.if_id, epb.ts_high, epb.ts_low, epb.incl_len, epb.orig_len);
-    }
-
-    // write the  packet data
-    rc = pcap_write_data(file, "EPB", buf, buf_len);
-    if (rc) return 0;
-
-    // padding
-    if (pad_len) {
-        uint8_t padding[3] = { 0, };
-        rc = pcap_write_data(file, "EPB", &padding, pad_len);
-        if (rc) return rc;
-    }
-
-    // footer
-    rc = pcap_write_data(file, "EPB", &epb.tot_len, sizeof(epb.tot_len));
-    if (rc) return rc;
-
-    return 0;
-}
-
-// return packet length or zero on error or eof
+// read simple packet block into buffer - return packet length or zero on error or eof
 static size_t pcap_read_spb(struct pcap_file *file, void *buf, size_t buf_len)
 {
     if (!file->have_idb) {
@@ -622,6 +524,103 @@ static int pcap_write_spb(struct pcap_file *file, void *buf, size_t buf_len)
     return 0;
 }
 
+// read enhanced packet block into buffer - return packet length or zero on error or eof
+static size_t pcap_read_epb(struct pcap_file *file, void *buf, size_t buf_len)
+{
+    if (!file->have_idb) {
+        return log_error_rz("pcapng: bad block %lu type %s %s", file->rec_cnt, "EPB", "missing IDB");
+    }
+
+    // read the header
+    struct pcap_epb_hdr epb;
+    int rc = pcap_read_block(file, "EPB", &epb, sizeof(epb));
+    if (rc) return 0;
+
+    if (file->must_swap) {
+        epb.type = __builtin_bswap32(epb.type);
+        epb.tot_len = __builtin_bswap32(epb.tot_len);
+        epb.if_id = __builtin_bswap32(epb.if_id);
+        epb.ts_high = __builtin_bswap32(epb.ts_high);
+        epb.ts_low = __builtin_bswap32(epb.ts_low);
+        epb.incl_len = __builtin_bswap32(epb.incl_len);
+        epb.orig_len = __builtin_bswap32(epb.orig_len);
+    }
+
+    if (file->trace_rec) {
+        pcap_log("PCAPNG",
+            "blk=%lu name=%s type=0x%08x tot_len=%u"
+            " if_id=%d ts_high=%d ts_low=%u inc_len=%u orig_len=%u",
+            file->rec_cnt, "EPB", epb.type, epb.tot_len, 
+            epb.if_id, epb.ts_high, epb.ts_low, epb.incl_len, epb.orig_len);
+    }
+
+    if (epb.tot_len < sizeof(epb)) {
+        return log_error_rz("pcapng: bad block %lu type %s len %u", file->rec_cnt, "EPB", epb.tot_len);
+    }
+
+    if (epb.incl_len > buf_len) {
+        return log_error_rz("pcapng: block %lu type %s len %u > buf %zu",
+            file->rec_cnt, "EPB", epb.incl_len, buf_len);
+    }
+
+    // read packet data
+    uint32_t cap_len = epb.incl_len;
+    rc = pcap_read_data(file, "EPB", buf, epb.incl_len);
+    if (rc) return 0;
+
+    // skip padding + options
+    uint32_t skip_len = epb.tot_len - (sizeof(epb) + cap_len);
+    rc = pcap_data_skip(file, "EPB", skip_len);
+    if (rc) return 0;
+
+    // report packet length
+    return epb.incl_len;
+}
+
+// write enhanced packet block to file from buffer
+static int pcap_write_epb(struct pcap_file *file, void *buf, size_t buf_len)
+{
+    uint64_t usec_ts = pcap_get_ts(file);
+    uint32_t pad_len = calc_padlen(buf_len);
+
+    struct pcap_epb_hdr epb = {
+        .type = PCAP_EPB_TYPE,
+        .tot_len  = sizeof(epb) + buf_len + pad_len + 4,
+        .if_id    = 0,
+        .ts_high  = usec_ts >> 32,
+        .ts_low   = usec_ts & 0xFFFFFFFF,
+        .incl_len = buf_len,
+        .orig_len = buf_len
+    };
+
+    int rc = pcap_write_block(file, "EPB", &epb, sizeof(epb));
+    if (rc) return rc;
+
+    if (file->trace_rec) {
+        pcap_log("PCAPNG",
+            "blk=%lu name=%s type=0x%08x tot_len=%u"
+            " if_id=%d ts_high=%d ts_low=%u inc_len=%u orig_len=%u",
+            file->rec_cnt, "EPB", epb.type, epb.tot_len, 
+            epb.if_id, epb.ts_high, epb.ts_low, epb.incl_len, epb.orig_len);
+    }
+
+    // write the  packet data
+    rc = pcap_write_data(file, "EPB", buf, buf_len);
+    if (rc) return 0;
+
+    // padding
+    if (pad_len) {
+        uint8_t padding[3] = { 0, };
+        rc = pcap_write_data(file, "EPB", &padding, pad_len);
+        if (rc) return rc;
+    }
+
+    // footer
+    rc = pcap_write_data(file, "EPB", &epb.tot_len, sizeof(epb.tot_len));
+    if (rc) return rc;
+
+    return 0;
+}
 
 static int pcap_skip_block(struct pcap_file *file)
 {
@@ -723,17 +722,18 @@ static int pcap_setup_ts(struct pcap_file *file)
     return 0;
 }
 
-static int pcap_setup_fmt(struct pcap_file *file)
+// setup fmt read and write func ptrs
+static int pcap_setup_fmt(struct pcap_file *file, int fmt)
 {
-    if (!file->fmt) {
-        // select a file fmt
-        file->fmt = file->is_reader 
+    if (!fmt) {
+        // detect file fmt
+        fmt = file->is_reader 
             ? pcap_detect_fmt(file)
             : PCAP_FMTLG;
     }
 
-    // set up func ptrs
-    switch(file->fmt) {
+    // set up ptrs
+    switch(fmt) {
     case PCAP_FMTLG:
         file->read_hdr  = pcap_read_hdr;
         file->read_pkt  = pcap_read_rec;
@@ -745,9 +745,10 @@ static int pcap_setup_fmt(struct pcap_file *file)
         file->read_pkt  = pcap_read_xpb;
         file->write_hdr = pcap_write_shb;
         file->write_pkt = pcap_write_xpb;
+        file->is_ng = 1;
         break;
     default: 
-        return log_error_rf("pcap fmt %d unsupported", file->fmt);
+        return log_error_rf("pcap fmt %d unsupported", fmt);
     }
 
     return 0;
@@ -770,25 +771,23 @@ struct pcap_file *pcap_open(const char *path_name, uint32_t flags)
         return log_error_rn("Mode must be ether Read or Write");
     }
 
+    // check fmt
     int fmt = flags & (PCAP_FMTLG | PCAP_FMTNG);
     if (fmt != 0 && fmt == (PCAP_FMTLG | PCAP_FMTNG)) {
         return log_error_rn("pcap Format must be either legacy or ng");
     }
 
+    // create state
     file = malloc(sizeof(*file));
-    if (!file) {
-        return log_errno_rn("malloc state");
-    }
-
-    // init
+    if (!file) return log_errno_rn("malloc state");
+    // init state
     memset(file, 0, sizeof(*file));
-    file->fmt = fmt;
     if (flags & PCAP_TRACE) file->trace_rec = 1;
     if (flags & PCAP_READ) file->is_reader = 1;
     if (flags & PCAP_SPB) file->use_spb = 1;
 
     if (pcap_open_file(file, path_name) != 0) goto err;
-    if (pcap_setup_fmt(file) != 0) goto err;
+    if (pcap_setup_fmt(file, fmt) != 0) goto err;
     if (pcap_setup_hdr(file) != 0) goto err;
     if (pcap_setup_ts(file)  != 0) goto err;
 

@@ -1,9 +1,8 @@
 /*
- * A DNS message encoder and decoder.
- *
+ * A DNS message codec API
+ * -----------------------
  * General idea is use a dns_msg struture to read/write DNS messages.
- * User gives api
- *   
+ *
  * API
  * ---
  * validate_dns_packet(pkt_buf, pkt_len, emsg) : check pkt valid and print desc to esmg
@@ -48,8 +47,9 @@
  * dns_rec_load(rec, sc, str) - load str repr of rec into record
  *
  * References
- * ---------
- * rf1035 - DOMAIN NAMES - IMPLEMENTATION AND SPECIFICATION
+ * ----------
+ * rfc1035 - DOMAIN NAMES - IMPLEMENTATION AND SPECIFICATION
+ * rfc6891 - Extension Mechanisms for DNS (EDNS(0))
  *
  */
 #ifndef _DNS_PROTO_H_
@@ -219,6 +219,7 @@ struct dns_rec {
     } data;
 };
 
+// dns section
 struct dns_sect {
     size_t num_rec;
     struct dns_rec rec[DNS_MAX_REC];

@@ -160,7 +160,7 @@ static int sniff_process_msg(struct dns_sniff *sniff, struct mmsghdr *msg)
     return 0;
 }
 
-int sniff_capture(struct dns_sniff *sniff)
+static int sniff_capture(struct dns_sniff *sniff)
 {
     while (sniff->sig.run) {
         // read a block
@@ -259,28 +259,7 @@ int sniff_attach(struct dns_sniff *sniff)
     return 0;
 }
 
-static int run_readpcap(struct dns_sniff *sniff)
-{
-    size_t pkt_len;
-
-    sniff->pcap = pcap_open(sniff->filename, PCAP_READ);
-    if (!sniff->pcap) return -1;
-
-    // select a buffer
-    uint8_t *buf = sniff->bufs[0];
-    uint32_t buf_len = sizeof(sniff->bufs[0]);
-
-    while ( (pkt_len = pcap_read(sniff->pcap, buf, buf_len)) > 0) {
-        int rc = sniff_process_pkt(sniff, buf, pkt_len);
-        if (rc) return rc;
-    }
-
-     pcap_close(sniff->pcap);
-     sniff->pcap = NULL;
-
-     return 0;
-}
-
+// run tracepcap cmd
 static int run_tracepcap(struct dns_sniff *sniff)
 {
     size_t pkt_len;
@@ -292,7 +271,7 @@ static int run_tracepcap(struct dns_sniff *sniff)
     uint8_t *buf = sniff->bufs[0];
     uint32_t buf_len = sizeof(sniff->bufs[0]);
 
-    while ( (pkt_len = pcap_read(sniff->pcap, buf, buf_len)) > 0) {
+    while ((pkt_len = pcap_read(sniff->pcap, buf, buf_len)) > 0) {
         // do nothing
     }
 
@@ -302,6 +281,31 @@ static int run_tracepcap(struct dns_sniff *sniff)
     return 0;
 }
 
+// run readpcap cmd
+static int run_readpcap(struct dns_sniff *sniff)
+{
+    size_t pkt_len;
+
+    sniff->pcap = pcap_open(sniff->filename, PCAP_READ);
+    if (!sniff->pcap) return -1;
+
+    // select a buffer
+    uint8_t *buf = sniff->bufs[0];
+    uint32_t buf_len = sizeof(sniff->bufs[0]);
+
+    while ((pkt_len = pcap_read(sniff->pcap, buf, buf_len)) > 0) {
+        int rc = sniff_process_pkt(sniff, buf, pkt_len);
+        if (rc) return rc;
+    }
+
+     pcap_close(sniff->pcap);
+     sniff->pcap = NULL;
+
+     return 0;
+}
+
+
+// run capture cmd
 static int run_capture(struct dns_sniff *sniff)
 {
     int rc;
@@ -386,13 +390,13 @@ static int get_mode(const char *str)
     return 0;
 }
 
-static int sniff_usage(char *path)
+static int sniff_usage(char *cmd)
 {
-    struct str_slice name = slice_rsplit1(slice_make_cstr(path), '/');
+    const char *prog_name = get_basename(cmd);
     FILE *out = stdout;
     int w= 10;
 
-    fprintf(out,"Usage: %.*s [MODE] [OPTIONS]\n\n", SLICE(name));
+    fprintf(out,"Usage: %s [MODE] [OPTIONS]\n\n", prog_name);
 
     fprintf(out, "MODE:\n");
     for (size_t i = 1; i < ARR_LEN(cmds); i++) {
@@ -407,7 +411,7 @@ static int sniff_usage(char *path)
 
     fprintf(out, "Examples:\n");
     for (int i = 0; examples[i]; i++)  {
-        fprintf(out, "  %.*s %s\n", SLICE(name), examples[i]);
+        fprintf(out, "  %s %s\n", prog_name, examples[i]);
     }
 
     return -1;
@@ -457,23 +461,6 @@ static int sniff_parse_argv(struct dns_sniff *sniff, int argc, char *argv[])
     return 0;
 }
 
-void sniff_free(struct dns_sniff *sniff)
-{
-    if (sniff->sock_raw != -1) {
-        close(sniff->sock_raw);
-    }
-
-    if (sniff->pcap) {
-        pcap_close(sniff->pcap);
-    }
-
-    if (sniff->filename) {
-        free(sniff->filename);
-    }
-
-    free(sniff);
-}
-
 static int sniff_init(struct dns_sniff *sniff)
 {
     memset(sniff, 0, sizeof(*sniff));
@@ -489,14 +476,21 @@ static int sniff_init(struct dns_sniff *sniff)
     return 0;
 }
 
-struct dns_sniff *sniff_create(void)
+static void sniff_free(struct dns_sniff *sniff)
+{
+    if (sniff->sock_raw != -1) close(sniff->sock_raw);
+    if (sniff->pcap) pcap_close(sniff->pcap);
+    if (sniff->filename) free(sniff->filename);
+
+    free(sniff);
+}
+
+static struct dns_sniff *sniff_create(void)
 {
     struct dns_sniff *sniff;
 
     sniff = malloc(sizeof(*sniff));
-    if (!sniff) {
-        return log_errno_rn("malloc failed for state");
-    }
+    if (!sniff) return log_errno_rn("malloc failed for state");
 
     return sniff;
 }

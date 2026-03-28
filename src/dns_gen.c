@@ -31,6 +31,7 @@
 #define MODE_RESP  2
 #define MODE_FUZZ  3
 
+// fuzz type codes
 #define FUZZ_HDR_TRUNC   1
 #define FUZZ_HDR_OPCODE  2
 #define FUZZ_HDR_RCODE   3
@@ -40,6 +41,7 @@
 
 #define ETHIPUDP_LEN (14 + 20 + 8)
 
+// gen state
 struct dns_gen {
     // config
     pid_t pid;
@@ -85,7 +87,6 @@ static double time_diff_ms(struct timespec *begin, struct timespec *end)
     return (diff_sec * 1000.0) + (diff_nsec / 1000000.0);
 }
 
-
 static int get_fuzz_type(const char *str)
 {
     if (!strncasecmp(str, STR_LIT("hdr-trunc")))  return FUZZ_HDR_TRUNC;
@@ -114,6 +115,7 @@ static int get_flag_val(struct str_slice str)
     return 0;
 }
 
+// print recv error
 static int gen_recv_err(int err)
 {
     const char *etype = "ERROR";
@@ -205,8 +207,8 @@ static int pcap_end_pkt(struct dns_gen *gen)
 
     // rewind to Ethernet header
     struct ethhdr eth = { 
-         .h_dest   = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x02 }, 
-         .h_source = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x01 }, 
+        .h_dest   = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x02 }, 
+        .h_source = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x01 }, 
         .h_proto = htons(ETH_P_IP) 
     };
     wptr -= sizeof(eth);
@@ -215,7 +217,8 @@ static int pcap_end_pkt(struct dns_gen *gen)
     return 0;
 }
 
-static int gen_pcap_rec(struct dns_gen *gen)
+// write DNS msg to pcap file
+static int gen_pcap_file(struct dns_gen *gen)
 {
     uint32_t flags = PCAP_WRITE;
     if (gen->use_pcapng) flags |= PCAP_FMTNG;
@@ -266,6 +269,7 @@ static int gen_print_dnsrsp(struct dns_gen *gen)
     return 0;
 }
 
+// recv pdu from server
 static int gen_recv_dnspdu(struct dns_gen *gen)
 {
     size_t read_len = sizeof(gen->pkt_buf);
@@ -293,6 +297,8 @@ static int gen_recv_dnspdu(struct dns_gen *gen)
     return 0;
 }
 
+
+// send pdu to server
 static int gen_send_dnspdu(struct dns_gen *gen)
 { 
     uint16_t dns_len;
@@ -316,13 +322,13 @@ static int gen_send_dnspdu(struct dns_gen *gen)
     return rc;
 }
 
-// decode packet buffer into recv msg
+// decode DNS rsp from packet buffer
 static int gen_dec_dnsmsg(struct dns_gen *gen)
 {
     return dns_msg_decode(&gen->rcv_msg, gen->pkt_buf, gen->recv_len);
 }
 
-// encode send msg into packet buffer
+// encode DNS send msg into packet buffer
 static int gen_enc_dnsmsg(struct dns_gen *gen)
 {
     void *buf = gen->pkt_buf + gen->pkt_len;
@@ -346,6 +352,7 @@ static int gen_verify_encmsg(struct dns_gen *gen)
     return rc;
 }
 
+// recv query rsp from server
 static int gen_recv_resp(struct dns_gen *gen)
 {
     int rc;
@@ -385,6 +392,7 @@ static int gen_recv_resp(struct dns_gen *gen)
     return 0;
 }
 
+// send query msg to server
 static int gen_send_query(struct dns_gen *gen)
 {
     // next tid
@@ -423,7 +431,7 @@ static int gen_serv_connect(struct dns_gen *gen)
     const char *port = "53";
 
     int rc;
-    if ((rc = sock_connect(&gen->sock, mode, gen->serv_addr, port))) return rc;
+    if ((rc = sock_client(&gen->sock, mode, gen->serv_addr, port))) return rc;
     if ((rc = sock_set_sndto(&gen->sock, gen->timeout))) return rc;
     if ((rc = sock_set_rcvto(&gen->sock, gen->timeout))) return rc;
 
@@ -431,6 +439,7 @@ static int gen_serv_connect(struct dns_gen *gen)
     return 0;
 }
 
+// run query cmd
 static int run_query(struct dns_gen *gen)
 {
     int rc;
@@ -442,6 +451,7 @@ static int run_query(struct dns_gen *gen)
     return 0;
 }
 
+// run response cmd
 static int run_response(struct dns_gen *gen)
 {
     int rc; 
@@ -449,13 +459,14 @@ static int run_response(struct dns_gen *gen)
     if ((rc = pcap_start_pkt(gen))) return rc;
     if ((rc = gen_enc_dnsmsg(gen))) return rc;
     if ((rc = pcap_end_pkt(gen))) return rc;
-    if ((rc = gen_pcap_rec(gen))) return rc;
+    if ((rc = gen_pcap_file(gen))) return rc;
 
     printf("Wrote %zu bytes to %s\n", gen->pkt_len - ETHIPUDP_LEN, gen->output);
 
     return 0;
 }
 
+// encode a bad header
 static uint8_t *gen_enc_badhdr(struct dns_gen *gen, uint8_t *wptr, struct dns_header *hdr)
 {
     // sync for receive
@@ -474,6 +485,7 @@ static uint8_t *gen_enc_badhdr(struct dns_gen *gen, uint8_t *wptr, struct dns_he
     return wptr;
 }
 
+// encode a bad msg
 static int gen_enc_badmsg(struct dns_gen *gen)
 {
     struct dns_header hdr = { 0 };
@@ -524,7 +536,8 @@ static int gen_enc_badmsg(struct dns_gen *gen)
 
     return 0;
 }
-
+ 
+// run fuzz cmd
 static int run_fuzz(struct dns_gen *gen)
 {
     int rc = 0;
@@ -766,6 +779,7 @@ static int add_sect(struct dns_gen *gen, int sc, struct cmd_argv *parse)
     return 0;
 }
 
+// parse cmd-line args
 static int gen_parse_argv(struct dns_gen *gen, int argc, char *argv[])
 {
     if (argc < 2 || !strcmp(argv[1], "--help")) {

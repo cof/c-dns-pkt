@@ -1,19 +1,8 @@
 /*
- * A DNS message decoder and encoder API
- *
+ * A DNS message codec API
+ * -----------------------
  * See dns_proto.h for full API description.
- *
- * API
- * ---
- * dns_msg_decode - decode a buffer into a DNS message
- * dns_msg_encode - encode a DNS message int a buffer
- *
- * Refs
- * ====
- *  rfc1035 - DOMAIN NAMES - IMPLEMENTATION AND SPECIFICATION
- *  rfc6891 - Extension Mechanisms for DNS (EDNS(0))
  */
-
 #include <errno.h>
 #include <arpa/inet.h>   
 #include <arpa/inet.h> 
@@ -35,12 +24,14 @@
 #define DNS_NAME_SIZE 256
 #define DNS_MSG_SIZE (4 * DNS_NAME_SIZE + 100) // big enough for names + extra
 
+// error state
 struct dns_err {
     int group;
     int field;
     int ec;
 };
 
+// dns decoder state
 struct dns_dec {
     const uint8_t *pkt_buf;
     size_t pkt_len;
@@ -63,11 +54,11 @@ struct dns_dec {
     char msg[DNS_MSG_SIZE]; // parse_dns_name + dns_err_tostr
 };
 
+// print a msg to decoder state
 static int dns_wmsg(struct dns_dec *dec, const char *fmt, ...) \
     __attribute__((format(printf, 2, 3)));
 
 // decoders
-
 
 // XXX - use xmacros to ensure both code and string match
 #define DNS_ERRORS(X) \
@@ -116,9 +107,7 @@ static const char *dns_ec_tostr(int code)
     return int_tostr(code);
 }
 
-
-// decode error locations
-// XXX - use xmacros to ensure both code and string match
+// decode error locations - using xmacros
 #define DNS_DECODES(X) \
     X(DNS_DEC_NONE, "NONE") \
     X(DNS_DEC_PDU,  "PDU") \
@@ -237,6 +226,7 @@ const char *opcode_tostr(int opcode)
     return int_tostr(opcode);
 }
 
+// append a fmt message to emsg buffer
 static int dns_wmsg(struct dns_dec *dec, const char *fmt, ...) 
 {
     struct strbuf *buf = &dec->emsg;
@@ -256,7 +246,8 @@ static int dns_wmsg(struct dns_dec *dec, const char *fmt, ...)
     return 0;
 }
 
-int dns_dec_err(struct dns_dec *dec, int group, int field, int ec)
+// log ad dns error
+static int dns_dec_err(struct dns_dec *dec, int group, int field, int ec)
 {
     if (dec->nerr >= ARR_LEN(dec->errs)) {
         return dec_error_re("No room for err  %d %d %d", group, field, ec);
@@ -271,6 +262,7 @@ int dns_dec_err(struct dns_dec *dec, int group, int field, int ec)
     return 0;
 }
 
+// convert dns err to string
 char *dns_err_tostr(struct dns_dec *dec, struct dns_err *err)
 {
     const char *group = dec_code_tostr(err->group);
@@ -286,6 +278,7 @@ char *dns_err_tostr(struct dns_dec *dec, struct dns_err *err)
     return dec->msg;
 }
 
+// convert decode error list to str
 static int dns_dec_genmsg(struct dns_dec *dec)
 {
     if (!dec->nerr) {
@@ -406,6 +399,7 @@ int parse_dns_name(
     return out_space - out_len;
 }
 
+// print dns_quest to str - returns bytes written or error
 int dns_quest_tostr(struct dns_quest *quest, char *buf, size_t buf_len)
 {
     // ensure no hidden fields
@@ -424,7 +418,7 @@ int dns_quest_tostr(struct dns_quest *quest, char *buf, size_t buf_len)
     return wptr - buf;
 }
 
-// convert rec to string - return bytes written or error
+// print dns_rec to string - return bytes written or error
 int dns_rec_tostr(struct dns_rec *rec, int sc, char *buf, size_t buf_len)
 {
     // ensure no hidden fields
@@ -523,6 +517,7 @@ int dns_rec_tostr(struct dns_rec *rec, int sc, char *buf, size_t buf_len)
     return wptr - buf;
 }
 
+// append dns section as string to buffer
 int dns_sect_tostr(struct dns_sect *sect, int sc, char *buf, size_t buf_len)
 {
     size_t nw = 0;
@@ -540,6 +535,7 @@ int dns_sect_tostr(struct dns_sect *sect, int sc, char *buf, size_t buf_len)
     return nw;
 }
 
+// append each dns section as string to buffer
 int dns_msg_sects_tostr(struct dns_msg *msg,  char *buf, size_t len)
 {
     int rc, nw = 0;
@@ -559,6 +555,7 @@ int dns_msg_sects_tostr(struct dns_msg *msg,  char *buf, size_t len)
     return nw;
 }
 
+// add name to msg store
 static char *msg_store_name_str(struct dns_msg *msg, const char *name, size_t len)
 {
     // space for name + nul ?
@@ -581,7 +578,7 @@ static char *msg_store_name(struct dns_msg *msg, const char *name)
     return msg_store_name_str(msg, name, safe_strlen(name));
 }
 
-// decode dns recode into message
+// decode a DNS resource record (RR) into a section dns_rec
 static int parse_record(struct dns_dec *dec, struct dns_msg *msg, 
     int sect_code, struct dns_sect *sect)
 {
@@ -995,6 +992,7 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
     return rc;
 }
 
+// decode a question record
 static int parse_question(struct dns_dec *dec, struct dns_msg *msg)
 {
     // grab next section quest
@@ -1051,6 +1049,7 @@ static int parse_question(struct dns_dec *dec, struct dns_msg *msg)
     return ec;
 }
 
+// decode all resource records (RR) for a DNS section 
 static int dns_dec_sect(struct dns_dec *dec, struct dns_msg *msg,
     int nrec, int sect_code, struct dns_sect *sect)
 {
@@ -1230,6 +1229,7 @@ int validate_dns_packet(const uint8_t *pkt_buf, size_t pkt_len, char *emsg)
     return rc;
 }
 
+// decode a buffer to a dns message
 int dns_msg_decode(struct dns_msg *msg, uint8_t *buf, size_t len)
 {
     struct dns_dec dec = {
@@ -1242,6 +1242,7 @@ int dns_msg_decode(struct dns_msg *msg, uint8_t *buf, size_t len)
     return decode_msg(&dec, msg);
 }
 
+// used for jmp ptrs
 struct dns_suffix {
     const char *name;
     uint8_t len;
@@ -1257,6 +1258,7 @@ struct dns_enc {
     struct dns_suffix suffix[DNS_MAX_SUFFIX];
 };
 
+// encode a dns name
 static uint8_t *enc_name(struct dns_enc *enc, uint8_t *wptr, const char *name)
 {
     int offset = wptr - enc->pkt_buf;
@@ -1342,7 +1344,7 @@ static uint8_t *enc_fld_mkspace(struct dns_enc *enc, size_t len, int sc, int typ
     return wbuf;
 }
 
-
+// encode a dns question
 static int dns_enc_quest(struct dns_enc *enc, struct dns_quest *quest)
 {
     size_t len = DNS_NAME_MAXLEN + 4;
@@ -1386,7 +1388,7 @@ static int dns_enc_raw(struct dns_enc *enc, void *raw, int raw_len, int sc, int 
     if (!wbuf) return -1;
 
     uint8_t *wptr = wbuf;
-    wptr = enc_raw(wptr, raw, raw_len);
+    wptr = enc_buf(wptr, raw, raw_len);
 
     return 0;
 }
@@ -1399,7 +1401,7 @@ static int dns_enc_str(struct dns_enc *enc, char *str, size_t len, int sc, int t
 
     uint8_t *wptr = wbuf;
     *wptr++ = len;
-    wptr = enc_raw(wptr, (void *) str, len);
+    wptr = enc_buf(wptr, (void *) str, len);
 
     return 0;
 }
@@ -1555,6 +1557,7 @@ static int encode_qd(struct dns_enc *enc, struct dns_msg *msg)
     return 0;
 }
 
+// encode a DNS header
 static int encode_hdr(struct dns_enc *enc, struct dns_msg *msg)
 {
     // sync hdr
@@ -1610,7 +1613,7 @@ ssize_t dns_msg_encode(struct dns_msg *msg, uint8_t *buf, size_t len)
     return enc.pkt_len;
 }
 
-// add  record to dns section
+// add a dns_rec to a section
 static int dns_msg_add_sect(struct dns_msg *msg,
     int sc, struct dns_sect *sect, struct dns_rec *src_rec)
 {
@@ -1734,6 +1737,7 @@ static int dns_msg_add_sect(struct dns_msg *msg,
     return 0;
 }
 
+// add a question to DNS msg
 int dns_msg_add_qd(struct dns_msg *msg, const char *name, uint16_t qtype,  uint16_t qclass)
 {
     struct dns_quest *quest;
@@ -1760,7 +1764,7 @@ int dns_msg_add_qd(struct dns_msg *msg, const char *name, uint16_t qtype,  uint1
     return 0;
 }
 
-// add a qd|ns|ar section record to msg
+// add a qd|ns|ar section record to DNS msg
 int dns_msg_add_rec(struct dns_msg *msg, int sc, struct dns_rec *rec)
 {
     struct dns_sect *sect;
@@ -1775,6 +1779,7 @@ int dns_msg_add_rec(struct dns_msg *msg, int sc, struct dns_rec *rec)
     return dns_msg_add_sect(msg, sc, sect, rec);
 }
 
+// get first dns resource record
 struct dns_rec *dns_msg_get_rec(struct dns_msg *msg)
 {
     if (dns_msg_cnt_rec(msg) != 1) return NULL;
@@ -1828,11 +1833,11 @@ int dns_get_flag(const char *str)
  */
 int dns_rec_load(struct dns_rec *rec, int sc, const char *src)
 {
-    struct str_slice str = slice_make_cstr(RMCONST(char *, src));
-
     // get addr
-    struct str_slice addr = slice_split(&str, ' ');
+    struct str_slice addr  = slice_make_cstr(src);
+    struct str_slice attrs = slice_split(&addr, ' ');
     slice_trim(&addr);
+
     if (addr.len > DNS_NAME_MAXSTR) {
         return log_error_rf("%s <addr> len %zu bigger than max %d", 
             dec_code_tostr(sc), addr.len, DNS_NAME_MAXSTR);
@@ -1842,13 +1847,6 @@ int dns_rec_load(struct dns_rec *rec, int sc, const char *src)
     char addr_str[DNS_NAME_MAXLEN];
     memcpy(addr_str, addr.ptr, addr.len);
     addr_str[addr.len] = '\0';
-
-    /*
-    // set defaults
-    rec->name = gen->dns_name;
-    rec->class = gen->dns_class;
-    rec->ttl = gen->ttl;
-    */
 
     // parse addr_str (ip4|ip6|name)
     uint8_t addr_raw[DNS_NAME_MAXLEN];
@@ -1869,9 +1867,9 @@ int dns_rec_load(struct dns_rec *rec, int sc, const char *src)
     }
     
     // look for remaining attrs (e.g 3600 CH)
-    while (str.len) {
+    while (attrs.len) {
+        struct str_slice attr = slice_split(&attrs, ' ');
         char name[20];
-        struct str_slice attr = slice_split(&str, ' ');
         slice_trim(&attr);
         // covert slice to cptr
         size_t len = min(attr.len, sizeof(name) - 1);
