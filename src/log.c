@@ -1,5 +1,12 @@
 /*
- * logger api
+ * LOG - a logger API
+ * -------------------
+ * See log.h for description.
+ *
+ * API sections
+ * ------------
+ * functions : direct functions
+ * macros    : various msg-str and fmt-str macros
  */
 #include <stdio.h>
 #include <stdarg.h>
@@ -82,6 +89,7 @@ void _fatal_error(const char *file, int line, const char *func, int ec, const ch
     exit(1);
 }
 
+// log_info cmd-line - useful for debugging pod exec issues
 void log_argv(const char *what, int argc, char *argv[])
 {
     for (int i= 0 ; i < argc; i++) {

@@ -2,6 +2,12 @@
  * A DNS message codec API
  * -----------------------
  * See dns_proto.h for full API description.
+ *
+ * Basic API
+ * ----------
+ * validate_dns_packet(pkt_buf, pkt_len, emsg) : check pkt valid and print desc to esmg
+ * dns_msg_decode(msg, buf, len) : decode buffer into a DNS message
+ * dns_msg_encode(msg, buf, len) : encode DNS message into buffer
  */
 #include <errno.h>
 #include <arpa/inet.h>   

@@ -7,6 +7,35 @@
  * - write either simple or enhanced packet blocks SPB|EPB 
  * - uses clock_getime for timestamps
  * - trace mode for debugging pcap files
+ *
+ * Example usage:
+ * --------------
+ *  char buf[BUFSIZ];
+ *  size_t pkt_len;
+ *  pcap = pcap_open(sniff->filename, PCAP_READ | PCAP_TRACE);
+ *  while ((pkt_len = pcap_read(cap, buf, sizeof(buf)) > 0) {
+ *      // buf has a raw ethernet packet with size pkt_len
+ *  }
+ *  pcap_close(pcap);
+ *
+ * API
+ * ---
+ * pcap_open(file_name, mode) : open pcap file 
+ * pcap_close(pf)             : close pcap file
+ * pcap_read(pf, buf, len)    : read packet from file into buffe
+ * pcap_write(pf, buf, len)   : write packet to file
+ *
+ * mode:  bit-wise mask of the following flags
+ * -------------------------------------------
+ * PCAP_READ   : open file for reading
+ * PCAP_WRITE  : open file for wrting
+ * PCAP_FMTDET : detect file fmt if not given
+ * PCAP_FMTLG  : pcap legacy/classic
+ * PCAP_FMTNG  : pcap nextgen (pcapng)
+ * PCAP_TRACE  : trace pcap records
+ * PCAP_SPB    : Use Simple Packet Blocks for PCAPNG
+ *
+ * See below for file fmts and state.
  */
 #ifndef _PCAP_H_
 #define _PCAP_H_
@@ -148,8 +177,8 @@ struct pcap_file {
 #define PCAP_SNAPLEN 65535
 
 /*
- * mode flags
- * ----------
+ * mode:  bit-wise mask of the following flags
+ * -------------------------------------------
  */
 #define PCAP_READ   (1 << 0) // open file for reading
 #define PCAP_WRITE  (1 << 1) // open file for wrting

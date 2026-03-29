@@ -1,47 +1,48 @@
 /*
  * A DNS message codec API
  * -----------------------
- * General idea is use a dns_msg struture to read/write DNS messages.
+ * A codec API for reading and writing DNS messages featuring
+ * - Structure-composable: built for inline embedding, object compostion & memory locality
+ * - full rfc1035 codec support for encoding/decoding wire-format DNS messages.
+ * - provides a DNS message structure for easy message generation
+ * - Human-readable formatting of decoded DNS messages
+ * - Validation service of PDUS with dns section error reporting
  *
- * API
- * ---
- * validate_dns_packet(pkt_buf, pkt_len, emsg) : check pkt valid and print desc to esmg
- * dns_msg_decode(msg, buf, len) : decode buffer into a DNS message
- * dns_msg_encode(msg, buf, len) : encode DNS message into buffer
+ * Example Usage:
+ * --------------
  *
- * DNS msg
- * -------
- * msg is a stucture defined as follows:
+ *  // create a query msg
+ *  char buf[BUFSIZ];
+ *  struct dns_msg msg;
+ *  rc = dns_msg_add_qd(&msg, "example.com", DNS_TYPE_A, DNS_CLASS_IN);
+ *  dns_msg_set_id_flags(&msg, 0x1234, DNS_FLAGS_RD);
+ *  ssize_t pkt_len = dns_msg_encode(&sg, buf, sizeof(bug));
  *
- *  DNS msg - struct dns_msg 
+ * DNS message
+ * -----------
+ * API uses a dns message structuer to allow user quick set or access fields
+ *
+ *  struct dns_msg 
  *   - hdr (id, flags, qd_count, an_count, ns_count, ar_count)
  *   - qd_recs - question section 
  *   - an_recs - answer section 
  *   - ns_recs - authority section
  *   - ar_recs - additional section
  *
- * Queston Section:
- *    num_qd - number of dns_quest
- *    qd_recs - array of dns_quest
- *    dns_quest - struct dns_quest
- *    - qname 
- *    - qtype
- *    - qclas
+ * User can use helper functions to set fields or set them directly.
  *
- * an|ns|ar Sections - struct dns_sect
- *  num_rec - number of dns_rec
- *  rec     - array of dns_rec
- *
- * Record - struct dns_rec
- *  name, type,class ttl, rdlen
- *  Uses a union type to store RDATA
+ * Basic API
+ * ----------
+ * validate_dns_packet(pkt_buf, pkt_len, emsg) : check pkt valid and print desc to esmg
+ * dns_msg_decode(msg, buf, len) : decode buffer into a DNS message
+ * dns_msg_encode(msg, buf, len) : encode DNS message into buffer
  *
  * Helpers
  * --------
  * dns_msg_sects_tostr(msg,buf,len) : print sections to str buffer
- * dns_msg_get_rec(msg) : get first rec if available
  * dns_msg_add_qd(msg,name, qtype, qclass) : add qd section
  * dns_msg_add_rec(msg, sc, rec) : add record to an|ns|ar section
+ * dns_msg_get_rec(msg) : get first rec if available
  *
  * dns_msg_cnt_rec(mg) - count total records in msg
  * dns_rec_load(rec, sc, str) - load str repr of rec into record
@@ -50,7 +51,6 @@
  * ----------
  * rfc1035 - DOMAIN NAMES - IMPLEMENTATION AND SPECIFICATION
  * rfc6891 - Extension Mechanisms for DNS (EDNS(0))
- *
  */
 #ifndef _DNS_PROTO_H_
 #define _DNS_PROTO_H_
@@ -155,8 +155,7 @@ int validate_dns_packet(const uint8_t *pkt, size_t len, char *error_msg);
 
 
 /*  
-  A simple DNS message api
-
+  A DNS message api
  */
 const char *rcode_tostr(int rcode);
 const char *dns_class_tostr(int ec);
@@ -230,7 +229,34 @@ int dns_quest_tostr(struct dns_quest *quest, char *buf, size_t buf_len);
 int dns_sect_tostr(struct dns_sect *sect, int sc, char *buf, size_t buf_len);
 int dns_rec_tostr(struct dns_rec *rec, int sc, char *buf, size_t buf_len);
 
-// DNS message
+/*
+ * DNS msg
+ * -------
+ * msg is a stucture defined as follows:
+ *
+ *  DNS msg - struct dns_msg 
+ *   - hdr (id, flags, qd_count, an_count, ns_count, ar_count)
+ *   - qd_recs - question section 
+ *   - an_recs - answer section 
+ *   - ns_recs - authority section
+ *   - ar_recs - additional section
+ *
+ * Queston Section:
+ *    num_qd - number of dns_quest
+ *    qd_recs - array of dns_quest
+ *    dns_quest - struct dns_quest
+ *    - qname 
+ *    - qtype
+ *    - qclas
+ *
+ * an|ns|ar Sections - struct dns_sect
+ *  num_rec - number of dns_rec
+ *  rec     - array of dns_rec
+ *
+ * Record - struct dns_rec
+ *  name, type,class ttl, rdlen
+ *  Uses a union type to store RDATA
+ */
 struct dns_msg {
     struct dns_header hdr;
     char names[DNS_MAX_PDUSIZE];
