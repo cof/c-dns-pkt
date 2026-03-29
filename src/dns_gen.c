@@ -547,7 +547,7 @@ static int run_fuzz(struct dns_gen *gen)
         if ((rc = pcap_start_pkt(gen))) return rc;
         if ((rc = gen_enc_badmsg(gen))) return rc;
         if ((rc = pcap_end_pkt(gen))) return rc;
-        if ((rc = gen_pcap_rec(gen))) return rc;
+        if ((rc = gen_pcap_file(gen))) return rc;
         printf("Wrote %zu bytes to %s\n", gen->pkt_len - ETHIPUDP_LEN, gen->output);
     }
     else {
