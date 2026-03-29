@@ -16,11 +16,12 @@
  *  struct dns_msg msg;
  *  rc = dns_msg_add_qd(&msg, "example.com", DNS_TYPE_A, DNS_CLASS_IN);
  *  dns_msg_set_id_flags(&msg, 0x1234, DNS_FLAGS_RD);
- *  ssize_t pkt_len = dns_msg_encode(&sg, buf, sizeof(bug));
+ *  ssize_t pkt_len = dns_msg_encode(&msg, buf, sizeof(buf));
+ *  // buffer now has wire-format dns query
  *
  * DNS message
  * -----------
- * API uses a dns message structuer to allow user quick set or access fields
+ * API uses a dns message structure to allow users easily set or access fields.
  *
  *  struct dns_msg 
  *   - hdr (id, flags, qd_count, an_count, ns_count, ar_count)
