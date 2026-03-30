@@ -471,8 +471,8 @@ static int run_response(struct dns_gen *gen)
 static uint8_t *gen_enc_badhdr(struct dns_gen *gen, uint8_t *wptr, struct dns_header *hdr)
 {
     // sync for receive
-    gen->tid_sent =  rand() % 65536;
-    hdr->id = gen->tid_sent;
+    hdr->id = gen->id;
+    gen->tid_sent = gen->id;
 
     // encode hdr
     hdr->id       = ntohs(hdr->id);
@@ -594,6 +594,7 @@ enum {
     RESP_OUTPUT,
     RESP_PCAPNG,
     FUZZ_TYPE,
+    FUZZ_ID,
     FUZZ_SERVER,
     FUZZ_OUTPUT,
     FUZZ_PCAPNG
@@ -624,10 +625,11 @@ struct cmd_opt resp_opts[] = {
 };
 
 struct cmd_opt fuzz_opts[] = {
-    { "--type",   "<FUZZ> type must be hdr-trunc|hdr-opcode|hdr-rcode|hdr-qdcnt|qd-cmploop|qd-badjmp", 0, 1, FUZZ_TYPE },
-    { "--server", "<ADDR> Server address to send pdu to", 0, 1, FUZZ_SERVER },
-    { "--output", "<FILE> pcap file name", 0, 1, FUZZ_OUTPUT },
-    { "--pcapng" , "Use pcapng file fmt",  0, 0, FUZZ_PCAPNG  },
+    { "--type"   ,"<FUZZ> type must be hdr-trunc|hdr-opcode|hdr-rcode|hdr-qdcnt|qd-cmploop|qd-badjmp", 0, 1, FUZZ_TYPE },
+    { "--server" ,"<ADDR> Server address to send pdu to", 0, 1, FUZZ_SERVER },
+    { "--id"     ,"<ID> A DNS header id",  0, 1, FUZZ_ID  },
+    { "--output" ,"<FILE> pcap file name", 0, 1, FUZZ_OUTPUT },
+    { "--pcapng" ,"Use pcapng file fmt",  0, 0, FUZZ_PCAPNG  },
     { NULL }
 };
 
@@ -801,6 +803,9 @@ static int gen_parse_argv(struct dns_gen *gen, int argc, char *argv[])
         gen->dns_flags = DNS_FLAGS_RD;
         gen->dns_class = DNS_CLASS_IN;
         break;
+    case MODE_FUZZ:
+        gen->id = rand() % 65536;
+        break;
     }
 
     // process cmd-line options
@@ -830,6 +835,7 @@ static int gen_parse_argv(struct dns_gen *gen, int argc, char *argv[])
         // fuzz
         case FUZZ_TYPE:   rc = set_type_str(gen, &gen->fuzz_type, get_fuzz_type, &parse); break;
         case FUZZ_SERVER: rc = opt_setstr(&gen->serv_addr, &parse); break;
+        case FUZZ_ID:     rc = set_id(gen, &parse); break;
         case FUZZ_OUTPUT: rc = opt_setstr(&gen->output, &parse); break;
         case FUZZ_PCAPNG: gen->use_pcapng = 1; break;
         }

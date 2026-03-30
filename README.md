@@ -19,13 +19,13 @@ A DNS packet inspector and DNS message generator.
 
 ## Design Notes
 
-- All code written in C.
+- Single-threaded applicaton written in C with no 3rd party libs
 - Both dns-inspect and dns-gen use custom apis
-- DNS api  - DNS message encode/decode in dns_proto(.h|.c)
-- PCAP api - PCAP/PCAPNG read/write support in pcap(.h|.c)
-- SOCK api - socket layer wrapper in sock(.h|,c)
-- UTIL api - string process,cmd-line parsing, signal handling
-- LOG api - info and erro loggin in log(.h|.c)
+- DNS api  - DNS message encode/decode in dns_proto.(h|c)
+- PCAP api - PCAP/PCAPNG read/write support in pcap.(h|c)
+- SOCK api - socket layer wrapper in sock.(h|c)
+- LOG api  - info and error logging in log(.h|.c)
+- UTIL api - strings,cmd-line parsing,signal handling
 
 ## 1. dns-inspect
 A DNS packet inspector that capture DNS messages from a local interface and displays them.
@@ -49,6 +49,7 @@ Captures, decodes, and prints DNS traffic from a local network interface in real
 
 **Design**
 
+- Single-threaded applicaton written in C with no 3rd party libs
 - Uses signal API to catch SIGTERM and SIGINT
 - Uses AF_PACKET raw socket to receive ethernet packets
 - Uses BPF to only receive UDP packets for port 53
@@ -64,16 +65,14 @@ Captures, decodes, and prints DNS traffic from a local network interface in real
 
     $ sudo ./dns-inspect capture --interface wlp2s0
     [dns-sniff] DNS active on wlp2s0
-    [QUERY] ID 0x1e0e QR:0 OPCODE:QUERY RD:1 AD:1
+    [QUERY] ID 0x1d43 QR:0 OPCODE:QUERY RD:1 AD:1
       Question: example.com IN A
-      Additional: <Root> 1232 OPT UDP-size:1232 Ext-RCODE:0 EDNS0:0 DNSEC-OK:0
-    [RESPONSE] ID 0x1e0e QR:1 OPCODE:QUERY RD:1 RA:1 RCODE:NoError
+      Additional: <Root>  OPT UDP-size:1232 Ext-RCODE:0 EDNS0:0 DNSEC-OK:0
+    [RESPONSE] ID 0x1d43 QR:1 OPCODE:QUERY RD:1 RA:1 RCODE:NoError
       Question: example.com IN A
-      Answer: ex104.18.26.120 IN A 104.18.26.120
-      Answer: ex104.18.27.120 IN A 104.18.27.120
-      Additional: <Root> 512 OPT UDP-size:512 Ext-RCODE:0 EDNS0:0 DNSEC-OK:0
-
-
+      Answer: example.com IN A 104.18.26.120
+      Answer: example.com IN A 104.18.27.120
+      Additional: <Root>  OPT UDP-size:512 Ext-RCODE:0 EDNS0:0 DNSEC-OK:0
 
 ### 1.2 **Command: readpcap**
 Reads a packet capture flle, decodes and prints DNS trafic
@@ -91,20 +90,19 @@ Reads a packet capture flle, decodes and prints DNS trafic
 
 **Example usage**
 
-    $ ./dns-inspect readpcap --file dns.pcap
+    $ ./dns-inspect readpcap --file tests/pcaps/dns.pcap 
     [QUERY] ID 0xecc2 QR:0 OPCODE:QUERY RD:1 AD:1
-     Question: www.google.com IN A
-      Additional: <Root> 1232 OPT UDP-size:1232 Ext-RCODE:0 EDNS0:0 DNSEC-OK:0
+      Question: www.google.com IN A
+      Additional: <Root>  OPT UDP-size:1232 Ext-RCODE:0 EDNS0:0 DNSEC-OK:0
     [RESPONSE] ID 0xecc2 QR:1 OPCODE:QUERY RD:1 RA:1 RCODE:NoError
       Question: www.google.com IN A
-      Answer: ww74.125.193.147 IN A 74.125.193.147
-      Answer: ww74.125.193.99 IN A 74.125.193.99
-      Answer: ww74.125.193.103 IN A 74.125.193.103
-      Answer: ww74.125.193.106 IN A 74.125.193.106
-      Answer: ww74.125.193.104 IN A 74.125.193.104
-      Answer: ww74.125.193.105 IN A 74.125.193.105
-      Additional: <Root> 512 OPT UDP-size:512 Ext-RCODE:0 EDNS0:0 DNSEC-OK:0
-
+      Answer: www.google.com IN A 74.125.193.147
+      Answer: www.google.com IN A 74.125.193.99
+      Answer: www.google.com IN A 74.125.193.103
+      Answer: www.google.com IN A 74.125.193.106
+      Answer: www.google.com IN A 74.125.193.104
+      Answer: www.google.com IN A 74.125.193.105
+      Additional: <Root>  OPT UDP-size:512 Ext-RCODE:0 EDNS0:0 DNSEC-OK:0
 
 ### 1.2 **Command: tracepcap**
 Reads packet records from a capture flle, and prints them
@@ -117,16 +115,16 @@ Reads packet records from a capture flle, and prints them
 
 **Example usage**
 
-	$ ./dns-inspect tracepcap --file dns.pcap
-	[PCAP-HDR] magic=0xa1b2c3d4 major=2 minor=4 resv1=0 resv2=0 snap_len=262144 link_type=1
-	[PCAP-REC] rec=1 ts_sec=1772736506 ts_usec=633805 inc_len=97 orig_len=97
-	[PCAP-REC] rec=2 ts_sec=1772736506 ts_usec=653222 inc_len=181 orig_len=181
+    $ ./dns-inspect tracepcap --file tests/pcaps/dns.pcap
+    [PCAP-HDR] magic=0xa1b2c3d4 major=2 minor=4 resv1=0 resv2=0 snap_len=262144 link_type=1
+    [PCAP-REC] rec=1 ts_sec=1772736506 ts_usec=633805 inc_len=97 orig_len=97
+    [PCAP-REC] rec=2 ts_sec=1772736506 ts_usec=653222 inc_len=181 orig_len=181
 
-	$ ./dns-inspect tracepcap --file dns.pcapng 
-	[PCAPNG] blk=1 name=SHB type=0x0a0d0d0a total_len=28 magic=0x1a2b3c4d ver_major=1 ver_minor=0 sec_len=-1
-	[PCAPNG] blk=2 name=IDB type=0x00000001 total_len=20 link_type=1 rsvd=0 snap_len=262144
-	[PCAPNG] blk=3 name=EPB type=0x00000006 total_len=132 if_id=0 ts_high=412747 ts_low=1640111693 inc_len=97 orig_len=97
-	[PCAPNG] blk=4 name=EPB type=0x00000006 total_len=216 if_id=0 ts_high=412747 ts_low=1640131110 inc_len=181 orig_len=181
+    $ ./dns-inspect tracepcap --file tests/pcaps/dns.pcapng 
+    [PCAPNG] blk=1 name=SHB type=0x0a0d0d0a total_len=28 magic=0x1a2b3c4d ver_major=1 ver_minor=0 sec_len=-1
+    [PCAPNG] blk=2 name=IDB type=0x00000001 total_len=20 link_type=1 rsvd=0 snap_len=262144
+    [PCAPNG] blk=3 name=EPB type=0x00000006 total_len=132 if_id=0 ts_high=412747 ts_low=1640111693 inc_len=97 orig_len=97
+    [PCAPNG] blk=4 name=EPB type=0x00000006 total_len=216 if_id=0 ts_high=412747 ts_low=1640131110 inc_len=181 orig_len=181
 
 
 ## 2. dns-gen
@@ -134,46 +132,46 @@ A DNS message and DNS packet file generator tool.
 
 **Example usage**
 
-	Usage: dns-gen [MODE] [OPTIONS]
+    Usage: dns-gen [MODE] [OPTIONS]
 
-	MODE:
-	  query      send DNS query message to a server
-	  response   create a dns mesage with bad values
-	  fuzz       create a dns reponse message
+    MODE:
+      query      send DNS query message to a server
+      response   create a dns mesage with bad values
+      fuzz       create a dns reponse message
 
-	query Options:
-	  --name       <NAME> A DNS name
-	  --type       <TYPE> A DNS type A|NS|CNAME|SOA|PTR|HINFO|MX|TXT|AAAA|SRV
-	  --class      <CLASS> A DNS class IN|CS|CH|HS|ANY
-	  --flags      <FLAGS> Query flags AD:0|CD:0|RD:0
-	  --server     <ADDR> Server IP address or name
-	  --timeout    <TimeOut> Response timeout
-	  --tcp        Use TCP to send msg (instead of UDP)
-	  --log        Log DNS message that are sent
+    query Options:
+      --name       <NAME> A DNS name
+      --type       <TYPE> A DNS type A|NS|CNAME|SOA|PTR|HINFO|MX|TXT|AAAA|SRV
+      --class      <CLASS> A DNS class IN|CS|CH|HS|ANY
+      --flags      <FLAGS> Query flags AD:0|CD:0|RD:0
+      --server     <ADDR> Server IP address or name
+      --timeout    <TimeOut> Response timeout
+      --tcp        Use TCP to send msg (instead of UDP)
+      --log        Log DNS message that are sent
 
-	response Options:
-	  --id         <ID> A DNS header id
-	  --name       <NAME> A DNS name
-	  --flags      <FLAGS> Query flags name:value name=AD|CD|RD and val=0|1
-	  --answer     <ANS>  answer record
-	  --authority  <AUTH> auth record
-	  --additional <ADD>  add record
-	  --output     <FILE> pcap file name
-	  --pcapng     Use pcapng file fmt
+    response Options:
+      --id         <ID> A DNS header id
+      --name       <NAME> A DNS name
+      --flags      <FLAGS> Query flags name:value name=AD|CD|RD and val=0|1
+      --answer     <ANS>  answer record
+      --authority  <AUTH> auth record
+      --additional <ADD>  add record
+      --output     <FILE> pcap file name
+      --pcapng     Use pcapng file fmt
 
-	fuzz Options:
-	  --type       <FUZZ> type must be hdr-trunc|hdr-opcode|hdr-rcode|hdr-qdcnt|qd-cmploop|qd-badjmp
-	  --server     <ADDR> Server address to send pdu to
-	  --output     <FILE> pcap file name
-	  --pcapng     Use pcapng file fmt
+    fuzz Options:
+      --type       <FUZZ> type must be hdr-trunc|hdr-opcode|hdr-rcode|hdr-qdcnt|qd-cmploop|qd-badjmp
+      --server     <ADDR> Server address to send pdu to
+      --output     <FILE> pcap file name
+      --pcapng     Use pcapng file fmt
 
-	Examples:
-	  dns-gen query --name example.com --type A --server 8.8.8.8
-	  dns-gen query --name example.com --type A --server 8.8.8.8 --flags 'AD:1|CD:1|RD:0'
-	  dns-gen query --name example.com --type MX --server 8.8.8.8 --tcp
-	  dns-gen fuzz --type qd-cmploop --server 127.0.0.1
-	  dns-gen fuzz --type qd-badjmp --output f.pcapng --pcapng
-	  dns-gen response --id 0x1234 --name test.local --answer 192.168.1.1 --output packet.bin
+    Examples:
+      dns-gen query --name example.com --type A --server 8.8.8.8
+      dns-gen query --name example.com --type A --server 8.8.8.8 --flags 'AD:1|CD:1|RD:0'
+      dns-gen query --name example.com --type MX --server 8.8.8.8 --tcp
+      dns-gen fuzz --type qd-cmploop --server 127.0.0.1
+      dns-gen fuzz --type qd-badjmp --output f.pcapng --pcapng
+      dns-gen response --id 0x1234 --name test.local --answer 192.168.1.1 --output packet.bin
 
 
 ### 2.1 **Command: query**
@@ -196,7 +194,6 @@ Sends a DNS query message to a server
 - Uses DNS api to encode|decode query|resp
 - Uses SOCK api to send|recv DNS pdu's
 - Uses LOG api to catch and logs them to stderr
-
 
 **Example usage**
 
@@ -225,13 +222,14 @@ Generates DNS messages and save them to packet capture file.
 
 **Example usage**
 
-	$ ./dns-gen response --id 0x1234 --name test.local --answer 192.168.1.1 --answer 172.168.0.10 --authority example.com --output f.pcapng --pcapng
-	Wrote 79 bytes to f.pcapng
-	$ ./dns-inspect readpcap --file f.pcapng 
-	[QUERY] ID 0x1234 QR:0 OPCODE:QUERY 
-	  Answer: test.local 0 A 192.168.1.1
-	  Answer: test.local 0 A 172.168.0.10
-	  Authority: test.local 0 CNAME example.com
+    $ ./dns-gen response --id 0x1234 --name test.local --answer 192.168.1.1 --answer 172.168.0.10 --authority example.com --output f.pcapng --pcapng
+    Wrote 79 bytes to f.pcapng
+
+    $ ./dns-inspect readpcap --file f.pcapng 
+    [QUERY] ID 0x1234 QR:0 OPCODE:QUERY 
+      Answer: test.local IN A 192.168.1.1
+      Answer: test.local IN A 172.168.0.10
+      Authority: test.local IN CNAME example.com
 
 ### 2.1 **Command: fuzz**
 Generates invalid DNS messages for sending to a server or pcap file.
@@ -244,9 +242,8 @@ Generates invalid DNS messages for sending to a server or pcap file.
 
 **Example usage**
 
-	$ ./dns-gen fuzz --type qd-badjmp --output a.pcap
-	Wrote 18 bytes to a.pcap
-	$ ./dns-inspect readpcap --file a.pcap 
-	[QUERY] ID 0x0000 QR:0 OPCODE:QUERY 
-	[ERROR] ID 0x0000 / PDU Question 1/ Question Name Invalid compression pointer (outside range)
-
+    $ ./dns-gen fuzz --type qd-badjmp --id 0x1234 --output a.pcap
+    Wrote 18 bytes to a.pcap
+	$ ./dns-inspect readpcap --file a.pcap
+	[QUERY] ID 0x1234 QR:0 OPCODE:QUERY 
+	[ERROR] ID 0x1234 / Question Name Invalid compression pointer (outside range)
