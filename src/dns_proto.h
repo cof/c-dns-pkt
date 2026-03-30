@@ -1,7 +1,7 @@
 /*
  * A DNS message codec API
  * -----------------------
- * A codec API for reading and writing DNS messages featuring
+ * A DNS codec API for reading and writing DNS messages featuring
  * - Structure-composable: built for inline embedding, object compostion & memory locality
  * - full rfc1035 codec support for encoding/decoding wire-format DNS messages.
  * - provides a DNS message structure for easy message generation
@@ -14,14 +14,14 @@
  *  // create a query msg
  *  char buf[BUFSIZ];
  *  struct dns_msg msg;
- *  rc = dns_msg_add_qd(&msg, "example.com", DNS_TYPE_A, DNS_CLASS_IN);
+ *  int rc = dns_msg_add_qd(&msg, "example.com", DNS_TYPE_A, DNS_CLASS_IN);
  *  dns_msg_set_id_flags(&msg, 0x1234, DNS_FLAGS_RD);
  *  ssize_t pkt_len = dns_msg_encode(&msg, buf, sizeof(buf));
  *  // buffer now has wire-format dns query
  *
  * DNS message
  * -----------
- * API uses a dns message structure to allow users easily set or access fields.
+ * API uses a dns message structure to allow users easily set or get fields.
  *
  *  struct dns_msg 
  *   - hdr (id, flags, qd_count, an_count, ns_count, ar_count)
@@ -137,6 +137,7 @@ struct dns_question {
     uint16_t qclass;
 };
 
+// not used - delete
 struct dns_record {
     char name[256];
     uint16_t type;
@@ -162,23 +163,26 @@ const char *rcode_tostr(int rcode);
 const char *dns_class_tostr(int ec);
 const char *dns_type_tostr(int ec);
 
+// DNS question entry
 struct dns_quest {
     const char *qname;
     uint16_t qtype;
     uint16_t qclass;
 };
 
-// A record wrapper using union wrappers around RDATA
+// DNS resource record (RR)
+// ------------------------
 struct dns_rec {
     const char *name;
     uint16_t type;
     uint16_t class;
     uint32_t ttl; 
-    uint16_t rdlen;     
+    uint16_t rdlen;
+    // RDATA - union type to set|get values
     union {
         uint8_t a[4];   // 1
-        char *ns_name; // 2
-        char *cname;   // 5
+        char *ns_name;  // 2
+        char *cname;    // 5
         struct {
             char *mname;
             char *rname;
@@ -216,7 +220,7 @@ struct dns_rec {
             uint8_t do_bit;
         } opt; // 41
         const uint8_t *raw;
-    } data;
+    } rdata;
 };
 
 // dns section
@@ -237,26 +241,35 @@ int dns_rec_tostr(struct dns_rec *rec, int sc, char *buf, size_t buf_len);
  *
  *  DNS msg - struct dns_msg 
  *   - hdr (id, flags, qd_count, an_count, ns_count, ar_count)
- *   - qd_recs - question section 
- *   - an_recs - answer section 
- *   - ns_recs - authority section
- *   - ar_recs - additional section
+ *   - qd_recs - Question section 
+ *   - an_recs - Answer section 
+ *   - ns_recs - Authority section
+ *   - ar_recs - Additional section
  *
- * Queston Section:
- *    num_qd - number of dns_quest
- *    qd_recs - array of dns_quest
+ * Question Section:
+ * -----------------
+ *    num_qd    - number of question entires
+ *    qd_recs   - array of dns_quest
  *    dns_quest - struct dns_quest
  *    - qname 
- *    - qtype
+ *    - qtype 
  *    - qclas
  *
- * an|ns|ar Sections - struct dns_sect
- *  num_rec - number of dns_rec
- *  rec     - array of dns_rec
+ * Answser|Authority|Additional Sections:
+ * --------------------------------------
+ *  struct dns_rec
+ *  - num_rec  - number of dns_rec
+ *  - rec[32]  - fixed array of struct dns_rec
  *
- * Record - struct dns_rec
- *  name, type,class ttl, rdlen
- *  Uses a union type to store RDATA
+ * Record - used to set|get resouce record
+ * ---------------------------------------
+ * struct dns_rec
+ *  - name
+ *  - type
+ *  - class
+ *  - ttl, 
+ *  - rdlen
+ *  - a union type to store RDATA
  */
 struct dns_msg {
     struct dns_header hdr;

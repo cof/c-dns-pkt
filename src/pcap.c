@@ -2,6 +2,13 @@
  * PCAP - A packet capture file API 
  * --------------------------------
  * See pcap.h for API description
+ *
+ * API
+ * ---
+ * pcap_open(file_name, mode) : open pcap file 
+ * pcap_close(pf)             : close pcap file
+ * pcap_read(pf, buf, len)    : read packet from file into buffe
+ * pcap_write(pf, buf, len)   : write packet to file
  */
 #include <stdlib.h>
 #include <time.h>
@@ -33,7 +40,6 @@ static inline uint32_t calc_padlen(uint32_t cap_len)
 {
     return  (4 - (cap_len % 4)) % 4;
 }
-
 
 // open pcap file
 static int pcap_open_file(struct pcap_file *file, const char *path_name)
@@ -145,6 +151,20 @@ static int pcap_detect_fmt(struct pcap_file *file)
     return log_error_rf("Not a pcap file");
 }
 
+// get time-stamp for pkt
+static uint64_t pcap_get_ts(struct pcap_file *file)
+{
+    struct timespec ts;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+        log_errno_rf("clock_gettime MONOTTONIC failed");
+        return 0;
+    }
+    uint64_t mono_usec = (uint64_t) ts.tv_sec * 1000000LL + (ts.tv_nsec / 1000);
+
+    return mono_usec + file->epoch_usec;
+}
+
 /*  
  * legacy/classic pcap
  * -------------------
@@ -153,6 +173,8 @@ static int pcap_detect_fmt(struct pcap_file *file)
  *  pcap_write_hdr
  *  pcap_wrte_rec
  */
+
+// pcap fmt - read header
 static int pcap_read_hdr(struct pcap_file *file)
 {
     struct pcap_hdr *hdr = &file->hdr;
@@ -186,7 +208,7 @@ static int pcap_read_hdr(struct pcap_file *file)
     return 0;
 }
 
-// read pcap record
+// pcap fmt - read record
 static ssize_t pcap_read_rec(struct pcap_file *file, void *buf, size_t len)
 {
     struct pcap_rec rec;
@@ -222,6 +244,7 @@ static ssize_t pcap_read_rec(struct pcap_file *file, void *buf, size_t len)
     return rec.incl_len;
 }
 
+// pcap fmt - write hdr
 static int pcap_write_hdr(struct pcap_file *file)
 {
     struct pcap_hdr *hdr = &file->hdr;
@@ -250,20 +273,7 @@ static int pcap_write_hdr(struct pcap_file *file)
     return 0;
 }
 
-// get time-stamp for pkt
-static uint64_t pcap_get_ts(struct pcap_file *file)
-{
-    struct timespec ts;
-
-    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
-        log_errno_rf("clock_gettime MONOTTONIC failed");
-        return 0;
-    }
-    uint64_t mono_usec = (uint64_t) ts.tv_sec * 1000000LL + (ts.tv_nsec / 1000);
-
-    return mono_usec + file->epoch_usec;
-}
-
+// pcap fmt - write record
 static int pcap_write_rec(struct pcap_file *file, void *buf, size_t len)
 {
     uint64_t usec_ts = pcap_get_ts(file);
@@ -304,6 +314,8 @@ static int pcap_write_rec(struct pcap_file *file, void *buf, size_t len)
  * |
  * +- Name Resolution
  */
+
+// pcapng - read section header block
 static int pcap_read_shb(struct pcap_file *file)
 {
     struct pcap_shb_hdr *shb = &file->shb;
@@ -340,7 +352,7 @@ static int pcap_read_shb(struct pcap_file *file)
     return pcap_data_skip(file, "SHB", shb->tot_len - sizeof(*shb));
 }
 
-// write a section header block
+// pcapng - write section header block
 static int pcap_write_shb(struct pcap_file *file)
 {
     struct pcap_shb_hdr *shb = &file->shb;
@@ -373,7 +385,7 @@ static int pcap_write_shb(struct pcap_file *file)
     return 0;
 }
 
-// read interface description block
+// pcapng - read interface description block
 static int pcap_read_idb(struct pcap_file *file)
 {
     struct pcap_idb_hdr *idb = &file->idb;
@@ -406,7 +418,7 @@ static int pcap_read_idb(struct pcap_file *file)
     return pcap_data_skip(file, "IDB", idb->tot_len - sizeof(*idb));
 }
 
-// write interface description block
+// pcapng - write interface description block
 static int pcap_write_idb(struct pcap_file *file)
 {
     struct pcap_idb_hdr *idb = &file->idb;
@@ -435,7 +447,7 @@ static int pcap_write_idb(struct pcap_file *file)
     return 0;
 }
 
-// read simple packet block into buffer - return packet length or zero on error or eof
+// pcapng - read simple packet block into buffer - return pkt_len or zero on error or eof
 static size_t pcap_read_spb(struct pcap_file *file, void *buf, size_t buf_len)
 {
     if (!file->have_idb) {
@@ -484,6 +496,7 @@ static size_t pcap_read_spb(struct pcap_file *file, void *buf, size_t buf_len)
     return cap_len;
 }
 
+// pcapng - write simple packet block from buffer
 static int pcap_write_spb(struct pcap_file *file, void *buf, size_t buf_len)
 {
     // write the header
@@ -524,7 +537,7 @@ static int pcap_write_spb(struct pcap_file *file, void *buf, size_t buf_len)
     return 0;
 }
 
-// read enhanced packet block into buffer - return packet length or zero on error or eof
+// pcapng - read enhanced packet block into buffer - return pkt_len or zero on error or eof
 static size_t pcap_read_epb(struct pcap_file *file, void *buf, size_t buf_len)
 {
     if (!file->have_idb) {
@@ -577,7 +590,7 @@ static size_t pcap_read_epb(struct pcap_file *file, void *buf, size_t buf_len)
     return epb.incl_len;
 }
 
-// write enhanced packet block to file from buffer
+// pcapng - write enhanced packet block to file from buffer
 static int pcap_write_epb(struct pcap_file *file, void *buf, size_t buf_len)
 {
     uint64_t usec_ts = pcap_get_ts(file);
@@ -622,6 +635,7 @@ static int pcap_write_epb(struct pcap_file *file, void *buf, size_t buf_len)
     return 0;
 }
 
+// pcapng - skip block
 static int pcap_skip_block(struct pcap_file *file)
 {
     struct {
@@ -645,6 +659,7 @@ static int pcap_skip_block(struct pcap_file *file)
     return pcap_data_skip(file, "skip-block", blk.tot_len - sizeof(blk) + 4);
 }
 
+// pcapng - peek block type
 static int pcap_peek_block(struct pcap_file *file)
 {
     uint32_t type;
@@ -662,7 +677,7 @@ static int pcap_peek_block(struct pcap_file *file)
     return type;
 }
 
-// read pcapng packet data from either SPB or EPB
+// pcapng - read packet data from either SPB or EPB
 static ssize_t pcap_read_xpb(struct pcap_file *file, void *buf, size_t len)
 {
     int block_type;
@@ -681,7 +696,7 @@ static ssize_t pcap_read_xpb(struct pcap_file *file, void *buf, size_t len)
     return 0;
 }
 
-// write PCAPNG packet data block using either SPB or EPB
+// pcapng - write packet data block using either SPB or EPB
 static int pcap_write_xpb(struct pcap_file *file, void *buf, size_t len)
 {
     if (!file->have_idb) {
@@ -696,6 +711,7 @@ static int pcap_write_xpb(struct pcap_file *file, void *buf, size_t len)
     return rc;
 }
 
+// get base timestamp (epoch_usec)
 static int pcap_setup_ts(struct pcap_file *file)
 {
     struct timespec real_ts, mono_ts;

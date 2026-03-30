@@ -443,19 +443,19 @@ int dns_rec_tostr(struct dns_rec *rec, int sc, char *buf, size_t buf_len)
     // rdata
     switch(rec->type) {
     case DNS_TYPE_A: // IP4 address
-        if (!inet_ntop(AF_INET, rec->data.a, wptr, end - wptr)) {
+        if (!inet_ntop(AF_INET, rec->rdata.a, wptr, end - wptr)) {
             log_errno("inet_ntop failed to decode IPv4 addr");
             break;
         }
         wptr += strlen(wptr);
         break;
     case DNS_TYPE_NS: // Authoritative Name Server
-        rc = snprintf(wptr, end - wptr, "%s", rec->data.ns_name);
+        rc = snprintf(wptr, end - wptr, "%s", rec->rdata.ns_name);
         if (rc < 0) return log_errno_rf("snprintf failed");
         wptr += rc;
         break;
     case DNS_TYPE_CNAME: // Canonical Name (Alias)
-        rc = snprintf(wptr, end - wptr, "%s", rec->data.cname);
+        rc = snprintf(wptr, end - wptr, "%s", rec->rdata.cname);
         if (rc < 0) return log_errno_rf("snprintf failed");
         wptr += rc;
         break;
@@ -463,43 +463,44 @@ int dns_rec_tostr(struct dns_rec *rec, int sc, char *buf, size_t buf_len)
         // name + name + 5 integers
         rc = snprintf(wptr, end - wptr, 
             "MNAME=%s RNAME=%s %u %u %u %u %u",
-            rec->data.soa.mname,
-            rec->data.soa.rname,
-            rec->data.soa.serial,
-            rec->data.soa.refresh,
-            rec->data.soa.retry,
-            rec->data.soa.expire,
-            rec->data.soa.min);
+            rec->rdata.soa.mname,
+            rec->rdata.soa.rname,
+            rec->rdata.soa.serial,
+            rec->rdata.soa.refresh,
+            rec->rdata.soa.retry,
+            rec->rdata.soa.expire,
+            rec->rdata.soa.min);
         if (rc < 0) return log_errno_rf("snprintf failed");
         wptr += rc;
         break;
-    case DNS_TYPE_PTR:  // Domain Name Pointer (Reverse DNS)
-        rc = snprintf(wptr, end - wptr, "%s", rec->data.ptr_name);
+    case DNS_TYPE_PTR: // Domain Name Pointer (Reverse DNS)
+        rc = snprintf(wptr, end - wptr, "%s", rec->rdata.ptr_name);
         if (rc < 0) return log_errno_rf("snprintf failed");
         wptr += rc;
         break;
     case DNS_TYPE_HINFO: // Host Information
         rc = snprintf(wptr, end - wptr, "cpu=%s os=%s", 
-            rec->data.hinfo.cpu_str,
-            rec->data.hinfo.os_str);
+            rec->rdata.hinfo.cpu_str,
+            rec->rdata.hinfo.os_str);
         if (rc < 0) return log_errno_rf("snprintf failed");
         wptr += rc;
         break;
     case DNS_TYPE_MX: // Mail Exchange 
-        rc = snprintf(wptr, end - wptr, "Pref %d MX %s", rec->data.mx.pref, rec->data.mx.name);
+        rc = snprintf(wptr, end - wptr, 
+            "Pref %d MX %s", rec->rdata.mx.pref, rec->rdata.mx.name);
         if (rc < 0) return log_errno_rf("snprintf failed");
         wptr += rc;
         break;
     case DNS_TYPE_TXT:
-        for (int i = 0; i < rec->data.txt.num_str; i++) {
-            char *str = rec->data.txt.str[i];
+        for (int i = 0; i < rec->rdata.txt.num_str; i++) {
+            char *str = rec->rdata.txt.str[i];
             rc = snprintf(wptr, end - wptr, "%s", str);
             if (rc < 0) return log_errno_rf("snprintf failed");
             wptr += rc;
         }
         break;
     case DNS_TYPE_AAAA:// IPv6 Address
-        if (!inet_ntop(AF_INET6, rec->data.aaaa, wptr, end - wptr)) {
+        if (!inet_ntop(AF_INET6, rec->rdata.aaaa, wptr, end - wptr)) {
             log_errno("inet_ntop failed to decode IPv6 addr");
             break;
         }
@@ -508,10 +509,10 @@ int dns_rec_tostr(struct dns_rec *rec, int sc, char *buf, size_t buf_len)
     case DNS_TYPE_SRV:
         rc = snprintf(wptr, end - wptr, 
             "Priority %d Weight %d Port %d SRV %s", 
-            rec->data.srv.prior, 
-            rec->data.srv.weight, 
-            rec->data.srv.port,
-            rec->data.srv.name);
+            rec->rdata.srv.prior, 
+            rec->rdata.srv.weight, 
+            rec->rdata.srv.port,
+            rec->rdata.srv.name);
         if (rc < 0) return log_errno_rf("snprintf failed");
         wptr += rc;
         break;
@@ -523,7 +524,7 @@ int dns_rec_tostr(struct dns_rec *rec, int sc, char *buf, size_t buf_len)
     return wptr - buf;
 }
 
-// append dns section as string to buffer
+// add dns section as string to buffer
 int dns_sect_tostr(struct dns_sect *sect, int sc, char *buf, size_t buf_len)
 {
     size_t nw = 0;
@@ -541,7 +542,7 @@ int dns_sect_tostr(struct dns_sect *sect, int sc, char *buf, size_t buf_len)
     return nw;
 }
 
-// append each dns section as string to buffer
+// add all dns sections as string to buffer
 int dns_msg_sects_tostr(struct dns_msg *msg,  char *buf, size_t len)
 {
     int rc, nw = 0;
@@ -647,7 +648,7 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
             return dns_dec_err(dec, DNS_DEC_RECORD, DNS_DEC_TYPE_A, DNS_ERR_MINLEN);
         }
         if (rec) {
-            memcpy(rec->data.a, rdata, rdlen);
+            memcpy(rec->rdata.a, rdata, rdlen);
         }
         if (dec->need_emsg) {
             if (!inet_ntop(AF_INET, rdata, wptr, end - wptr)) {
@@ -666,8 +667,8 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
         if (rc < 0) return dns_dec_err(dec, DNS_DEC_RECORD, DNS_DEC_TYPE_NS, -rc);
         wptr += rc;
         if (rec) {
-            rec->data.ns_name = msg_store_name(msg, wptr);
-            if (!rec->data.ns_name) {
+            rec->rdata.ns_name = msg_store_name(msg, wptr);
+            if (!rec->rdata.ns_name) {
                 return log_errno_rf("No space to store ns_name");
             }
         }
@@ -678,8 +679,8 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
         if (rc < 0) return dns_dec_err(dec, DNS_DEC_RECORD, DNS_DEC_TYPE_CNAME, -rc);
         wptr += rc;
         if (rec) {
-            rec->data.cname = msg_store_name(msg, wptr);
-            if (!rec->data.cname) {
+            rec->rdata.cname = msg_store_name(msg, wptr);
+            if (!rec->rdata.cname) {
                 return log_errno_rf("No space to store cname");
             }
         }
@@ -701,8 +702,8 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
         ridx += len;
 
         if (rec) {
-            rec->data.soa.mname = msg_store_name(msg, wptr);
-            if (!rec->data.soa.mname) {
+            rec->rdata.soa.mname = msg_store_name(msg, wptr);
+            if (!rec->rdata.soa.mname) {
                 return log_errno_rf("No space to store mname");
             }
         }
@@ -719,8 +720,8 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
         ridx += len;
 
         if (rec) {
-            rec->data.soa.rname = msg_store_name(msg, wptr);
-            if (!rec->data.soa.mname) {
+            rec->rdata.soa.rname = msg_store_name(msg, wptr);
+            if (!rec->rdata.soa.mname) {
                 return log_errno_rf("No space to store rname");
             }
         }
@@ -741,11 +742,11 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
             }
         }
         if (rec) {
-            rec->data.soa.serial = vals[0];
-            rec->data.soa.refresh = vals[1];
-            rec->data.soa.retry = vals[2];
-            rec->data.soa.expire = vals[3];
-            rec->data.soa.min = vals[4];
+            rec->rdata.soa.serial  = vals[0];
+            rec->rdata.soa.refresh = vals[1];
+            rec->rdata.soa.retry   = vals[2];
+            rec->rdata.soa.expire  = vals[3];
+            rec->rdata.soa.min     = vals[4];
         }
         // decoded
         rdata_desc = desc_start;
@@ -758,8 +759,8 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
         wptr += rc;
         // load into rec
         if (rec) {
-            rec->data.ptr_name = msg_store_name(msg, wptr);
-            if (!rec->data.ptr_name) {
+            rec->rdata.ptr_name = msg_store_name(msg, wptr);
+            if (!rec->rdata.ptr_name) {
                 return log_errno_rf("No space to store PTR");
             }
         }
@@ -782,8 +783,8 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
             wptr += rc;
         }
         if (rec) {
-            rec->data.hinfo.cpu_str = msg_store_name_str(msg, (char *) rdata + ridx, len);
-            if (!rec->data.hinfo.cpu_str) {
+            rec->rdata.hinfo.cpu_str = msg_store_name_str(msg, (char *) rdata + ridx, len);
+            if (!rec->rdata.hinfo.cpu_str) {
                 return log_errno_rf("No space to store HINFO:CPU");
             }
         }
@@ -802,8 +803,8 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
             wptr += rc;
         }
         if (rec)  {
-            rec->data.hinfo.os_str = msg_store_name_str(msg, (char *) rdata + ridx, len);
-            if (!rec->data.hinfo.os_str) {
+            rec->rdata.hinfo.os_str = msg_store_name_str(msg, (char *) rdata + ridx, len);
+            if (!rec->rdata.hinfo.os_str) {
                 return log_errno_rf("No space to store HINFO:OS");
             }
         }
@@ -829,9 +830,9 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
         if (rc < 0) return dns_dec_err(dec, DNS_DEC_RECORD, DNS_DEC_TYPE_MX, -rc);
         wptr += rc;
         if (rec) {
-            rec->data.mx.pref = pref;
-            rec->data.mx.name = msg_store_name(msg, wptr);
-            if (!rec->data.mx.name) {
+            rec->rdata.mx.pref = pref;
+            rec->rdata.mx.name = msg_store_name(msg, wptr);
+            if (!rec->rdata.mx.name) {
                 return log_errno_rf("No space to store mx_name");
             }
         }
@@ -852,14 +853,15 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
                 wptr += rc;
             }
             if (rec) {
-                if (rec->data.txt.num_str >= ARR_LEN(rec->data.txt.str)) {
+                // load rdata
+                if (rec->rdata.txt.num_str >= ARR_LEN(rec->rdata.txt.str)) {
                     return log_errno_rf("No space for TXT entry");
                 }
-                rec->data.txt.str[rec->data.txt.num_str] = msg_store_name_str(msg, (char *) rdata + ridx, len);
-                if (!rec->data.txt.str[rec->data.txt.num_str]) {
+                rec->rdata.txt.str[rec->rdata.txt.num_str] = msg_store_name_str(msg, (char *) rdata + ridx, len);
+                if (!rec->rdata.txt.str[rec->rdata.txt.num_str]) {
                     return log_errno_rf("No space to store TXT str");
                 }
-                rec->data.txt.num_str++;
+                rec->rdata.txt.num_str++;
             }
             ridx += len;
         }
@@ -872,7 +874,7 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
             return dns_dec_err(dec, DNS_DEC_RECORD, DNS_DEC_TYPE_AAAA, DNS_ERR_MINLEN);
         }
         if (rec) {
-            memcpy(rec->data.aaaa, rdata, rdlen);
+            memcpy(rec->rdata.aaaa, rdata, rdlen);
         }
         if (dec->need_emsg) {
             if (!inet_ntop(AF_INET6, rdata, wptr, end - wptr)) {
@@ -910,11 +912,11 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
         ridx += len;
 
         if (rec) {
-            rec->data.srv.prior = prior;
-            rec->data.srv.weight = weight;
-            rec->data.srv.port = port;
-            rec->data.srv.name = msg_store_name(msg, wptr);
-            if (!rec->data.srv.name) {
+            rec->rdata.srv.prior = prior;
+            rec->rdata.srv.weight = weight;
+            rec->rdata.srv.port = port;
+            rec->rdata.srv.name = msg_store_name(msg, wptr);
+            if (!rec->rdata.srv.name) {
                 return log_errno_rf("No space to store srv_name");
             }
         }
@@ -939,11 +941,11 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
         uint8_t do_bit   = (ttl_val & 0x8000);
 
         if (rec) {
-            rec->data.opt.udp_size = udp_size;
-            rec->data.opt.ttl_val = udp_size;
-            rec->data.opt.ext_rcode = udp_size;
-            rec->data.opt.edns_ver = udp_size;
-            rec->data.opt.do_bit = do_bit;
+            rec->rdata.opt.udp_size = udp_size;
+            rec->rdata.opt.ttl_val = udp_size;
+            rec->rdata.opt.ext_rcode = udp_size;
+            rec->rdata.opt.edns_ver = udp_size;
+            rec->rdata.opt.do_bit = do_bit;
             rec->class = 0;
             rec->name = msg_store_name(msg, "<Root>");
             if (!rec->name) {
@@ -958,7 +960,7 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
         if (rc < 0) log_errno_rf("snprintf OPT failed");
         wptr += rc;
 
-        // store these values
+        // decode need these to validate msg
         dec->got_edns = 1;
         dec->udp_size = udp_size;
         dec->ext_rcode = ext_rcode;
@@ -984,10 +986,10 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
 
     if (dec->need_emsg) {
         // ensure no hidden fields
-        const char *rec_name = str_def(name, "<null>");
-        const char *sect_str = dec_code_tostr(sect_code);
+        const char *rec_name  = str_def(name, "<null>");
+        const char *sect_str  = dec_code_tostr(sect_code);
         const char *class_str = rr_class ? dns_class_tostr(rr_class) : "";
-        const char *type_str = dns_type_tostr(rr_type);
+        const char *type_str  = dns_type_tostr(rr_type);
         // Record prefix
         rc = dns_wmsg(dec, "  %s: %s %s %s %s\n",
             sect_str, rec_name, class_str, type_str, rdata_desc
@@ -1436,78 +1438,79 @@ static int encode_rec(struct dns_enc *enc, struct dns_rec *rec, int sc)
     // add data
     switch(rec->type) {
     case DNS_TYPE_A: 
-        rc = dns_enc_raw(enc, rec->data.a, sizeof(rec->data.a), sc, rec->type);
+        rc = dns_enc_raw(enc, rec->rdata.a, sizeof(rec->rdata.a), sc, rec->type);
         if (rc) return rc;
         break;
     case DNS_TYPE_NS:
-        rc = dns_enc_name(enc, rec->data.ns_name, sc, rec->type);
+        rc = dns_enc_name(enc, rec->rdata.ns_name, sc, rec->type);
         if (rc) return rc;
         break;
     case DNS_TYPE_CNAME: // Canonical Name (Alias)
-       rc = dns_enc_name(enc, rec->data.cname, sc, rec->type);
+       rc = dns_enc_name(enc, rec->rdata.cname, sc, rec->type);
        if (rc) return rc;
        break;
     case DNS_TYPE_SOA:  // Start of Authority
         // Primary Master Name Server - MNAME
-        rc = dns_enc_name(enc, rec->data.soa.mname, sc, rec->type);
+        rc = dns_enc_name(enc, rec->rdata.soa.mname, sc, rec->type);
         if (rc) return rc;
-        rc = dns_enc_name(enc,rec->data.soa.rname, sc, rec->type);
+        rc = dns_enc_name(enc,rec->rdata.soa.rname, sc, rec->type);
         if (rc) return rc;
         //  encode 5 fields
         len = 5 * sizeof(uint32_t);
         wptr = enc_fld_mkspace(enc, len, sc, rec->type);
         if (!wptr) return -1;
-        wptr = enc_u32(wptr, rec->data.soa.serial);
-        wptr = enc_u32(wptr, rec->data.soa.refresh);
-        wptr = enc_u32(wptr, rec->data.soa.retry);
-        wptr = enc_u32(wptr, rec->data.soa.expire);
-        wptr = enc_u32(wptr, rec->data.soa.min);
+        wptr = enc_u32(wptr, rec->rdata.soa.serial);
+        wptr = enc_u32(wptr, rec->rdata.soa.refresh);
+        wptr = enc_u32(wptr, rec->rdata.soa.retry);
+        wptr = enc_u32(wptr, rec->rdata.soa.expire);
+        wptr = enc_u32(wptr, rec->rdata.soa.min);
         break;
     case DNS_TYPE_PTR: // Domain Name Pointer (Reverse DNS)
-        rc = dns_enc_name(enc, rec->data.ptr_name, sc, rec->type);
+        rc = dns_enc_name(enc, rec->rdata.ptr_name, sc, rec->type);
         if (rc) return rc;
         break;
     case DNS_TYPE_HINFO: { // Host Information
-        size_t len_cpu = safe_strlen(rec->data.hinfo.cpu_str);
-        size_t len_os  = safe_strlen(rec->data.hinfo.os_str);
+        size_t len_cpu = safe_strlen(rec->rdata.hinfo.cpu_str);
+        size_t len_os  = safe_strlen(rec->rdata.hinfo.os_str);
         wptr = enc_fld_mkspace(enc, 2 + len_cpu + len_os, sc, rec->type);
         if (!wptr) return -1;
         *wptr++ = len_cpu;
-        if (len_cpu)  memcpy(wptr, rec->data.hinfo.cpu_str, len_cpu);
+        if (len_cpu)  memcpy(wptr, rec->rdata.hinfo.cpu_str, len_cpu);
         *wptr++ = len_os;
-        if (len_os) memcpy(wptr, rec->data.hinfo.os_str, len_os);
+        if (len_os) memcpy(wptr, rec->rdata.hinfo.os_str, len_os);
         break;
     }
     case DNS_TYPE_MX: // Mail Exchange 
         len = sizeof(uint32_t);
         wptr = enc_fld_mkspace(enc, len, sc, rec->type);
         if (!wptr) return -1;
-        wptr = enc_u16(wptr, rec->data.mx.pref);
-        rc = dns_enc_name(enc, rec->data.mx.name, sc, rec->type);
+        wptr = enc_u16(wptr, rec->rdata.mx.pref);
+        rc = dns_enc_name(enc, rec->rdata.mx.name, sc, rec->type);
         if (rc) return rc;
         break;
     case DNS_TYPE_TXT: {
-        for (int i = 0; i < rec->data.txt.num_str; i++) {
-            char *str = rec->data.txt.str[i];
+        // encode txt array
+        for (int i = 0; i < rec->rdata.txt.num_str; i++) {
+            char *str = rec->rdata.txt.str[i];
             len = safe_strlen(str);
             rc = dns_enc_str(enc, str, len, sc, rec->type);
             if (rc) return rc;
         }
         break;
     }
-    case DNS_TYPE_AAAA:  // IPv6 Address
-        len = sizeof(rec->data.aaaa);
-        rc = dns_enc_raw(enc, rec->data.aaaa, len, sc, rec->type);
+    case DNS_TYPE_AAAA: // IPv6 Address
+        len = sizeof(rec->rdata.aaaa);
+        rc = dns_enc_raw(enc, rec->rdata.aaaa, len, sc, rec->type);
         if (rc) return rc;
         break;
     case DNS_TYPE_SRV: // Service Locator
         len = sizeof(uint16_t) * 3;
         wptr = enc_fld_mkspace(enc, 2, sc, rec->type);
         if (!wptr) return -1;
-        wptr = enc_u16(wptr, rec->data.srv.prior);
-        wptr = enc_u16(wptr, rec->data.srv.weight);
-        wptr = enc_u16(wptr, rec->data.srv.port);
-        rc = dns_enc_name(enc, rec->data.srv.name, sc, rec->type);
+        wptr = enc_u16(wptr, rec->rdata.srv.prior);
+        wptr = enc_u16(wptr, rec->rdata.srv.weight);
+        wptr = enc_u16(wptr, rec->rdata.srv.port);
+        rc = dns_enc_name(enc, rec->rdata.srv.name, sc, rec->type);
         if (rc) return rc;
         break;
     case DNS_TYPE_ANY: // Wildcard match (Query only) 
@@ -1648,85 +1651,85 @@ static int dns_msg_add_sect(struct dns_msg *msg,
     if (!rec->name) {
         return log_errno_rf("No space to store record name for %s", dec_code_tostr(sc));
     }
-    rec->type = src_rec->type;
+    rec->type  = src_rec->type;
     rec->class = src_rec->class;
-    rec->ttl = src_rec->ttl;
+    rec->ttl   = src_rec->ttl;
 
     // store rdata
     switch(rec->type) {
     case DNS_TYPE_A: 
-        memcpy(rec->data.a, src_rec->data.a, 4);
+        memcpy(rec->rdata.a, src_rec->rdata.a, 4);
         break;
     case DNS_TYPE_NS:
-        rec->data.ns_name = msg_store_name(msg, src_rec->data.ns_name);
-        if (!rec->data.ns_name) {
+        rec->rdata.ns_name = msg_store_name(msg, src_rec->rdata.ns_name);
+        if (!rec->rdata.ns_name) {
             return log_errno_rf("No space to store ns_name for %s", dec_code_tostr(sc));
         }
         break;
     case DNS_TYPE_CNAME: // Canonical Name (Alias)
-       rec->data.cname = msg_store_name(msg, src_rec->data.cname);
-       if (!rec->data.cname) {
+       rec->rdata.cname = msg_store_name(msg, src_rec->rdata.cname);
+       if (!rec->rdata.cname) {
           return log_errno_rf("No space to store cname for %s", dec_code_tostr(sc));
        }
        break;
     case DNS_TYPE_SOA: { // Start of Authority
         // Primary Master Name Server - MNAME
-        rec->data.soa.mname = msg_store_name(msg, src_rec->data.soa.mname);
-        if (!rec->data.soa.mname) {
+        rec->rdata.soa.mname = msg_store_name(msg, src_rec->rdata.soa.mname);
+        if (!rec->rdata.soa.mname) {
             return log_errno_rf("No space to store mname");
         }
         // Responsible Person's Email - RNAME
-        rec->data.soa.rname = msg_store_name(msg, src_rec->data.soa.rname);
-        if (!rec->data.soa.mname) {
+        rec->rdata.soa.rname = msg_store_name(msg, src_rec->rdata.soa.rname);
+        if (!rec->rdata.soa.mname) {
             return log_errno_rf("No space to store rname");
         }
-        rec->data.soa.serial   = src_rec->data.soa.serial;
-        rec->data.soa.refresh  = src_rec->data.soa.refresh;
-        rec->data.soa.retry    = src_rec->data.soa.retry;
-        rec->data.soa.expire   = src_rec->data.soa.expire;
-        rec->data.soa.min      = src_rec->data.soa.min;
+        rec->rdata.soa.serial   = src_rec->rdata.soa.serial;
+        rec->rdata.soa.refresh  = src_rec->rdata.soa.refresh;
+        rec->rdata.soa.retry    = src_rec->rdata.soa.retry;
+        rec->rdata.soa.expire   = src_rec->rdata.soa.expire;
+        rec->rdata.soa.min      = src_rec->rdata.soa.min;
         break;
     }
     case DNS_TYPE_PTR: // Domain Name Pointer (Reverse DNS)
-        rec->data.ptr_name = msg_store_name(msg, src_rec->data.ptr_name);
-        if (!rec->data.ptr_name) {
+        rec->rdata.ptr_name = msg_store_name(msg, src_rec->rdata.ptr_name);
+        if (!rec->rdata.ptr_name) {
             return log_errno_rf("No space to store PTR");
         }
         break;
     case DNS_TYPE_HINFO: // Host Information
-        rec->data.hinfo.cpu_str = msg_store_name(msg, src_rec->data.hinfo.cpu_str);
-        rec->data.hinfo.os_str  = msg_store_name(msg, src_rec->data.hinfo.os_str);
+        rec->rdata.hinfo.cpu_str = msg_store_name(msg, src_rec->rdata.hinfo.cpu_str);
+        rec->rdata.hinfo.os_str  = msg_store_name(msg, src_rec->rdata.hinfo.os_str);
         break;
     case DNS_TYPE_MX: // Mail Exchange 
-        rec->data.mx.pref = src_rec->data.mx.pref;
-        rec->data.mx.name = msg_store_name(msg, src_rec->data.mx.name);
-        if (!rec->data.mx.name) {
+        rec->rdata.mx.pref = src_rec->rdata.mx.pref;
+        rec->rdata.mx.name = msg_store_name(msg, src_rec->rdata.mx.name);
+        if (!rec->rdata.mx.name) {
             return log_errno_rf("No space to store mx_name");
         }
         break;
     case DNS_TYPE_TXT: {
-        for (int i = 0; i < src_rec->data.txt.num_str; i++) {
-            char *src_str = src_rec->data.txt.str[i];
-            if (rec->data.txt.num_str >= ARR_LEN(rec->data.txt.str)) {
+        for (int i = 0; i < src_rec->rdata.txt.num_str; i++) {
+            char *src_str = src_rec->rdata.txt.str[i];
+            if (rec->rdata.txt.num_str >= ARR_LEN(rec->rdata.txt.str)) {
                 return log_errno_rf("No space for TXT entry");
             }
-            rec->data.txt.str[rec->data.txt.num_str] = msg_store_name(msg, src_str);
-            if (!rec->data.txt.str[rec->data.txt.num_str]) {
+            rec->rdata.txt.str[rec->rdata.txt.num_str] = msg_store_name(msg, src_str);
+            if (!rec->rdata.txt.str[rec->rdata.txt.num_str]) {
                 return log_errno_rf("No space to store TXT str");
             }
-            rec->data.txt.num_str++;
+            rec->rdata.txt.num_str++;
         }
         break;
     }
     case DNS_TYPE_AAAA:  // IPv6 Address
-        mempcpy(rec->data.aaaa, src_rec->data.aaaa, 16);
+        mempcpy(rec->rdata.aaaa, src_rec->rdata.aaaa, 16);
         break;
     case DNS_TYPE_SRV: // Service Locator
-        rec->data.srv.prior  = src_rec->data.srv.prior;
-        rec->data.srv.weight = src_rec->data.srv.weight;
-        rec->data.srv.port   = src_rec->data.srv.port;
-        rec->data.srv.name   = msg_store_name(msg, src_rec->data.srv.name);
-        if (!rec->data.srv.name) {
+        rec->rdata.srv.prior  = src_rec->rdata.srv.prior;
+        rec->rdata.srv.weight = src_rec->rdata.srv.weight;
+        rec->rdata.srv.port   = src_rec->rdata.srv.port;
+        rec->rdata.srv.name   = msg_store_name(msg, src_rec->rdata.srv.name);
+        if (!rec->rdata.srv.name) {
             return log_errno_rf("No space to store srv_name");
         }
         break;
@@ -1859,17 +1862,17 @@ int dns_rec_load(struct dns_rec *rec, int sc, const char *src)
     if (inet_pton(AF_INET, addr_str, addr_raw) == 1) {
         // IPv4
         rec->type = DNS_TYPE_A;
-        memcpy(rec->data.a, addr_raw, 4);
+        memcpy(rec->rdata.a, addr_raw, 4);
     }
     else if (inet_pton(AF_INET6, addr_str, addr_raw) == 1) {
         // IPv6
         rec->type = DNS_TYPE_AAAA;
-        memcpy(rec->data.aaaa, addr_raw, 16);
+        memcpy(rec->rdata.aaaa, addr_raw, 16);
     }
     else {
-        // regname
+        // reg-name
         rec->type = DNS_TYPE_CNAME;
-        rec->data.cname = addr_str;
+        rec->rdata.cname = addr_str;
     }
     
     // look for remaining attrs (e.g 3600 CH)

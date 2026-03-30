@@ -1,6 +1,6 @@
 /* 
- * RWBUF -  A simple memory buffer API
- * -----------------------------------
+ * RWBUF - a simple memory buffer API
+ * ----------------------------------
  * A simple API for memory buffer management featuring
  * - Structure-composable: built for inline embedding, object compostion & memory locality
  * - Flexible memory: Support dynamic or user supplied static buffers
@@ -103,7 +103,6 @@ static inline size_t rwbuf_used(struct rwbuf *buf)
 {
     return buf->widx - buf->ridx;
 }
-
 
 static inline size_t rwbuf_space(struct rwbuf *buf)
 {

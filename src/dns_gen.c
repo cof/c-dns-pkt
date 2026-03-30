@@ -278,13 +278,13 @@ static int gen_recv_dnspdu(struct dns_gen *gen)
     if (gen->use_tcp) {
         // read 2-byte prefix
         uint16_t dns_len;
-        rc = sock_recv_data(&gen->sock, &dns_len, sizeof(dns_len));
+        rc = sock_read_data(&gen->sock, &dns_len, sizeof(dns_len));
         if (rc != sizeof(dns_len)) return gen_recv_err(rc);
         read_len = ntohs(dns_len);
     }
 
     // read PDU
-    rc = sock_recv_data(&gen->sock, gen->pkt_buf, read_len);
+    rc = sock_read_data(&gen->sock, gen->pkt_buf, read_len);
     if (rc <= 0) return gen_recv_err(rc);
 
     // record pkt len
@@ -305,18 +305,19 @@ static int gen_send_dnspdu(struct dns_gen *gen)
     struct iovec iovs[2];
     int num_iov = 0;
 
+    // add 2-byte length prefix if TCP
     if (gen->use_tcp) {
-        // send the 2 byte dns length prefix
         dns_len = ntohs(gen->pkt_len);
         iov_load(iovs + 0, &dns_len, sizeof(dns_len));
         num_iov++;
     }
 
+    // add the encoded packet
     iov_load(iovs + num_iov, gen->pkt_buf, gen->pkt_len);
     num_iov++;
 
     // send pdu
-    ssize_t rc = sock_send_iovs(&gen->sock, num_iov, iovs);
+    ssize_t rc = sock_write_iovs(&gen->sock, num_iov, iovs);
     if (rc >= 0) rc = 0;
 
     return rc;
