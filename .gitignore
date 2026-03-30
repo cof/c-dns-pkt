@@ -1,9 +1,9 @@
 *.swp
 *.o
-*.pcap
-*.pcapng
-*.bin
-*.ntar
+/*.pcap
+/*.pcapng
+/*.bin
+/*.ntar
 .gdb_history
 tags
 /dns-inspect
