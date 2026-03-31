@@ -19,7 +19,7 @@
 
 void log_msg(const char *msg)
 {
-    fputs(msg, stderr);
+    fprintf(stderr, "%s", msg);
     fflush(stderr);
 }
 

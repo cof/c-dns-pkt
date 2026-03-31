@@ -14,6 +14,8 @@ A DNS packet inspector and DNS message generator.
 
 - **make all** (Default): Compiles dns-inspect and dns-gen
 - **make test** : Compiles and test dns-inspect and dns-gen
+- **make setcap** : make setpcap - add non-root sniffer capabilities to binary
+- **make install** : install to /usr/local/bin (default)
 - **make clean**: Removes all compiled binaries, object files and test logs
 - **make debug**: Comple all code with debug flags
 
@@ -43,9 +45,10 @@ Captures, decodes, and prints DNS traffic from a local network interface in real
 
 **Supported featues**
 
-- Can attach to any interface and decode DNS trafic
+- Can attach to any interface and decode DNS traffic
+- Can save DNS traffic to pcap file
 - Can decode any DNS message (rfc1035) compliant
-- Can read packet capture files legacy/pcapng 
+- Native read/write for both Legacy Pcap and PcapNG formats.
 
 **Design**
 
@@ -63,16 +66,52 @@ Captures, decodes, and prints DNS traffic from a local network interface in real
 
 **Example usage**
 
-    $ sudo ./dns-inspect capture --interface wlp2s0
-    [dns-sniff] DNS active on wlp2s0
-    [QUERY] ID 0x1d43 QR:0 OPCODE:QUERY RD:1 AD:1
-      Question: example.com IN A
-      Additional: <Root>  OPT UDP-size:1232 Ext-RCODE:0 EDNS0:0 DNSEC-OK:0
-    [RESPONSE] ID 0x1d43 QR:1 OPCODE:QUERY RD:1 RA:1 RCODE:NoError
-      Question: example.com IN A
-      Answer: example.com IN A 104.18.26.120
-      Answer: example.com IN A 104.18.27.120
-      Additional: <Root>  OPT UDP-size:512 Ext-RCODE:0 EDNS0:0 DNSEC-OK:0
+	$ make
+	$ sudo make install
+	install -D -m 755 dns-inspect /usr/local/bin/dns-inspect
+	install -D -m 755 dns-gen /usr/local/bin/dns-gen
+	sudo setcap 'cap_net_raw,cap_net_admin=eip' /usr/local/bin/dns-inspect || true
+	$ (sleep 1; host example.com 8.8.8.8 >/dev/null) & dns-inspect capture --interface wlp2s0 --file dns.pcap
+	[1] 45985
+	[dns-sniff] DNS active on wlp2s0
+	[QUERY] ID 0xd491 QR:0 OPCODE:QUERY RD:1
+	  Question: example.com IN A
+	[RESPONSE] ID 0xd491 QR:1 OPCODE:QUERY RD:1 RA:1 RCODE:NoError
+	  Question: example.com IN A
+	  Answer: example.com IN A 104.18.27.120
+	  Answer: example.com IN A 104.18.26.120
+	[QUERY] ID 0xd176 QR:0 OPCODE:QUERY RD:1
+	  Question: example.com IN AAAA
+	[RESPONSE] ID 0xd176 QR:1 OPCODE:QUERY RD:1 RA:1 RCODE:NoError
+	  Question: example.com IN AAAA
+	  Answer: example.com IN AAAA 2606:4700::6812:1b78
+	  Answer: example.com IN AAAA 2606:4700::6812:1a78
+	[QUERY] ID 0x6236 QR:0 OPCODE:QUERY RD:1
+	  Question: example.com IN MX
+	[RESPONSE] ID 0x6236 QR:1 OPCODE:QUERY RD:1 RA:1 RCODE:NoError
+	  Question: example.com IN MX
+	  Answer: example.com IN MX pref 0 
+	^C
+	[dns-sniff] PID:0 shutting down: got signal 2 (Interrupt) from UID:0 PID:0 
+	[1]+  Done  ( sleep 1; host example.com 8.8.8.8 > /dev/null )
+	$ dns-inspect readpcap --file dns.pcap
+	[QUERY] ID 0xd491 QR:0 OPCODE:QUERY RD:1
+	  Question: example.com IN A
+	[RESPONSE] ID 0xd491 QR:1 OPCODE:QUERY RD:1 RA:1 RCODE:NoError
+	  Question: example.com IN A
+	  Answer: example.com IN A 104.18.27.120
+	  Answer: example.com IN A 104.18.26.120
+	[QUERY] ID 0xd176 QR:0 OPCODE:QUERY RD:1
+	  Question: example.com IN AAAA
+	[RESPONSE] ID 0xd176 QR:1 OPCODE:QUERY RD:1 RA:1 RCODE:NoError
+	  Question: example.com IN AAAA
+	  Answer: example.com IN AAAA 2606:4700::6812:1b78
+	  Answer: example.com IN AAAA 2606:4700::6812:1a78
+	[QUERY] ID 0x6236 QR:0 OPCODE:QUERY RD:1
+	  Question: example.com IN MX
+	[RESPONSE] ID 0x6236 QR:1 OPCODE:QUERY RD:1 RA:1 RCODE:NoError
+	  Question: example.com IN MX
+	  Answer: example.com IN MX pref 0 
 
 ### 1.2 **Command: readpcap**
 Reads a packet capture flle, decodes and prints DNS trafic

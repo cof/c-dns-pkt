@@ -9,7 +9,7 @@
 # dirs
 BUILD_DIR = build
 SRC_DIR = src
-BIN_DIR = bin
+INSTALL_DIR = /usr/local/bin
 SCRIPTS_DIR = scripts
 
 DNS_INSPECT = dns-inspect
@@ -101,6 +101,10 @@ $(DNS_GEN): $(DNS_GEN_OBJS) | $(BUILD_DIR)
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
 	$(cmd_CC) $(CFLAGS) -c $< -o $@
 
+# add non-root capabilities
+# -------------------------
+SETCAP_CMD = sudo setcap 'cap_net_raw,cap_net_admin=eip'
+
 # tags file
 # ----------
 .PHONY: tags
@@ -116,13 +120,21 @@ test:  $(DNS_INSPECT) $(DNS_GEN)
 	@echo "Starting tests"
 	$(Q)./test-integration.sh
 
+# setcap
+# -------
+.PHONY: setcap
+setcap : dns-inspect
+	@echo "Setting capabilities on $<"
+	$(Q) $(SETCAP_CMD) $<
+
 # install
 # -------
 .PHONY: install
-install : all
-	@mkdir -p $(BIN_DIR)
-	$(INSTALL) -D -m 755 $(DNS_INSPECT) $(BIN_DIR)/$(DNS_INSPECT)
-	$(INSTALL) -D -m 755 $(DNS_GEN) $(BIN_DIR)/$(DNS_GEN)
+install:
+	@mkdir -p $(INSTALL_DIR)
+	$(INSTALL) -D -m 755 $(DNS_INSPECT) $(INSTALL_DIR)/$(DNS_INSPECT)
+	$(INSTALL) -D -m 755 $(DNS_GEN) $(INSTALL_DIR)/$(DNS_GEN)
+	$(SETCAP_CMD) $(INSTALL_DIR)/$(DNS_INSPECT) || true
 
 # clean
 # ----

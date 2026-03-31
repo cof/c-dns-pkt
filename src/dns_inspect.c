@@ -45,6 +45,7 @@
 #define MODE_READPCAP  2
 #define MODE_TRACEPCAP 3
 
+// Packet size limits
 #define PKT_BUFSIZE 2048
 #define PKT_MAXRECV 10
 #define PKT_MIN_LEN (14 + 20 + 8)
@@ -52,19 +53,19 @@
 #define RCVBUF_SIZE (2 * 1024 * 1024)
 #define MAX_EVENTS 10
 
+// inspect state
 struct dns_sniff {
     // config
     struct simple_sig sig;
     pid_t pid;
-    char *host;
-    char *port;
-    //  state
+    // state
     int mode;
     char *filename;
     struct pcap_file *pcap;
     char dev_name[IFNAMSIZ]; 
     int dev_index;
     int sock_raw;
+    unsigned int use_pcapng : 1; // use pcapng output fmt
     // packet counters
     uint64_t num_recv_pkts;
     uint64_t num_dns_pkts;
@@ -77,7 +78,6 @@ struct dns_sniff {
     struct iovec   vecs[PKT_MAXRECV];
     uint8_t        bufs[PKT_MAXRECV][PKT_BUFSIZE];
 };
-
 
 static int sniff_process_pkt(struct dns_sniff *sniff, uint8_t *pkt_data, uint32_t pkt_len)
 {
@@ -155,6 +155,10 @@ static int sniff_process_msg(struct dns_sniff *sniff, struct mmsghdr *msg)
     uint8_t *pkt_data = msg->msg_hdr.msg_iov->iov_base;
     uint32_t pkt_len = msg->msg_len;
 
+    if (sniff->pcap) {
+        pcap_write(sniff->pcap, pkt_data, pkt_len);
+    }
+
     sniff_process_pkt(sniff, pkt_data, pkt_len);
 
     return 0;
@@ -176,6 +180,7 @@ static int sniff_capture(struct dns_sniff *sniff)
     }
 
     if (sniff->sig.signo) {
+        log_msg("\n");
         log_info("dns-sniff", 
             "PID:%d shutting down: got signal %d (%s) from UID:%d PID:%d ",
             sniff->pid,
@@ -264,9 +269,6 @@ static int run_tracepcap(struct dns_sniff *sniff)
 {
     size_t pkt_len;
 
-    sniff->pcap = pcap_open(sniff->filename, PCAP_READ | PCAP_TRACE);
-    if (!sniff->pcap) return -1;
-
     // select a buffer
     uint8_t *buf = sniff->bufs[0];
     uint32_t buf_len = sizeof(sniff->bufs[0]);
@@ -275,9 +277,6 @@ static int run_tracepcap(struct dns_sniff *sniff)
         // do nothing
     }
 
-    pcap_close(sniff->pcap);
-    sniff->pcap = NULL;
-
     return 0;
 }
 
@@ -285,9 +284,6 @@ static int run_tracepcap(struct dns_sniff *sniff)
 static int run_readpcap(struct dns_sniff *sniff)
 {
     size_t pkt_len;
-
-    sniff->pcap = pcap_open(sniff->filename, PCAP_READ);
-    if (!sniff->pcap) return -1;
 
     // select a buffer
     uint8_t *buf = sniff->bufs[0];
@@ -298,12 +294,8 @@ static int run_readpcap(struct dns_sniff *sniff)
         if (rc) return rc;
     }
 
-     pcap_close(sniff->pcap);
-     sniff->pcap = NULL;
-
-     return 0;
+    return 0;
 }
-
 
 // run capture cmd
 static int run_capture(struct dns_sniff *sniff)
@@ -327,10 +319,12 @@ static int run_unsupp(struct dns_sniff *sniff)
  * cmd-line options
  *
  */
-enum { opt_ifname, opt_fname };
+enum { opt_ifname, opt_fname, opt_pcapng };
 
 static struct cmd_opt capt_opts[] = {
-    { "--interface", "Name of interface to sniff DNS msgs", 0, 1, opt_ifname },
+    { "--interface" ,"Name of interface to sniff DNS msgs", 0, 1, opt_ifname },
+    { "--file"      ,"Name of packet capture file", 0, 1, opt_fname },
+    { "--pcapng"    , "Use pcapng file fmt", 0, 0, opt_pcapng },
     { NULL } 
 };
 
@@ -341,6 +335,8 @@ static struct cmd_opt pcap_opts[] = {
 
 static const char *examples[] = {
     "capture --interface eth0",
+    "capture --interface eth0 --file dns.pcap",
+    "capture --interface eth0 --file dns.pcapng --pcapng",
     "readpcap --file dns.pcap",
     "tracepcap --file dns.pcap",
     NULL
@@ -381,11 +377,23 @@ struct {
    [MODE_TRACEPCAP] = { MODE_TRACEPCAP, run_tracepcap, pcap_opts, "tracepcap","trace a packet capture file"  },
 };
 
+// convert str to mode 
 static int get_mode(const char *str)
 {
     if (!strcmp(str, "capture")) return MODE_CAPTURE;
     if (!strcmp(str, "readpcap")) return MODE_READPCAP;
     if (!strcmp(str, "tracepcap")) return MODE_TRACEPCAP;
+
+    return 0;
+}
+
+static int open_pcap(struct dns_sniff *sniff, int read_only)
+{
+    uint32_t flags = read_only ? PCAP_READ : PCAP_WRITE;
+    if (sniff->use_pcapng) flags |= PCAP_FMTNG;
+
+    sniff->pcap = pcap_open(sniff->filename, flags);
+    if (!sniff->pcap) return -1;
 
     return 0;
 }
@@ -437,6 +445,7 @@ static int sniff_parse_argv(struct dns_sniff *sniff, int argc, char *argv[])
         switch(rc) {
         case opt_ifname: rc = set_interface(sniff, &parser); break;
         case opt_fname:  rc = opt_setstr(&sniff->filename, &parser); break;
+        case opt_pcapng: sniff->use_pcapng = 1; break;
         }
         if (rc < 0) break;
     }
@@ -448,6 +457,9 @@ static int sniff_parse_argv(struct dns_sniff *sniff, int argc, char *argv[])
         if (!*sniff->dev_name) {
             return log_cmd_err(cmd, capt_opts[0].name, "is required");
         }
+        if (sniff->filename) {
+
+        }
         break;
     case MODE_READPCAP:
     case MODE_TRACEPCAP:
@@ -457,10 +469,16 @@ static int sniff_parse_argv(struct dns_sniff *sniff, int argc, char *argv[])
         break;
     }
 
+    if (sniff->filename) {
+        rc = open_pcap(sniff, sniff->mode != MODE_CAPTURE);
+        if (rc) return rc;
+    }
+
     // all done
     return 0;
 }
 
+// set defaults
 static int sniff_init(struct dns_sniff *sniff)
 {
     memset(sniff, 0, sizeof(*sniff));
@@ -476,6 +494,7 @@ static int sniff_init(struct dns_sniff *sniff)
     return 0;
 }
 
+// free state memory
 static void sniff_free(struct dns_sniff *sniff)
 {
     if (sniff->sock_raw != -1) close(sniff->sock_raw);
