@@ -63,6 +63,10 @@
 #define DNS_HDR_LEN      12   // header size
 #define DNS_MAX_UDP     512   // can be overriden by EDNS
 
+// zero-length label
+#define DNS_NULL_STR "."
+#define DNS_ROOT_STR "<Root>"
+
 // Our limits
 #define DNS_MAX_PDUSIZE  2048
 #define DNS_EMSG_MAXLEN  4096
