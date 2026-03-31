@@ -12,8 +12,8 @@ SRC_DIR = src
 INSTALL_DIR = /usr/local/bin
 SCRIPTS_DIR = scripts
 
-DNS_INSPECT = dns-inspect
-DNS_GEN = dns-gen
+INSPECT := dns-inspect
+GEN     := dns-gen
 
 # build tools
 # --------------
@@ -82,22 +82,24 @@ $(BUILD_DIR):
 
 # dns-inspect
 # -----------
-DNS_INSPECT_SRCS = src/util.c src/log.c src/pcap.c src/dns_proto.c src/dns_inspect.c
-DNS_INSPECT_OBJS = $(DNS_INSPECT_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
-DNS_INSPECT_DEPS = $(DNS_INSPECT_OBJS:.o=.d)
--include $(DNS_INSPECT_DEPS)
-$(DNS_INSPECT): $(DNS_INSPECT_OBJS) | $(BUILD_DIR)
-	$(cmd_LD) $(CFLAGS) $(LDFLAGS) $(DNS_INSPECT_OBJS) -o $@
+INSPECT_SRCS = src/util.c src/log.c src/pcap.c src/dns_proto.c src/dns_inspect.c
+INSPECT_OBJS = $(INSPECT_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
+INSPECT_DEPS = $(INSPECT_OBJS:.o=.d)
+-include $(INSPECT_DEPS)
+$(INSPECT): $(INSPECT_OBJS) | $(BUILD_DIR)
+	$(cmd_LD) $(CFLAGS) $(LDFLAGS) $(INSPECT_OBJS) -o $@
 
 # dns-gen
 # -------
-DNS_GEN_SRCS = src/util.c src/log.c src/pcap.c src/rwbuf.c src/sock.c src/dns_proto.c  src/dns_gen.c
-DNS_GEN_OBJS = $(DNS_GEN_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
-DNS_GEN_DEPS = $(DNS_GEN_OBJS:.o=.d)
--include $(DNS_GEN_DEPS)
-$(DNS_GEN): $(DNS_GEN_OBJS) | $(BUILD_DIR)
-	$(cmd_LD) $(CFLAGS) $(LDFLAGS) $(DNS_GEN_OBJS) -o $@
+GEN_SRCS = src/util.c src/log.c src/pcap.c src/rwbuf.c src/sock.c src/dns_proto.c  src/dns_gen.c
+GEN_OBJS = $(GEN_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
+GEN_DEPS = $(GEN_OBJS:.o=.d)
+-include $(GEN_DEPS)
+$(GEN): $(GEN_OBJS) | $(BUILD_DIR)
+	$(cmd_LD) $(CFLAGS) $(LDFLAGS) $(GEN_OBJS) -o $@
 
+# compile rule
+# ------------
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
 	$(cmd_CC) $(CFLAGS) -c $< -o $@
 
@@ -132,9 +134,9 @@ setcap : dns-inspect
 .PHONY: install
 install:
 	@mkdir -p $(INSTALL_DIR)
-	$(INSTALL) -D -m 755 $(DNS_INSPECT) $(INSTALL_DIR)/$(DNS_INSPECT)
-	$(INSTALL) -D -m 755 $(DNS_GEN) $(INSTALL_DIR)/$(DNS_GEN)
-	$(SETCAP_CMD) $(INSTALL_DIR)/$(DNS_INSPECT) || true
+	$(INSTALL) -D -m 755 $(INSPECT) $(INSTALL_DIR)/$(INSPECT)
+	$(INSTALL) -D -m 755 $(GEN) $(INSTALL_DIR)/$(GEN)
+	$(SETCAP_CMD) $(INSTALL_DIR)/$(INSPECT) || true
 
 # clean
 # ----
