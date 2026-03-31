@@ -659,7 +659,7 @@ struct {
 static void gen_usage(const char *cmd)
 {
     const char *prog_name = get_basename(cmd);
-    int w= 10;
+    int w = 12;
 
     printf("Usage: %s [MODE] [OPTIONS]\n\n", prog_name);
 

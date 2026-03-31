@@ -71,47 +71,46 @@ Captures, decodes, and prints DNS traffic from a local network interface in real
 	install -D -m 755 dns-inspect /usr/local/bin/dns-inspect
 	install -D -m 755 dns-gen /usr/local/bin/dns-gen
 	sudo setcap 'cap_net_raw,cap_net_admin=eip' /usr/local/bin/dns-inspect || true
-	$ (sleep 1; host example.com 8.8.8.8 >/dev/null) & dns-inspect capture --interface wlp2s0 --file dns.pcap
-	[1] 45985
+	$ (sleep 1; dig @8.8.8.8 example.com A example.com AAAA +short >/dev/null) & dns-inspect capture --interface wlp2s0 --file dns.pcap  
+	[1] 97975
 	[dns-sniff] DNS active on wlp2s0
-	[QUERY] ID 0xd491 QR:0 OPCODE:QUERY RD:1
+	[QUERY] ID 0x57b4 QR:0 OPCODE:QUERY RD:1 AD:1
 	  Question: example.com IN A
-	[RESPONSE] ID 0xd491 QR:1 OPCODE:QUERY RD:1 RA:1 RCODE:NoError
+	  Additional: <Root> OPT UDP-size:1232 Ext-RCODE:0 EDNS0:0 DNSEC-OK:0
+	[RESPONSE] ID 0x57b4 QR:1 OPCODE:QUERY RD:1 RA:1 RCODE:NoError
 	  Question: example.com IN A
-	  Answer: example.com IN A 104.18.27.120
-	  Answer: example.com IN A 104.18.26.120
-	[QUERY] ID 0xd176 QR:0 OPCODE:QUERY RD:1
+	  Answer: example.com 26 IN A 104.18.27.120
+	  Answer: example.com 26 IN A 104.18.26.120
+	  Additional: <Root> OPT UDP-size:512 Ext-RCODE:0 EDNS0:0 DNSEC-OK:0
+	[QUERY] ID 0xbdd4 QR:0 OPCODE:QUERY RD:1 AD:1
 	  Question: example.com IN AAAA
-	[RESPONSE] ID 0xd176 QR:1 OPCODE:QUERY RD:1 RA:1 RCODE:NoError
+	  Additional: <Root> OPT UDP-size:1232 Ext-RCODE:0 EDNS0:0 DNSEC-OK:0
+	[RESPONSE] ID 0xbdd4 QR:1 OPCODE:QUERY RD:1 RA:1 RCODE:NoError
 	  Question: example.com IN AAAA
-	  Answer: example.com IN AAAA 2606:4700::6812:1b78
-	  Answer: example.com IN AAAA 2606:4700::6812:1a78
-	[QUERY] ID 0x6236 QR:0 OPCODE:QUERY RD:1
-	  Question: example.com IN MX
-	[RESPONSE] ID 0x6236 QR:1 OPCODE:QUERY RD:1 RA:1 RCODE:NoError
-	  Question: example.com IN MX
-	  Answer: example.com IN MX pref 0 
+	  Answer: example.com 286 IN AAAA 2606:4700::6812:1b78
+	  Answer: example.com 286 IN AAAA 2606:4700::6812:1a78
+	  Additional: <Root> OPT UDP-size:512 Ext-RCODE:0 EDNS0:0 DNSEC-OK:0
 	^C
 	[dns-sniff] PID:0 shutting down: got signal 2 (Interrupt) from UID:0 PID:0 
-	[1]+  Done  ( sleep 1; host example.com 8.8.8.8 > /dev/null )
-	$ dns-inspect readpcap --file dns.pcap
-	[QUERY] ID 0xd491 QR:0 OPCODE:QUERY RD:1
+	[1]+  Done                    ( sleep 1; dig @8.8.8.8 example.com A example.com AAAA +short > /dev/null )
+	cyrilof@voyager2: c-dns-pkt$  dns-inspect readpcap --file dns.pcap
+	[QUERY] ID 0x57b4 QR:0 OPCODE:QUERY RD:1 AD:1
 	  Question: example.com IN A
-	[RESPONSE] ID 0xd491 QR:1 OPCODE:QUERY RD:1 RA:1 RCODE:NoError
+	  Additional: <Root> OPT UDP-size:1232 Ext-RCODE:0 EDNS0:0 DNSEC-OK:0
+	[RESPONSE] ID 0x57b4 QR:1 OPCODE:QUERY RD:1 RA:1 RCODE:NoError
 	  Question: example.com IN A
-	  Answer: example.com IN A 104.18.27.120
-	  Answer: example.com IN A 104.18.26.120
-	[QUERY] ID 0xd176 QR:0 OPCODE:QUERY RD:1
+	  Answer: example.com 26 IN A 104.18.27.120
+	  Answer: example.com 26 IN A 104.18.26.120
+	  Additional: <Root> OPT UDP-size:512 Ext-RCODE:0 EDNS0:0 DNSEC-OK:0
+	[QUERY] ID 0xbdd4 QR:0 OPCODE:QUERY RD:1 AD:1
 	  Question: example.com IN AAAA
-	[RESPONSE] ID 0xd176 QR:1 OPCODE:QUERY RD:1 RA:1 RCODE:NoError
+	  Additional: <Root> OPT UDP-size:1232 Ext-RCODE:0 EDNS0:0 DNSEC-OK:0
+	[RESPONSE] ID 0xbdd4 QR:1 OPCODE:QUERY RD:1 RA:1 RCODE:NoError
 	  Question: example.com IN AAAA
-	  Answer: example.com IN AAAA 2606:4700::6812:1b78
-	  Answer: example.com IN AAAA 2606:4700::6812:1a78
-	[QUERY] ID 0x6236 QR:0 OPCODE:QUERY RD:1
-	  Question: example.com IN MX
-	[RESPONSE] ID 0x6236 QR:1 OPCODE:QUERY RD:1 RA:1 RCODE:NoError
-	  Question: example.com IN MX
-	  Answer: example.com IN MX pref 0 
+	  Answer: example.com 286 IN AAAA 2606:4700::6812:1b78
+	  Answer: example.com 286 IN AAAA 2606:4700::6812:1a78
+	  Additional: <Root> OPT UDP-size:512 Ext-RCODE:0 EDNS0:0 DNSEC-OK:0
+
 
 ### 1.2 **Command: readpcap**
 Reads a packet capture flle, decodes and prints DNS trafic
@@ -129,19 +128,23 @@ Reads a packet capture flle, decodes and prints DNS trafic
 
 **Example usage**
 
-    $ ./dns-inspect readpcap --file tests/pcaps/dns.pcap 
-    [QUERY] ID 0xecc2 QR:0 OPCODE:QUERY RD:1 AD:1
-      Question: www.google.com IN A
-      Additional: <Root>  OPT UDP-size:1232 Ext-RCODE:0 EDNS0:0 DNSEC-OK:0
-    [RESPONSE] ID 0xecc2 QR:1 OPCODE:QUERY RD:1 RA:1 RCODE:NoError
-      Question: www.google.com IN A
-      Answer: www.google.com IN A 74.125.193.147
-      Answer: www.google.com IN A 74.125.193.99
-      Answer: www.google.com IN A 74.125.193.103
-      Answer: www.google.com IN A 74.125.193.106
-      Answer: www.google.com IN A 74.125.193.104
-      Answer: www.google.com IN A 74.125.193.105
-      Additional: <Root>  OPT UDP-size:512 Ext-RCODE:0 EDNS0:0 DNSEC-OK:0
+	$ ./dns-inspect readpcap --file tests/pcaps/dns.pcap
+	[QUERY] ID 0x57b4 QR:0 OPCODE:QUERY RD:1 AD:1
+	  Question: example.com IN A
+	  Additional: <Root> OPT UDP-size:1232 Ext-RCODE:0 EDNS0:0 DNSEC-OK:0
+	[RESPONSE] ID 0x57b4 QR:1 OPCODE:QUERY RD:1 RA:1 RCODE:NoError
+	  Question: example.com IN A
+	  Answer: example.com 26 IN A 104.18.27.120
+	  Answer: example.com 26 IN A 104.18.26.120
+	  Additional: <Root> OPT UDP-size:512 Ext-RCODE:0 EDNS0:0 DNSEC-OK:0
+	[QUERY] ID 0xbdd4 QR:0 OPCODE:QUERY RD:1 AD:1
+	  Question: example.com IN AAAA
+	  Additional: <Root> OPT UDP-size:1232 Ext-RCODE:0 EDNS0:0 DNSEC-OK:0
+	[RESPONSE] ID 0xbdd4 QR:1 OPCODE:QUERY RD:1 RA:1 RCODE:NoError
+	  Question: example.com IN AAAA
+	  Answer: example.com 286 IN AAAA 2606:4700::6812:1b78
+	  Answer: example.com 286 IN AAAA 2606:4700::6812:1a78
+	  Additional: <Root> OPT UDP-size:512 Ext-RCODE:0 EDNS0:0 DNSEC-OK:0
 
 ### 1.2 **Command: tracepcap**
 Reads packet records from a capture flle, and prints them
@@ -155,16 +158,19 @@ Reads packet records from a capture flle, and prints them
 **Example usage**
 
     $ ./dns-inspect tracepcap --file tests/pcaps/dns.pcap
-    [PCAP-HDR] magic=0xa1b2c3d4 major=2 minor=4 resv1=0 resv2=0 snap_len=262144 link_type=1
-    [PCAP-REC] rec=1 ts_sec=1772736506 ts_usec=633805 inc_len=97 orig_len=97
-    [PCAP-REC] rec=2 ts_sec=1772736506 ts_usec=653222 inc_len=181 orig_len=181
+    [PCAP-HDR] magic=0xa1b2c3d4 major=2 minor=4 resv1=0 resv2=0 snap_len=65535 link_type=1
+    [PCAP-REC] rec=1 ts_sec=1774957781 ts_usec=340673 inc_len=94 orig_len=94
+    [PCAP-REC] rec=2 ts_sec=1774957781 ts_usec=367179 inc_len=114 orig_len=114
+    [PCAP-REC] rec=3 ts_sec=1774957781 ts_usec=367537 inc_len=94 orig_len=94
+    [PCAP-REC] rec=4 ts_sec=1774957781 ts_usec=396184 inc_len=138 orig_len=138
 
     $ ./dns-inspect tracepcap --file tests/pcaps/dns.pcapng 
-    [PCAPNG] blk=1 name=SHB type=0x0a0d0d0a total_len=28 magic=0x1a2b3c4d ver_major=1 ver_minor=0 sec_len=-1
-    [PCAPNG] blk=2 name=IDB type=0x00000001 total_len=20 link_type=1 rsvd=0 snap_len=262144
-    [PCAPNG] blk=3 name=EPB type=0x00000006 total_len=132 if_id=0 ts_high=412747 ts_low=1640111693 inc_len=97 orig_len=97
-    [PCAPNG] blk=4 name=EPB type=0x00000006 total_len=216 if_id=0 ts_high=412747 ts_low=1640131110 inc_len=181 orig_len=181
-
+    [PCAPNG] blk=1 name=SHB type=0x0a0d0d0a tot_len=28 magic=0x1a2b3c4d ver_major=1 ver_minor=0 sec_len=-1
+    [PCAPNG] blk=2 name=IDB type=0x00000001 tot_len=20 link_type=1 rsvd=0 snap_len=65535
+    [PCAPNG] blk=3 name=EPB type=0x00000006 tot_len=128 if_id=0 ts_high=413264 ts_low=3195997049 inc_len=94 orig_len=94
+    [PCAPNG] blk=4 name=EPB type=0x00000006 tot_len=148 if_id=0 ts_high=413264 ts_low=3196034893 inc_len=114 orig_len=114
+    [PCAPNG] blk=5 name=EPB type=0x00000006 tot_len=128 if_id=0 ts_high=413264 ts_low=3196035241 inc_len=94 orig_len=94
+    [PCAPNG] blk=6 name=EPB type=0x00000006 tot_len=172 if_id=0 ts_high=413264 ts_low=3196068454 inc_len=138 orig_len=138
 
 ## 2. dns-gen
 A DNS message and DNS packet file generator tool.

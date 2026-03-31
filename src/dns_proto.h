@@ -194,7 +194,7 @@ struct dns_rec {
             uint32_t refresh;
             uint32_t retry;
             uint32_t expire;
-            uint32_t min;
+            uint32_t min_ttl;
         } soa; // 6
         char *ptr_name; 
         struct {

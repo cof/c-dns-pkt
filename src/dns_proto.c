@@ -481,7 +481,7 @@ int dns_rec_tostr(struct dns_rec *rec, int sc, char *buf, size_t buf_len)
             rec->rdata.soa.refresh,
             rec->rdata.soa.retry,
             rec->rdata.soa.expire,
-            rec->rdata.soa.min);
+            rec->rdata.soa.min_ttl);
         if (rc < 0) return log_errno_rf("snprintf failed");
         wptr += rc;
         break;
@@ -772,7 +772,7 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
         if (ridx + 20 > rdlen) {
             return dns_dec_err(dec, DNS_DEC_RECORD, DNS_DEC_TYPE_SOA, DNS_ERR_FLDTRUNC);
         }
-        char *names[5] = { "serial","refresh", "retry", "expire", "mininum" };
+        char *names[5] = { "serial","refresh", "retry", "expire", "min_ttl" };
         uint32_t vals[5];
         memcpy(vals, rdata + ridx, 20);
         ridx += 20;
@@ -790,7 +790,7 @@ static int parse_record(struct dns_dec *dec, struct dns_msg *msg,
             rec->rdata.soa.refresh = vals[1];
             rec->rdata.soa.retry   = vals[2];
             rec->rdata.soa.expire  = vals[3];
-            rec->rdata.soa.min     = vals[4];
+            rec->rdata.soa.min_ttl = vals[4];
         }
         // decoded
         rdata_desc = rdata_str;
@@ -1519,7 +1519,7 @@ static int encode_rec(struct dns_enc *enc, struct dns_rec *rec, int sc)
         wptr = enc_u32(wptr, rec->rdata.soa.refresh);
         wptr = enc_u32(wptr, rec->rdata.soa.retry);
         wptr = enc_u32(wptr, rec->rdata.soa.expire);
-        wptr = enc_u32(wptr, rec->rdata.soa.min);
+        wptr = enc_u32(wptr, rec->rdata.soa.min_ttl);
         break;
     case DNS_TYPE_PTR: // Domain Name Pointer (Reverse DNS)
         rc = dns_enc_name(enc, rec->rdata.ptr_name, sc, rec->type);
@@ -1678,7 +1678,7 @@ ssize_t dns_msg_encode(struct dns_msg *msg, uint8_t *buf, size_t len)
     return enc.pkt_len;
 }
 
-// add a dns_rec to a section
+// add a dns_rec to a DNS msg section record
 static int dns_msg_add_sect(struct dns_msg *msg,
     int sc, struct dns_sect *sect, struct dns_rec *src_rec)
 {
@@ -1743,7 +1743,7 @@ static int dns_msg_add_sect(struct dns_msg *msg,
         rec->rdata.soa.refresh  = src_rec->rdata.soa.refresh;
         rec->rdata.soa.retry    = src_rec->rdata.soa.retry;
         rec->rdata.soa.expire   = src_rec->rdata.soa.expire;
-        rec->rdata.soa.min      = src_rec->rdata.soa.min;
+        rec->rdata.soa.min_ttl  = src_rec->rdata.soa.min_ttl;
         break;
     }
     case DNS_TYPE_PTR: // Domain Name Pointer (Reverse DNS)

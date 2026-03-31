@@ -387,9 +387,15 @@ static int get_mode(const char *str)
     return 0;
 }
 
-static int open_pcap(struct dns_sniff *sniff, int read_only)
+static int open_pcap(struct dns_sniff *sniff)
 {
-    uint32_t flags = read_only ? PCAP_READ : PCAP_WRITE;
+    uint32_t flags = 0;
+
+    switch(sniff->mode) {
+    case MODE_CAPTURE: flags |= PCAP_WRITE; break;
+    case MODE_READPCAP: flags |= PCAP_READ; break;
+    case MODE_TRACEPCAP: flags |= PCAP_READ | PCAP_TRACE; break;
+    }
     if (sniff->use_pcapng) flags |= PCAP_FMTNG;
 
     sniff->pcap = pcap_open(sniff->filename, flags);
@@ -402,20 +408,27 @@ static int sniff_usage(char *cmd)
 {
     const char *prog_name = get_basename(cmd);
     FILE *out = stdout;
-    int w= 10;
+    int w = 12;
 
     fprintf(out,"Usage: %s [MODE] [OPTIONS]\n\n", prog_name);
 
-    fprintf(out, "MODE:\n");
+    // list modes
+    printf("MODE:\n");
     for (size_t i = 1; i < ARR_LEN(cmds); i++) {
-        fprintf(out, "  %-*s", w, cmds[i].name);
+        printf("  %-*s %s\n", w, cmds[i].name, cmds[i].desc);
+    }
+    printf("\n");
+
+    // list options
+    for (size_t i = 1; i < ARR_LEN(cmds); i++) {
+        printf("%s Options:\n", cmds[i].name);
         struct cmd_opt *opts = cmds[i].opts;
         for (size_t j = 0; opts[j].name; j++) {
-            fprintf(out, " %s %s", opts[j].name, opts[j].desc);
+            struct cmd_opt *opt = &opts[j];
+            printf("  %-*s %s\n", w, opt->name, opt->desc);
         }
-        fprintf(out, "\n");
+        printf("\n");
     }
-    fprintf(out, "\n");
 
     fprintf(out, "Examples:\n");
     for (int i = 0; examples[i]; i++)  {
@@ -470,7 +483,7 @@ static int sniff_parse_argv(struct dns_sniff *sniff, int argc, char *argv[])
     }
 
     if (sniff->filename) {
-        rc = open_pcap(sniff, sniff->mode != MODE_CAPTURE);
+        rc = open_pcap(sniff);
         if (rc) return rc;
     }
 
