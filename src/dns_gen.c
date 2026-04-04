@@ -787,6 +787,8 @@ static int gen_parse_argv(struct dns_gen *gen, int argc, char *argv[])
     case MODE_QUERY:
         if (!*gen->dns_name) return log_cmd_err(mode, "--name <dns-name>", "is required");
         if (!gen->serv_addr) return log_cmd_err(mode, "--server <ip-addr>", "is required");
+        if (!gen->dns_name) return log_cmd_err(mode, "--name <NAME>", "is required");
+        if (!gen->dns_type) return log_cmd_err(mode, "--type <TYPE>", "is required");
         dns_msg_set_id_flags(&gen->snd_msg, 0, gen->dns_flags);
         rc = dns_msg_add_qd(&gen->snd_msg, gen->dns_name, gen->dns_type, gen->dns_class);
         if (rc) return rc;
