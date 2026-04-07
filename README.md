@@ -25,7 +25,6 @@ A DNS packet inspector and DNS message generator.
 - Both dns-inspect and dns-gen use custom apis
 - DNS api  - DNS message encode/decode in dns_proto.(h|c)
 - PCAP api - PCAP/PCAPNG read/write support in pcap.(h|c)
-- SOCK api - socket layer wrapper in sock.(h|c)
 - LOG api  - info and error logging in log(.h|.c)
 - UTIL api - strings,cmd-line parsing,signal handling
 
@@ -238,12 +237,9 @@ Sends a DNS query message to a server
 
 **Design**
 
-- Uses SOCK api to create UDP|TCP connections to DNS server
-- Uses SOCK api to set send|recv timeouts
 - Uses blocking sockets for simple send|recv state
 - Uses clock_gettime() for timestamps
 - Uses DNS api to encode|decode query|resp
-- Uses SOCK api to send|recv DNS pdu's
 - Uses LOG api to catch and logs them to stderr
 
 **Example usage**
