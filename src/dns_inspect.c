@@ -360,7 +360,6 @@ struct cmd_mode cmds[] = {
    { NULL }
 };
 
-
 static int open_pcap(struct dns_sniff *sniff)
 {
     uint32_t flags = 0;
@@ -406,18 +405,11 @@ static int sniff_parse_argv(struct dns_sniff *sniff, int argc, char *argv[])
     // final checks
     switch(sniff->cmd->mode) {
     case MODE_CAPTURE:
-        if (!*sniff->dev_name) {
-            return log_cmd_err(mode, capt_opts[0].name, "is required");
-        }
-        if (sniff->filename) {
-
-        }
+        if (!*sniff->dev_name) return log_cmd_err(mode, capt_opts[0].name, "is required");
         break;
     case MODE_READPCAP:
     case MODE_TRACEPCAP:
-        if (!sniff->filename) {
-            return log_cmd_err(mode, pcap_opts[0].name, "is required");
-        }
+        if (!sniff->filename) return log_cmd_err(mode, pcap_opts[0].name, "is required");
         break;
     }
 
