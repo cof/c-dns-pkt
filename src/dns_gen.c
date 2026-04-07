@@ -9,7 +9,6 @@
  *
  * Notes
  * -----
- * Uses SOCK api to create a UDP or TCP socket
  * Uses DNS api to encode DNS messages
  * Uses PCAP api to generate pcap files
  */
@@ -401,10 +400,8 @@ static int gen_set_query(struct dns_gen *gen)
 
     // next tid
     gen->tid_sent = rand() % 65536;
-
-    dns_msg_reset(msg);
-    dns_set_id_flags(hdr, gen->tid_sent, gen->dns_flags);
-    int rc = dns_msg_add_qd(msg, gen->dns_name, strlen(gen->dns_name), gen->dns_type, gen->dns_class);
+    dns_msg_init(msg, gen->tid_sent, gen->dns_flags);
+    int rc = dns_add_qd(msg, gen->dns_name, gen->dns_type, gen->dns_class);
     if (rc) return rc;
 
     // tell user
@@ -494,7 +491,6 @@ static int run_resp(struct dns_gen *gen)
 {
     int rc; 
 
-    dns_set_id_flags(&gen->msg.hdr, gen->id, gen->dns_flags);
     if ((rc = pcap_start_pkt(gen))) return rc;
     if ((rc = gen_enc_dnsmsg(gen))) return rc;
     if ((rc = pcap_end_pkt(gen))) return rc;
@@ -756,7 +752,7 @@ static int add_sect(struct dns_gen *gen, int sc, struct cmd_argv *parse)
     if (!rr.ttl)   rr.ttl = gen->ttl;
 
     if ((rc = dns_rr_load(&rr, sc, parse->value))) return rc;
-    if ((rc = dns_msg_add_rec(&gen->msg, sc,  &rr))) return rc;
+    if ((rc = dns_add_rr(&gen->msg, sc,  &rr))) return rc;
 
     return 0;
 }
