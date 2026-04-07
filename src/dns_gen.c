@@ -106,6 +106,7 @@ static int get_dns_flag(struct str_slice str)
     char tmp[10];
     size_t len = min(sizeof(tmp) - 1, str.len);
     memcpy(tmp, str.ptr, len);
+    tmp[len] = '\0';
     return dns_get_flag(tmp);
 }
 
@@ -714,7 +715,7 @@ static int set_dns_flags(struct dns_gen *gen, struct cmd_argv *parse)
 
     while (flags_str.len) {
         // get name
-        struct str_slice flag = slice_split(&flags_str, '|');
+        struct str_slice flag = slice_consume(&flags_str, '|');
         slice_trim(&flag);
         // get value
         struct str_slice onoff = slice_rsplit(&flag, ':');
@@ -826,7 +827,6 @@ static int gen_parse_argv(struct dns_gen *gen, int argc, char *argv[])
         if (!gen->server)   return log_cmd_err(mode, "--server <ip-addr>", "is required");
         if (!gen->dns_name) return log_cmd_err(mode, "--name <NAME>", "is required");
         if (!gen->dns_type) return log_cmd_err(mode, "--type <TYPE>", "is required");
-        if (rc) return rc;
         break;
     case MODE_RESP:
         if (!*gen->dns_name) return log_cmd_err(mode, resp_opts[1].name, "is required");
