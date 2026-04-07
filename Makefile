@@ -49,6 +49,7 @@ DEBUG_CFLAGS  := -ggdb3 -fno-omit-frame-pointer -DDEBUG=1
 # release build
 # -----------
 CFLAGS  = -O2 $(COMMON_CFLAGS) $(EXTRA_CFLAGS)
+LDFLAGS = --static
 
 MAKEFLAGS += --no-print-directory
 
@@ -91,7 +92,7 @@ $(INSPECT): $(INSPECT_OBJS) | $(BUILD_DIR)
 
 # dns-gen
 # -------
-GEN_SRCS = src/util.c src/log.c src/pcap.c src/rwbuf.c src/sock.c src/dns_proto.c  src/dns_gen.c
+GEN_SRCS = src/util.c src/log.c src/pcap.c src/dns_proto.c  src/dns_gen.c
 GEN_OBJS = $(GEN_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 GEN_DEPS = $(GEN_OBJS:.o=.d)
 -include $(GEN_DEPS)

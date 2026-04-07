@@ -16,77 +16,49 @@
 #include "util.h"
 #include "log.h"
 
+int log_level = 0;
+static FILE *log_fd = NULL;
 
-void log_msg(const char *msg)
+// set logger
+void log_init(FILE *dst, int level)
 {
-    fprintf(stderr, "%s", msg);
-    fflush(stderr);
+    if (!dst) dst = stderr;
+    log_fd = dst;
+    log_level = level;
+
+    // enable wait for a '\n' before printing
+    setvbuf(log_fd, NULL, _IOLBF, BUFSIZ);
 }
 
-void log_info(const char *what, const char *fmt, ...)
+void _log_msg(const char *file, int line, const char *func, 
+    int ec, int what, const char *who, const char *fmt, ...)
 {
+    if (!who) {
+        switch(what) {
+        case LOG_INFO:  who = "INFO";  break;
+        case LOG_DEBUG: who = "DEBUG"; break;
+        case LOG_ERROR: who = "ERROR"; break;
+        case LOG_FATAL: who = "FATAL"; break;
+        }
+    }
+
+    if (who) fprintf(log_fd, "[%s] ", who);
+    if (what && file && func) fprintf(log_fd, "%s:%d (%s): ", file, line, func);
+    if (!what && file && func) fprintf(log_fd, "%s: %s: ", file, func);
+
     va_list args;
-
-    fprintf(stderr, "[%s] ", what);
-
     va_start(args, fmt);
-    vfprintf(stderr, fmt, args);
+    vfprintf(log_fd, fmt, args);
     va_end(args);
 
-    fprintf(stderr, "\n");
-}
+    // add errno
+    if (ec) fprintf(log_fd, ": %s (errno: %d)", strerror(ec), ec);
 
-int log_cmd_err(const char *cmd, const char *opt, const char *fmt, ...)
-{
-    va_list args;  
+    // flush
+    fputc('\n', log_fd);
 
-    fprintf(stderr, "[ERROR] %s: %s: ", cmd, opt);
-
-    va_start(args, fmt);
-    vfprintf(stderr, fmt, args);
-    va_end(args);
-
-    fprintf(stderr, "\n");
-    
-    return -1;
-}
-
-void _log_error(const char *file, int line, const char *func, int ec, const char *fmt, ...)
-{
-    va_list args;  
-
-    fprintf(stderr, "[ERROR] %s:%d (%s): ", file, line, func);
-
-    va_start(args, fmt);
-    vfprintf(stderr, fmt, args);
-    va_end(args);
-
-    if (ec != 0) {
-        // have an errno
-        fprintf(stderr, ": %s (errno: %d)", strerror(ec), ec);
-    }
-
-    fprintf(stderr, "\n");
-}
-
-void _fatal_error(const char *file, int line, const char *func, int ec, const char *fmt, ...)
-{
-    va_list args;  
-
-    fprintf(stderr, "[FATAL] %s:%d (%s): ", file, line, func);
-
-    va_start(args, fmt);
-    vfprintf(stderr, fmt, args);
-    va_end(args);
-
-    if (ec != 0) {
-        fprintf(stderr, ": %s (errno: %d)", strerror(ec), ec);
-    }
-
-    fprintf(stderr, "\n");
-    fflush(stderr);
-
-    exit(1);
+    // fatal-check
+    if (what == LOG_FATAL) exit(1);
 }
 
 // log_info cmd-line - useful for debugging pod exec issues

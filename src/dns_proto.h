@@ -34,9 +34,10 @@
  *
  * Basic API
  * ----------
- * validate_dns_packet(pkt_buf, pkt_len, emsg) : check pkt valid and print desc to esmg
+ * dns_msg_reset(msg) : reset fields to 0
  * dns_msg_decode(msg, buf, len) : decode buffer into a DNS message
  * dns_msg_encode(msg, buf, len) : encode DNS message into buffer
+ * validate_dns_packet(pkt_buf, pkt_len, emsg) : check pkt valid and print desc to esmg
  *
  * Helpers
  * --------
@@ -46,7 +47,7 @@
  * dns_msg_get_rec(msg) : get first rec if available
  *
  * dns_msg_cnt_rec(mg) - count total records in msg
- * dns_rec_load(rec, sc, str) - load str repr of rec into record
+ * dns_rr_load(rr, sc, str) - load text form of rr into rr
  *
  * References
  * ----------
@@ -125,34 +126,17 @@
 #define DNS_CLASS_HS    4    // Hesiod
 #define DNS_CLASS_ANY   255  // Wildcard match (Query only)
 
-// Required structures
-struct dns_header {
-    uint16_t id;       // Transaction ID
-    uint16_t flags;    // Flags (QR, Opcode, AA, TC, RD, RA, Z, RCODE)
+struct dns_hdr {
+    uint16_t id;        // Transaction ID
+    uint16_t flags;     // Flags (QR, Opcode, AA, TC, RD, RA, Z, RCODE)
     uint16_t qd_count;  // Number of Questions
-    uint16_t an_count;// Number of Answer RRs
-    uint16_t ns_count;// Number of Authority RRs
-    uint16_t ar_count;// Number of Additional RRs
-};
-
-struct dns_question {
-    char qname[256];
-    uint16_t qtype;
-    uint16_t qclass;
-};
-
-// not used - delete
-struct dns_record {
-    char name[256];
-    uint16_t type;
-    uint16_t class;
-    uint32_t ttl;
-    uint16_t rdlength;
-    uint8_t rdata[512];
+    uint16_t an_count;  // Number of Answer RRs
+    uint16_t ns_count;  // Number of Authority RRs
+    uint16_t ar_count;  // Number of Additional RRs
 };
 
 // Required functions
-int parse_dns_header(const uint8_t *buf, size_t len, struct dns_header *hdr);
+int parse_dns_header(const uint8_t *buf, size_t len, struct dns_hdr *hdr);
 int parse_dns_name(
     const uint8_t *pkt, size_t pkt_len, 
     size_t offset, char *out, size_t out_len, 
@@ -164,6 +148,7 @@ int validate_dns_packet(const uint8_t *pkt, size_t len, char *error_msg);
   A DNS message api
  */
 const char *rcode_tostr(int rcode);
+const char *opcode_tostr(int opcode);
 const char *dns_class_tostr(int ec);
 const char *dns_type_tostr(int ec);
 
@@ -176,7 +161,7 @@ struct dns_quest {
 
 // DNS resource record (RR)
 // ------------------------
-struct dns_rec {
+struct dns_rr {
     const char *name;
     uint16_t type;
     uint16_t class;
@@ -229,14 +214,14 @@ struct dns_rec {
 
 // dns section
 struct dns_sect {
-    size_t num_rec;
-    struct dns_rec rec[DNS_MAX_REC];
+    size_t rr_count; // num records in section
+    struct dns_rr rrs[DNS_MAX_REC];
 };
 
 // convert dns msg section to readable string
 int dns_quest_tostr(struct dns_quest *quest, char *buf, size_t buf_len);
 int dns_sect_tostr(struct dns_sect *sect, int sc, char *buf, size_t buf_len);
-int dns_rec_tostr(struct dns_rec *rec, int sc, char *buf, size_t buf_len);
+int dns_rr_tostr(struct dns_rr *rec, int sc, char *buf, size_t buf_len);
 
 /*
  * DNS msg
@@ -261,13 +246,13 @@ int dns_rec_tostr(struct dns_rec *rec, int sc, char *buf, size_t buf_len);
  *
  * Answser|Authority|Additional Sections:
  * --------------------------------------
- *  struct dns_rec
- *  - num_rec  - number of dns_rec
- *  - rec[32]  - fixed array of struct dns_rec
+ *  struct dns_rr
+ *  - num_rec  - number of dns_rr
+ *  - rec[32]  - fixed array of struct dns_rr
  *
- * Record - used to set|get resouce record
- * ---------------------------------------
- * struct dns_rec
+ * dns_rr - used to set|get resource record
+ * ----------------------------------------
+ * struct dns_rr
  *  - name
  *  - type
  *  - class
@@ -276,7 +261,7 @@ int dns_rec_tostr(struct dns_rec *rec, int sc, char *buf, size_t buf_len);
  *  - a union type to store RDATA
  */
 struct dns_msg {
-    struct dns_header hdr;
+    struct dns_hdr hdr;
     char names[DNS_MAX_PDUSIZE];
     int names_len;
     size_t num_qd;
@@ -286,6 +271,26 @@ struct dns_msg {
     struct dns_sect ar_recs;
 };
 
+static inline struct dns_msg *dns_msg_reset(struct dns_msg *msg)
+{
+    // reset hdr
+    msg->hdr.id = 0;
+    msg->hdr.flags = 0;
+    msg->hdr.qd_count = 0;
+    msg->hdr.an_count = 0;
+    msg->hdr.ns_count = 0;
+    msg->hdr.ar_count = 0;
+
+    // reset sections
+    msg->names_len = 0;
+    msg->num_qd = 0;
+    msg->an_recs.rr_count = 0;
+    msg->ns_recs.rr_count = 0;
+    msg->ar_recs.rr_count = 0;
+
+    return msg;
+}
+
 // decode/encode a DNS message
 int dns_msg_decode(struct dns_msg *msg, uint8_t *buf, size_t len);
 ssize_t dns_msg_encode(struct dns_msg *msg, uint8_t *buf, size_t len);
@@ -293,10 +298,10 @@ ssize_t dns_msg_encode(struct dns_msg *msg, uint8_t *buf, size_t len);
 // helper functions
 int dns_msg_sects_tostr(struct dns_msg *msg,  char *buf, size_t len);
 
-static inline void dns_msg_set_id_flags(struct dns_msg *msg, uint16_t id, uint16_t flags)
+static inline void dns_set_id_flags(struct dns_hdr *hdr, uint16_t id, uint16_t flags)
 {
-    msg->hdr.id = id;
-    msg->hdr.flags = flags;
+    hdr->id = id;
+    hdr->flags = flags;
 }
 
 // DNS messaage sections
@@ -305,22 +310,25 @@ static inline void dns_msg_set_id_flags(struct dns_msg *msg, uint16_t id, uint16
 #define DNS_MSG_NS 3
 #define DNS_MSG_AR 4
 
-int dns_msg_add_qd(struct dns_msg *msg, const char *name, uint16_t qtype,  uint16_t qclass);
-int dns_msg_add_rec(struct dns_msg *msg, int sc, struct dns_rec *rec);
+int dns_msg_add_qd(struct dns_msg *msg, 
+    const char *name, size_t nlen,
+    uint16_t qtype,  uint16_t qclass);
+
+int dns_msg_add_rec(struct dns_msg *msg, int sc, struct dns_rr *rec);
 
 static inline int dns_msg_num_an(struct dns_msg *msg)
 {
-    return msg->an_recs.num_rec;
+    return msg->an_recs.rr_count;
 }
 
 static inline int dns_msg_num_ns(struct dns_msg *msg)
 {
-    return msg->ns_recs.num_rec;
+    return msg->ns_recs.rr_count;
 }
 
 static inline int dns_msg_num_ar(struct dns_msg *msg)
 {
-    return msg->ar_recs.num_rec;
+    return msg->ar_recs.rr_count;
 }
 
 static inline int dns_msg_cnt_rec(struct dns_msg *msg)
@@ -334,11 +342,10 @@ static inline int dns_msg_cnt_rec(struct dns_msg *msg)
     return nrec;
 }
 
-struct dns_rec *dns_msg_get_rec(struct dns_msg *msg);
-
+struct dns_rr *dns_msg_get_rec(struct dns_msg *msg);
 int dns_get_type(const char *str);
 int dns_get_class(const char *str);
 int dns_get_flag(const char *str);
-int dns_rec_load(struct dns_rec *rec, int sc, const char *str);
+int dns_rr_load(struct dns_rr *rr, int sc, const char *str);
 
 #endif

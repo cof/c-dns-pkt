@@ -21,16 +21,13 @@
 #define PCAP_FAIL -1
 #define PCAP_EOF -2
 
-#define pcap_log(what, fmt, ...) \
-    log_info(what, fmt, ##__VA_ARGS__)
-
 // save errno, log errno, return FAIL
 #define pcap_log_errno_rf(file, fmt, ...) ({ \
     if (!file->sys_err) { \
         file->sys_err = 1; \
         file->sys_errno = errno; \
     } \
-    _log_error(__FILE__, __LINE__, __func__, errno, fmt, ##__VA_ARGS__); \
+    _log_msg(__FILE__, __LINE__, __func__, errno, LOG_ERROR, 0, fmt, ##__VA_ARGS__); \
     UTIL_FAIL; \
 })
 
@@ -197,7 +194,7 @@ static int pcap_read_hdr(struct pcap_file *file)
     }
     
     if (file->trace_rec) {
-        pcap_log("PCAP-HDR",
+        log_info("PCAP-HDR",
             "magic=0x%08x major=%d minor=%d resv1=%u resv2=%u snap_len=%u link_type=%u", 
             hdr->magic_num,
             hdr->major_ver, hdr->minor_ver, 
@@ -225,7 +222,7 @@ static ssize_t pcap_read_rec(struct pcap_file *file, void *buf, size_t len)
     }
 
     if (file->trace_rec) {
-        pcap_log("PCAP-REC",
+        log_info("PCAP-REC",
             "rec=%lu ts_sec=%u ts_usec=%u inc_len=%u orig_len=%u",
             file->rec_cnt, 
             rec.ts_sec, rec.ts_usec, rec.incl_len, rec.orig_len);
@@ -262,7 +259,7 @@ static int pcap_write_hdr(struct pcap_file *file)
     if (rc) return rc;
     
     if (file->trace_rec) {
-        pcap_log("PCAP-HDR",
+        log_info("PCAP-HDR",
             "magic=0x%08x major=%d minor=%d resv1=%u resv2=%u snap_len=%u link_type=%u", 
             hdr->magic_num,
             hdr->major_ver, hdr->minor_ver, 
@@ -289,7 +286,7 @@ static int pcap_write_rec(struct pcap_file *file, void *buf, size_t len)
     if (rc) return rc;
 
     if (file->trace_rec) {
-        pcap_log("PCAP-REC",
+        log_info("PCAP-REC",
             "rec=%lu ts_sec=%u ts_usec=%u inc_len=%u orig_len=%u",
             file->rec_cnt, 
             rec.ts_sec, rec.ts_usec, rec.incl_len, rec.orig_len);
@@ -338,7 +335,7 @@ static int pcap_read_shb(struct pcap_file *file)
     }
 
     if (file->trace_rec) {
-        pcap_log("PCAPNG",
+        log_info("PCAPNG",
             "blk=%lu name=%s type=0x%08x tot_len=%u magic=0x%08x ver_major=%d ver_minor=%d sec_len=%ld", 
             file->rec_cnt, "SHB", shb->type, shb->tot_len, 
             shb->bom, shb->ver_major, shb->ver_minor, (signed long) shb->sec_len);
@@ -374,7 +371,7 @@ static int pcap_write_shb(struct pcap_file *file)
     file->have_idb = 0;
 
     if (file->trace_rec) {
-        pcap_log("PCAPNG",
+        log_info("PCAPNG",
             "blk=%lu name=%s type=0x%08x tot_len=%u"
             " magic=0x%08x ver_major=%d ver_minor=%d sec_len=%ld", 
             file->rec_cnt, "SHB", shb->type, shb->tot_len, 
@@ -404,7 +401,7 @@ static int pcap_read_idb(struct pcap_file *file)
     }
 
     if (file->trace_rec) {
-        pcap_log("PCAPNG",
+        log_info("PCAPNG",
             "blk=%lu name=%s type=0x%08x tot_len=%u link_type=%d rsvd=%d snap_len=%u", 
             file->rec_cnt, "IDB", idb->type, idb->tot_len, 
             idb->link_type, idb->reserved, idb->snap_len);
@@ -438,7 +435,7 @@ static int pcap_write_idb(struct pcap_file *file)
     file->have_idb = 1;
 
     if (file->trace_rec) {
-        pcap_log("PCAPNG",
+        log_info("PCAPNG",
             "blk=%lu name=%s type=0x%08x tot_len=%u link_type=%d rsvd=%d snap_len=%u", 
             file->rec_cnt, "IDB", idb->type, idb->tot_len, 
             idb->link_type, idb->reserved, idb->snap_len);
@@ -466,7 +463,7 @@ static size_t pcap_read_spb(struct pcap_file *file, void *buf, size_t buf_len)
     }
 
     if (file->trace_rec) {
-        pcap_log("PCAPNG",
+        log_info("PCAPNG",
             "blk=%lu name=%s type=0x%08x len=%u"
             " orig_len=%u incl_len=%u",
             file->rec_cnt, "SPB", spb.type, spb.tot_len, 
@@ -512,7 +509,7 @@ static int pcap_write_spb(struct pcap_file *file, void *buf, size_t buf_len)
     if (rc) return rc;
 
     if (file->trace_rec) {
-        pcap_log("PCAPNG",
+        log_info("PCAPNG",
             "blk=%lu name=%s type=0x%08x len=%u"
             " orig_len=%u incl_len=%u",
             file->rec_cnt, "SPB", spb.type, spb.tot_len, 
@@ -560,7 +557,7 @@ static size_t pcap_read_epb(struct pcap_file *file, void *buf, size_t buf_len)
     }
 
     if (file->trace_rec) {
-        pcap_log("PCAPNG",
+        log_info("PCAPNG",
             "blk=%lu name=%s type=0x%08x tot_len=%u"
             " if_id=%d ts_high=%d ts_low=%u inc_len=%u orig_len=%u",
             file->rec_cnt, "EPB", epb.type, epb.tot_len, 
@@ -610,7 +607,7 @@ static int pcap_write_epb(struct pcap_file *file, void *buf, size_t buf_len)
     if (rc) return rc;
 
     if (file->trace_rec) {
-        pcap_log("PCAPNG",
+        log_info("PCAPNG",
             "blk=%lu name=%s type=0x%08x tot_len=%u"
             " if_id=%d ts_high=%d ts_low=%u inc_len=%u orig_len=%u",
             file->rec_cnt, "EPB", epb.type, epb.tot_len, 

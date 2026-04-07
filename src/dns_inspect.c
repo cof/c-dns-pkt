@@ -83,11 +83,8 @@ static int sniff_process_pkt(struct dns_sniff *sniff, uint8_t *pkt_data, uint32_
 {
     sniff->num_recv_pkts++;
 
-    if (pkt_len < PKT_MIN_LEN) {
-        // too small (eth+IP+UDP)
-        return 0;
-    }
-
+    // too small (eth+IP+UDP)
+    if (pkt_len < PKT_MIN_LEN) return 0;
     int offset = 0;
 
     // Etherner layer
@@ -144,7 +141,7 @@ static int sniff_process_pkt(struct dns_sniff *sniff, uint8_t *pkt_data, uint32_
     else {
         sniff->num_dns_fail++;
     }
-    log_msg(sniff->dns_emsg);
+    fputs(sniff->dns_emsg, stderr);
 
     // all done
     return rc;
@@ -475,6 +472,7 @@ int main(int argc, char *argv[])
     struct dns_sniff *sniff = NULL;
     int ec = 0;
 
+    log_init(NULL, LOG_INFO);
     if (!(sniff = sniff_create())) { ec = 1; goto done; }
     if (sniff_init(sniff)) { ec = 2; goto done; }
     if (sniff_parse_argv(sniff, argc, argv)) { ec = 3;  goto done; }
