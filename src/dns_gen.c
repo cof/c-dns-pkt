@@ -711,7 +711,7 @@ static int set_dns_flags(struct dns_gen *gen, struct cmd_argv *parse)
 
     while (flags_str.len) {
         // get name
-        struct str_slice flag = slice_consume(&flags_str, '|');
+        struct str_slice flag = slice_splitch(&flags_str, '|');
         slice_trim(&flag);
         // get value
         struct str_slice onoff = slice_rsplit(&flag, ':');
