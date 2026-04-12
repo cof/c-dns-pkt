@@ -88,14 +88,14 @@ static int sniff_process_pkt(struct dns_sniff *sniff, uint8_t *pkt_data, uint32_
     int offset = 0;
 
     // Etherner layer
-    struct ethhdr *eth = make_ptr(pkt_data, offset);
+    struct ethhdr *eth = mkptr(pkt_data, offset);
     uint16_t type = ntohs(eth->h_proto);
     offset += sizeof(*eth);
 
     // VLAN tag ?
     if (type ==  0x8100) {
         // skip vlan tags
-        uint16_t *iptr = make_ptr(pkt_data, 2);
+        uint16_t *iptr = mkptr(pkt_data, 2);
         type = ntohs(*iptr);
         offset += 4;
     }   
@@ -104,13 +104,13 @@ static int sniff_process_pkt(struct dns_sniff *sniff, uint8_t *pkt_data, uint32_
     int hdr_len = 0;
     int proto = 0;
     if (type ==  ETH_P_IP) {
-        struct iphdr *ip = make_ptr(pkt_data,offset);
+        struct iphdr *ip = mkptr(pkt_data, offset);
         if (ip->version != 4) return 0;
         hdr_len = ip->ihl * 4;
         proto = ip->protocol;
     }
     else if (type == ETH_P_IPV6) {
-        struct ipv6hdr *ip6 = make_ptr(pkt_data, offset);
+        struct ipv6hdr *ip6 = mkptr(pkt_data, offset);
         if (ip6->version != 6) return 0;
         proto = ip6->nexthdr;
         hdr_len = 40;
@@ -123,7 +123,7 @@ static int sniff_process_pkt(struct dns_sniff *sniff, uint8_t *pkt_data, uint32_
     if (proto != IPPROTO_UDP) return 0;
 
     // UDP layer
-    struct udphdr *udp = make_ptr(pkt_data, offset);
+    struct udphdr *udp = mkptr(pkt_data, offset);
     uint16_t src_port = ntohs(udp->source);
     uint16_t dst_port = ntohs(udp->dest);
     if (src_port != 53 && dst_port != 53) {
@@ -134,7 +134,7 @@ static int sniff_process_pkt(struct dns_sniff *sniff, uint8_t *pkt_data, uint32_
 
     // call into api
     sniff->num_dns_pkts++;
-    int rc = validate_dns_packet(pkt_data + offset, pkt_len - offset, sniff->dns_emsg);
+    int rc = dns_validate(pkt_data + offset, pkt_len - offset, sniff->dns_emsg, sizeof(sniff->dns_emsg));
     if (rc == 0) {
         sniff->num_dns_okay++;
     }
