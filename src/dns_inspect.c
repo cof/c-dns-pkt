@@ -46,6 +46,11 @@
 #define MODE_READPCAP  2
 #define MODE_TRACEPCAP 3
 
+// capture types
+#define TYPE_RAW  0  // AF_PACKET + recvmmsg
+#define TYPE_MMAP 1  // PACKET_MMAP
+#define TYPE_XDP  2  // XDP
+
 // Packet size limits
 #define PKT_BUFSIZE 2048
 #define PKT_MAXRECV 10
@@ -61,6 +66,7 @@ struct dns_sniff {
     pid_t pid;
     // state
     struct cmd_mode *cmd;
+    int type;
     char *filename;
     struct pcap_file *pcap;
     char dev_name[IFNAMSIZ]; 
@@ -314,23 +320,24 @@ static int run_capture(struct dns_sniff *sniff)
 {
     int rc;
 
-    if ((rc = setup_signals(&sniff->sig))) return rc;
     if ((rc = sniff_attach(sniff)))  return rc;
     if ((rc = sniff_capture(sniff))) return rc;
 
     return 0;
 }
 
+
 /*
  * cmd-line options
  *
  */
-enum { opt_ifname, opt_fname, opt_pcapng };
+enum { opt_ifname, opt_type, opt_fname, opt_pcapng };
 
 static struct cmd_opt capt_opts[] = {
-    { "--interface" ,"Name of interface to sniff DNS msgs", 0, 1, opt_ifname },
-    { "--file"      ,"Name of packet capture file", 0, 1, opt_fname },
-    { "--pcapng"    , "Use pcapng file fmt", 0, 0, opt_pcapng },
+    { "--interface", "Name of interface to sniff DNS msgs", 0, 1, opt_ifname },
+    { "--type",      "capture type raw|mmap|xdp", "raw", 1, opt_type },
+    { "--file",      "Name of packet capture file", 0, 1, opt_fname },
+    { "--pcapng",    "Use pcapng file fmt", 0, 0, opt_pcapng },
     { NULL } 
 };
 
@@ -368,6 +375,17 @@ static int set_interface(struct dns_sniff *sniff, struct cmd_argv *parse)
     return 0;
 }
 
+static int set_type(struct dns_sniff *sniff, struct cmd_argv *parse)
+{
+    const char *type = parse->value;
+
+    if (!strcasecmp(type, "raw"))  sniff->type = TYPE_RAW;
+    if (!strcasecmp(type, "mmap")) sniff->type = TYPE_MMAP;
+    if (!strcasecmp(type, "xdg"))  sniff->type = TYPE_XDP;
+
+    return log_cmd_err(sniff->cmd->name, parse->name, "Unknown type");
+}
+
 struct cmd_mode cmds[] = {
     { MODE_RUN(run_capture),   MODE_CAPTURE,   capt_opts, "capture",  "capture DNS msgs from an interface" },
     { MODE_RUN(run_readpcap),  MODE_READPCAP,  pcap_opts, "readpcap", "Read DNS msgs from packet capture file" },
@@ -375,22 +393,6 @@ struct cmd_mode cmds[] = {
    { NULL }
 };
 
-static int open_pcap(struct dns_sniff *sniff)
-{
-    uint32_t flags = 0;
-
-    switch(sniff->cmd->mode) {
-    case MODE_CAPTURE: flags |= PCAP_WRITE; break;
-    case MODE_READPCAP: flags |= PCAP_READ; break;
-    case MODE_TRACEPCAP: flags |= PCAP_READ | PCAP_TRACE; break;
-    }
-    if (sniff->use_pcapng) flags |= PCAP_FMTNG;
-
-    sniff->pcap = pcap_open(sniff->filename, flags);
-    if (!sniff->pcap) return -1;
-
-    return 0;
-}
 
 static int sniff_parse_argv(struct dns_sniff *sniff, int argc, char *argv[])
 {
@@ -410,6 +412,7 @@ static int sniff_parse_argv(struct dns_sniff *sniff, int argc, char *argv[])
     while ( (rc = cmd_argv_next(&parser)) >= 0) {
         switch(rc) {
         case opt_ifname: rc = set_interface(sniff, &parser); break;
+        case opt_type:   rc = set_type(sniff, &parser); break;
         case opt_fname:  rc = opt_setstr(&sniff->filename, &parser); break;
         case opt_pcapng: sniff->use_pcapng = 1; break;
         }
@@ -428,20 +431,33 @@ static int sniff_parse_argv(struct dns_sniff *sniff, int argc, char *argv[])
         break;
     }
 
-    if (sniff->filename) {
-        rc = open_pcap(sniff);
-        if (rc) return rc;
-    }
-
     // all done
     return 0;
 }
 
-// set defaults
+static int open_pcap(struct dns_sniff *sniff)
+{
+    uint32_t flags = 0;
+
+    switch(sniff->cmd->mode) {
+    case MODE_CAPTURE: flags |= PCAP_WRITE; break;
+    case MODE_READPCAP: flags |= PCAP_READ; break;
+    case MODE_TRACEPCAP: flags |= PCAP_READ | PCAP_TRACE; break;
+    }
+    if (sniff->use_pcapng) flags |= PCAP_FMTNG;
+
+    sniff->pcap = pcap_open(sniff->filename, flags);
+    if (!sniff->pcap) return -1;
+
+    return 0;
+}
+
 static int sniff_init(struct dns_sniff *sniff)
 {
-    memset(sniff, 0, sizeof(*sniff));
-    sniff->sock_raw = -1;
+    if (sniff->filename) {
+        int rc = open_pcap(sniff);
+        if (rc) return rc;
+    }
 
     for (int i = 0; i < PKT_MAXRECV; i++) {
         sniff->vecs[i].iov_base = sniff->bufs[i];
@@ -452,6 +468,7 @@ static int sniff_init(struct dns_sniff *sniff)
 
     return 0;
 }
+
 
 // free state
 static void sniff_free(struct dns_sniff *sniff)
@@ -470,6 +487,8 @@ static struct dns_sniff *sniff_create(void)
 
     sniff = malloc(sizeof(*sniff));
     if (!sniff) return log_errno_rn("malloc failed for state");
+    memset(sniff, 0, sizeof(*sniff));
+    sniff->sock_raw = -1;
 
     return sniff;
 }
@@ -481,9 +500,10 @@ int main(int argc, char *argv[])
 
     log_init(NULL, LOG_INFO);
     if (!(sniff = sniff_create())) { ec = 1; goto done; }
-    if (sniff_init(sniff)) { ec = 2; goto done; }
     if (sniff_parse_argv(sniff, argc, argv)) { ec = 3;  goto done; }
-    if (sniff->cmd->run(sniff)) { ec = 4; goto done; }
+    if ((setup_signals(&sniff->sig))) { ec = 4; goto done; }
+    if (sniff_init(sniff))   { ec = 5; goto done; }
+    if (sniff->cmd->run(sniff)) { ec = 6; goto done; }
 
 done:
     if (sniff) sniff_free(sniff);
