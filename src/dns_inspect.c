@@ -19,26 +19,23 @@
 #include <stdbool.h>
 #include <sys/types.h> 
 #include <sys/socket.h>
-#include <netpacket/packet.h>
-#include <net/ethernet.h>
-#include <arpa/inet.h>
+#include <sys/mman.h>
 #include <linux/filter.h>
+#include <linux/if_packet.h>
+#include <linux/ipv6.h>
 #include <netinet/if_ether.h>
 #include <netinet/ip.h>
 #include <netinet/udp.h>
-#include <linux/ipv6.h>
-
 #include <net/if.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <netdb.h> 
-#include <unistd.h>
+#include <poll.h>
 #include <errno.h>
 
 #include "util.h"
 #include "log.h"
 #include "pcap.h"
 #include "dns_proto.h"
+
+#define SNIFF_LOGLEVEL LOG_INFO
 
 // supported cmds
 #define MODE_NONE      0
@@ -47,9 +44,9 @@
 #define MODE_TRACEPCAP 3
 
 // capture types
-#define TYPE_RAW  0  // AF_PACKET + recvmmsg
-#define TYPE_MMAP 1  // PACKET_MMAP
-#define TYPE_XDP  2  // XDP
+#define TYPE_RAW  1  // AF_PACKET + recvmmsg
+#define TYPE_MMAP 2  // PACKET_MMAP
+#define TYPE_XDP  3  // XDP
 
 // Packet size limits
 #define PKT_BUFSIZE 2048
@@ -71,7 +68,13 @@ struct dns_sniff {
     struct pcap_file *pcap;
     char dev_name[IFNAMSIZ]; 
     int dev_index;
-    int sock_raw;
+    int sock_fd; // AF_PACKET/SOCK_RAW
+    size_t ring_size;
+    void *ring_recv;
+    uint8_t *bd_ptr;
+    uint8_t *bd_end;
+    //uint32_t block_idx;
+    struct tpacket_req3 req;
     unsigned int use_pcapng : 1; // use pcapng output fmt
     // packet counters
     uint64_t rcv_pkts;
@@ -85,6 +88,16 @@ struct dns_sniff {
     struct iovec   vecs[PKT_MAXRECV];
     uint8_t        bufs[PKT_MAXRECV][PKT_BUFSIZE];
 };
+
+
+static int str_totype(const char *str)
+{
+    if (!strcasecmp(str, "raw"))  return TYPE_RAW;
+    if (!strcasecmp(str, "mmap")) return TYPE_MMAP;
+    if (!strcasecmp(str, "xdp"))  return TYPE_XDP;
+
+    return 0;
+}
 
 static inline bool is_vlan(uint16_t type)
 {
@@ -182,14 +195,16 @@ static int sniff_process_msg(struct dns_sniff *sniff, struct mmsghdr *msg)
     return 0;
 }
 
-static int sniff_capture(struct dns_sniff *sniff)
+static int sniff_raw(struct dns_sniff *sniff)
 {
+    log_debug("Starting capture %s", sniff->dev_name);
+
     while (sniff->sig.run) {
         // read a block
-        int nr = recvmmsg(sniff->sock_raw, sniff->msgs, PKT_MAXRECV, MSG_WAITFORONE, NULL);
+        int nr = recvmmsg(sniff->sock_fd, sniff->msgs, PKT_MAXRECV, MSG_WAITFORONE, NULL);
         if (nr < 0) {
             if (errno == EINTR) continue;
-            return log_errno_rf("recvmmsg fd %d on dev %s failed", sniff->sock_raw, sniff->dev_name);
+            return log_errno_rf("recvmmsg fd %d on dev %s failed", sniff->sock_fd, sniff->dev_name);
         }
         for (int i = 0; i < nr; i++) {
             int rc = sniff_process_msg(sniff, &sniff->msgs[i]);
@@ -233,14 +248,21 @@ static struct sock_filter dns_filter[] = {
     { 0x6, 0, 0, 0x00000000 },
 };
 
-// attach dns pkt filter to device
-int sniff_attach(struct dns_sniff *sniff)
+int setup_raw(struct dns_sniff *sniff)
 {
-    // socket
-    sniff->sock_raw = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
-    if (sniff->sock_raw == -1) {
-        return log_errno_rf("open AF_PACKET");
+    log_debug("Seting up %s", sniff->dev_name);
+
+    // setup pkt buffers
+    for (int i = 0; i < PKT_MAXRECV; i++) {
+        sniff->vecs[i].iov_base = sniff->bufs[i];
+        sniff->vecs[i].iov_len  = sizeof(sniff->bufs[i]);
+        sniff->msgs[i].msg_hdr.msg_iov  = &sniff->vecs[i];
+        sniff->msgs[i].msg_hdr.msg_iovlen  = 1;
     }
+
+    // socket
+    sniff->sock_fd = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+    if (sniff->sock_fd == -1) return log_errno_rf("open AF_PACKET");
 
     // bind to interface - kernel will start sending us pkts
     struct sockaddr_ll sll = {
@@ -248,38 +270,147 @@ int sniff_attach(struct dns_sniff *sniff)
         .sll_ifindex = sniff->dev_index,
         .sll_protocol = htons(ETH_P_ALL)
     };
-    if (bind(sniff->sock_raw, (struct sockaddr *) &sll, sizeof(sll)) < 0) {
-        return log_errno_rf("bind to %s failed", sniff->dev_name);
-    }
+    int rc = bind(sniff->sock_fd, (struct sockaddr *) &sll, sizeof(sll));
+    if (rc) return log_errno_rf("bind to %s failed", sniff->dev_name);
 
     // attach DNS filter
     struct sock_fprog bpf = {
         .len =   sizeof(dns_filter) / sizeof(struct sock_filter),
         .filter = dns_filter
     };
-    if (setsockopt(sniff->sock_raw, SOL_SOCKET, SO_ATTACH_FILTER, &bpf, sizeof(bpf)) < 0) {
-        return log_errno_rf("Attach DNS filter to %s failed", sniff->dev_name);
-    }
+    rc = setsockopt(sniff->sock_fd, SOL_SOCKET, SO_ATTACH_FILTER, &bpf, sizeof(bpf));
+    if (rc) return log_errno_rf("Attach DNS filter to %s failed", sniff->dev_name);
 
     // set receive buffer size
     int size = RCVBUF_SIZE;
-    if (setsockopt(sniff->sock_raw, SOL_SOCKET, SO_RCVBUF, &size, sizeof(size)) < 0) {
-        log_errno_rf("Set RCVBUF size %d failed", size);
-    }
+   	rc = setsockopt(sniff->sock_fd, SOL_SOCKET, SO_RCVBUF, &size, sizeof(size));
+	if (rc) log_errno_rf("Set RCVBUF size %d failed", size);
 
     // promisc mode
     struct packet_mreq mreq = {
         .mr_ifindex = sniff->dev_index,
         .mr_type    = PACKET_MR_PROMISC
     };
-    if (setsockopt(sniff->sock_raw, SOL_PACKET, PACKET_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) < 0) {
-        return log_errno_rf("setsockopt PACKET_MR_PROMISC");
-    }
+    rc = setsockopt(sniff->sock_fd, SOL_PACKET, PACKET_ADD_MEMBERSHIP, &mreq, sizeof(mreq));
+	if (rc < 0) return log_errno_rf("setsockopt PACKET_MR_PROMISC");
 
     log_info("dns-sniff", "DNS active on %s", sniff->dev_name);
 
     // all done
     return 0;
+}
+
+static int sniff_mmap(struct dns_sniff *sniff)
+{
+    log_debug("Starting capture %s", sniff->dev_name);
+
+    struct pollfd pfd = { .fd = sniff->sock_fd, .events = POLLIN };
+
+    while (sniff->sig.run) {
+
+        struct tpacket_block_desc *bd = mkptr(sniff->bd_ptr, 0);
+        if (!(bd->hdr.bh1.block_status & TP_STATUS_USER)) {
+            // wait for kernel to fill block
+            int rc = poll(&pfd, 1, -1); 
+            if (rc <= 0) {
+                if (rc == 0 || errno == EINTR) continue;
+                log_errno("poll %d failed", sniff->sock_fd);
+                break;
+            }
+            if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+                int ec = 0;
+                socklen_t eclen = sizeof(ec);
+                rc = getsockopt(sniff->sock_fd, SOL_SOCKET, SO_ERROR, &ec, &eclen);
+                if (rc) ec = 0;
+                log_ec(ec, "fd %d socket error", sniff->sock_fd);
+                break;
+            }
+            // must be POLLIN
+            continue;
+        }
+        
+        // jump to first pkt in block
+        struct tpacket3_hdr *hdr = mkptr(bd, bd->hdr.bh1.offset_to_first_pkt);
+        for (size_t i = 0; i <  bd->hdr.bh1.num_pkts; i++) {
+            sniff_process_pkt(sniff, mkptr(hdr, hdr->tp_mac), hdr->tp_len);
+            hdr = mkptr(hdr, hdr->tp_next_offset);
+        }
+
+        // release block back to kernel
+        bd->hdr.bh1.block_status = TP_STATUS_KERNEL;
+
+        // next block
+        sniff->bd_ptr += sniff->req.tp_block_size;
+        if (sniff->bd_ptr >= sniff->bd_end) {
+            sniff->bd_ptr = sniff->ring_recv;
+        }
+    }
+
+    return 0;
+}
+
+static int setup_mmap(struct dns_sniff *sniff)
+{
+    log_debug("Setting up %s", sniff->dev_name);
+
+    // create raw socket
+    sniff->sock_fd = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+    if (sniff->sock_fd == -1) return log_errno_rf("open AF_PACKET");
+
+    // bind to interface
+    struct sockaddr_ll sll = {
+        .sll_family  = AF_PACKET,
+        .sll_ifindex = sniff->dev_index,
+        .sll_protocol = htons(ETH_P_ALL)
+    };
+    int rc = bind(sniff->sock_fd, (struct sockaddr *) &sll, sizeof(sll));
+    if (rc) return log_errno_rf("bind to %s failed", sniff->dev_name);
+
+    // setup block mode
+    struct tpacket_req3 *req = &sniff->req;
+	req->tp_block_size = 4096 * 128; // Must be power of 2 and page-aligned (e.g., 512KB)
+	req->tp_block_nr = 100;          // number of blocks in ring
+	req->tp_frame_size = PKT_BUFSIZE;  // max packet size (snaplen)
+	req->tp_frame_nr = (req->tp_block_size * req->tp_block_nr) / req->tp_frame_size;
+	req->tp_retire_blk_tov = 60;  // 60ms timeout to prevent "stuck" packets
+	//req->tp_feature_req_word = 0;   
+	//req->tp_sizeof_priv = 0; 
+
+    // select TPACKET_V3
+	int ver = TPACKET_V3;
+	rc = setsockopt(sniff->sock_fd, SOL_PACKET, PACKET_VERSION, &ver, sizeof(ver));
+	if (rc) return log_errno_rf("set PACKET_VERSION failed");
+
+	// ask kernel to allocate ring buffer
+	rc = setsockopt(sniff->sock_fd, SOL_PACKET, PACKET_RX_RING, req, sizeof(*req));
+    if (rc) return log_errno_rf("set PACKET_RX_RING failed");
+
+	// finally map ring buffer to userspace
+	size_t ring_size = req->tp_block_size * req->tp_block_nr;
+	void *ring_recv = mmap(NULL, ring_size, PROT_READ | PROT_WRITE, MAP_SHARED, sniff->sock_fd, 0);
+    if (ring_recv == MAP_FAILED) return log_errno_rf("mmap ring failed");
+    sniff->ring_size = ring_size;
+    sniff->ring_recv = ring_recv;
+    sniff->bd_ptr = sniff->ring_recv;
+    sniff->bd_end = sniff->bd_ptr + ring_size;
+
+    log_info("dns-sniff", "DNS active on %s", sniff->dev_name);
+
+    return 0;
+}
+
+// run capture cmd
+static int run_capture(struct dns_sniff *sniff)
+{
+    int rc;
+
+    switch(sniff->type) {
+    case TYPE_RAW:  rc = sniff_raw(sniff); break;
+    case TYPE_MMAP: rc = sniff_mmap(sniff); break;
+    default: rc = -1;
+    }
+
+    return rc;
 }
 
 // run tracepcap cmd
@@ -315,29 +446,18 @@ static int run_readpcap(struct dns_sniff *sniff)
     return 0;
 }
 
-// run capture cmd
-static int run_capture(struct dns_sniff *sniff)
-{
-    int rc;
-
-    if ((rc = sniff_attach(sniff)))  return rc;
-    if ((rc = sniff_capture(sniff))) return rc;
-
-    return 0;
-}
-
-
 /*
  * cmd-line options
  *
  */
-enum { opt_ifname, opt_type, opt_fname, opt_pcapng };
+enum { opt_ifname, opt_type, opt_fname, opt_pcapng, opt_loglevel };
 
 static struct cmd_opt capt_opts[] = {
     { "--interface", "Name of interface to sniff DNS msgs", 0, 1, opt_ifname },
     { "--type",      "capture type raw|mmap|xdp", "raw", 1, opt_type },
-    { "--file",      "Name of packet capture file", 0, 1, opt_fname },
+    { "--file",      "Packet capture file", 0, 1, opt_fname },
     { "--pcapng",    "Use pcapng file fmt", 0, 0, opt_pcapng },
+    { "--log-level", "logging level", STR(LOG_LEVEL), 1, opt_loglevel  },
     { NULL } 
 };
 
@@ -377,13 +497,12 @@ static int set_interface(struct dns_sniff *sniff, struct cmd_argv *parse)
 
 static int set_type(struct dns_sniff *sniff, struct cmd_argv *parse)
 {
-    const char *type = parse->value;
+    sniff->type = str_totype(parse->value);
+    if (!sniff->type) {
+        return log_cmd_err(sniff->cmd->name, parse->name, "Unknown type");
+    }
 
-    if (!strcasecmp(type, "raw"))  sniff->type = TYPE_RAW;
-    if (!strcasecmp(type, "mmap")) sniff->type = TYPE_MMAP;
-    if (!strcasecmp(type, "xdg"))  sniff->type = TYPE_XDP;
-
-    return log_cmd_err(sniff->cmd->name, parse->name, "Unknown type");
+    return 0;
 }
 
 struct cmd_mode cmds[] = {
@@ -411,10 +530,11 @@ static int sniff_parse_argv(struct dns_sniff *sniff, int argc, char *argv[])
     struct cmd_argv parser = { argc, argv, sniff->cmd->opts, 2 } ;
     while ( (rc = cmd_argv_next(&parser)) >= 0) {
         switch(rc) {
-        case opt_ifname: rc = set_interface(sniff, &parser); break;
-        case opt_type:   rc = set_type(sniff, &parser); break;
-        case opt_fname:  rc = opt_setstr(&sniff->filename, &parser); break;
-        case opt_pcapng: sniff->use_pcapng = 1; break;
+        case opt_ifname:   rc = set_interface(sniff, &parser); break;
+        case opt_type:     rc = set_type(sniff, &parser); break;
+        case opt_fname:    rc = opt_setstr(&sniff->filename, &parser); break;
+        case opt_loglevel: rc = opt_setint(&log_level, &parser); break;
+        case opt_pcapng:   sniff->use_pcapng = 1; break;
         }
         if (rc < 0) break;
     }
@@ -454,26 +574,27 @@ static int open_pcap(struct dns_sniff *sniff)
 
 static int sniff_init(struct dns_sniff *sniff)
 {
+    int rc;
+
     if (sniff->filename) {
-        int rc = open_pcap(sniff);
+        rc = open_pcap(sniff);
         if (rc) return rc;
     }
 
-    for (int i = 0; i < PKT_MAXRECV; i++) {
-        sniff->vecs[i].iov_base = sniff->bufs[i];
-        sniff->vecs[i].iov_len  = sizeof(sniff->bufs[i]);
-        sniff->msgs[i].msg_hdr.msg_iov  = &sniff->vecs[i];
-        sniff->msgs[i].msg_hdr.msg_iovlen  = 1;
+    switch(sniff->type) {
+    case TYPE_RAW:  rc = setup_raw(sniff); break;
+    case TYPE_MMAP: rc = setup_mmap(sniff); break;
+    default: rc = -1;
     }
 
-    return 0;
+    return rc;
 }
-
 
 // free state
 static void sniff_free(struct dns_sniff *sniff)
 {
-    if (sniff->sock_raw != -1) close(sniff->sock_raw);
+    if (sniff->sock_fd != -1) close(sniff->sock_fd);
+    if (sniff->ring_recv) munmap(sniff->ring_recv, sniff->ring_size);
     if (sniff->pcap) pcap_close(sniff->pcap);
     if (sniff->filename) free(sniff->filename);
 
@@ -487,8 +608,10 @@ static struct dns_sniff *sniff_create(void)
 
     sniff = malloc(sizeof(*sniff));
     if (!sniff) return log_errno_rn("malloc failed for state");
+
     memset(sniff, 0, sizeof(*sniff));
-    sniff->sock_raw = -1;
+    sniff->sock_fd = -1;
+    sniff->type = TYPE_RAW;
 
     return sniff;
 }
@@ -498,7 +621,7 @@ int main(int argc, char *argv[])
     struct dns_sniff *sniff = NULL;
     int ec = 0;
 
-    log_init(NULL, LOG_INFO);
+    log_init(NULL, SNIFF_LOGLEVEL);
     if (!(sniff = sniff_create())) { ec = 1; goto done; }
     if (sniff_parse_argv(sniff, argc, argv)) { ec = 3;  goto done; }
     if ((setup_signals(&sniff->sig))) { ec = 4; goto done; }
