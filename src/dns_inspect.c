@@ -16,6 +16,7 @@
  * - Uses DNS api to decode,validate and print DNS messages
  * - Uses PCAP api to read|trace pcap files
  */
+#include <stdbool.h>
 #include <sys/types.h> 
 #include <sys/socket.h>
 #include <netpacket/packet.h>
@@ -67,10 +68,10 @@ struct dns_sniff {
     int sock_raw;
     unsigned int use_pcapng : 1; // use pcapng output fmt
     // packet counters
-    uint64_t num_recv_pkts;
-    uint64_t num_dns_pkts;
-    uint64_t num_dns_okay;
-    uint64_t num_dns_fail;
+    uint64_t rcv_pkts;
+    uint64_t dns_pkts;
+    uint64_t dns_okay;
+    uint64_t dns_fail;
     // validate emsg
     char dns_emsg[DNS_EMSG_MAXLEN];
     // packet read buffers
@@ -79,38 +80,56 @@ struct dns_sniff {
     uint8_t        bufs[PKT_MAXRECV][PKT_BUFSIZE];
 };
 
-static int sniff_process_pkt(struct dns_sniff *sniff, uint8_t *pkt_data, uint32_t pkt_len)
+static inline bool is_vlan(uint16_t type)
 {
-    sniff->num_recv_pkts++;
+    switch(type) {
+    case 0x8100:
+    case 0x88a8:
+    case 0x9100:
+    case 0x9200:
+    case 0x9300:
+        return true;
+    default:
+        return false;
+    }
+}
 
-    // too small (eth+IP+UDP)
-    if (pkt_len < PKT_MIN_LEN) return 0;
-    int offset = 0;
+static inline uint16_t u16_dec(const void *buf)
+{
+    const uint8_t *ptr = buf;
+    return (ptr[0] << 8) | ptr[1];
+}
 
-    // Etherner layer
-    struct ethhdr *eth = mkptr(pkt_data, offset);
-    uint16_t type = ntohs(eth->h_proto);
-    offset += sizeof(*eth);
+static int sniff_process_pkt(struct dns_sniff *sniff, void *pkt, size_t plen)
+{
+    uint8_t *ptr = pkt;
+    uint8_t *end = ptr + plen;
 
-    // VLAN tag ?
-    if (type ==  0x8100) {
-        // skip vlan tags
-        uint16_t *iptr = mkptr(pkt_data, 2);
-        type = ntohs(*iptr);
-        offset += 4;
-    }   
+    sniff->rcv_pkts++;
+
+    // Ethernet layer
+    if (ptr + 14 > end) return 0;
+    uint16_t type = u16_dec(ptr + 12);
+    ptr += 14;
+    while (is_vlan(type)) {
+        if (ptr + 4 > end) return 0;
+        type = dec_u16(ptr + 2);
+        ptr += 4;
+    }
 
     // IP layer
     int hdr_len = 0;
     int proto = 0;
-    if (type ==  ETH_P_IP) {
-        struct iphdr *ip = mkptr(pkt_data, offset);
+    if (type == ETH_P_IP) {
+        if (ptr + sizeof(struct iphdr) > end) return 0;
+        struct iphdr *ip = (void *) ptr;
         if (ip->version != 4) return 0;
         hdr_len = ip->ihl * 4;
         proto = ip->protocol;
     }
     else if (type == ETH_P_IPV6) {
-        struct ipv6hdr *ip6 = mkptr(pkt_data, offset);
+        if (ptr + sizeof(struct ipv6hdr) > end) return 0;
+        struct ipv6hdr *ip6 = (void *) ptr;
         if (ip6->version != 6) return 0;
         proto = ip6->nexthdr;
         hdr_len = 40;
@@ -119,28 +138,24 @@ static int sniff_process_pkt(struct dns_sniff *sniff, uint8_t *pkt_data, uint32_
         // unknown type
         return 0;
     }
-    offset += hdr_len;  
+    ptr += hdr_len;  
     if (proto != IPPROTO_UDP) return 0;
 
     // UDP layer
-    struct udphdr *udp = mkptr(pkt_data, offset);
-    uint16_t src_port = ntohs(udp->source);
-    uint16_t dst_port = ntohs(udp->dest);
-    if (src_port != 53 && dst_port != 53) {
-        // not a DNS port ?
-        return 0;
-    }
-    offset += sizeof(*udp);
+    if (ptr + sizeof(struct udphdr) > end) return 0;
+    struct udphdr *udp = (void *) ptr;
+    ptr += sizeof(*udp);
+    uint16_t src_port = u16_dec(&udp->source);
+    uint16_t dst_port = u16_dec(&udp->dest);
+    if (src_port != 53 && dst_port != 53) return 0;
 
     // call into api
-    sniff->num_dns_pkts++;
-    int rc = dns_validate(pkt_data + offset, pkt_len - offset, sniff->dns_emsg, sizeof(sniff->dns_emsg));
-    if (rc == 0) {
-        sniff->num_dns_okay++;
-    }
-    else {
-        sniff->num_dns_fail++;
-    }
+    sniff->dns_pkts++;
+    int rc = dns_validate(ptr, end - ptr, sniff->dns_emsg, sizeof(sniff->dns_emsg));
+    int is_error = (rc < 0);
+    sniff->dns_okay += !is_error;
+    sniff->dns_fail += is_error;
+
     fputs(sniff->dns_emsg, stderr);
 
     // all done
