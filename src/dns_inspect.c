@@ -183,7 +183,7 @@ static int sniff_capture(struct dns_sniff *sniff)
         int nr = recvmmsg(sniff->sock_raw, sniff->msgs, PKT_MAXRECV, MSG_WAITFORONE, NULL);
         if (nr < 0) {
             if (errno == EINTR) continue;
-             return log_errno_rf("recvmmsg fd %d on dev %s failed", sniff->sock_raw, sniff->dev_name);
+            return log_errno_rf("recvmmsg fd %d on dev %s failed", sniff->sock_raw, sniff->dev_name);
         }
         for (int i = 0; i < nr; i++) {
             int rc = sniff_process_msg(sniff, &sniff->msgs[i]);
