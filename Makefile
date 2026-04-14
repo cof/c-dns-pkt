@@ -106,7 +106,7 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
 
 # add non-root capabilities
 # -------------------------
-SETCAP_CMD = sudo setcap 'cap_net_raw,cap_net_admin=eip'
+SETCAP_CMD = sudo setcap 'cap_net_raw,cap_net_admin,cap_bpf=eip'
 
 # tags file
 # ----------
