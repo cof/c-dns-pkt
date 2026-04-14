@@ -321,7 +321,7 @@ static int sniff_mmap(struct dns_sniff *sniff)
                 int ec = 0;
                 socklen_t eclen = sizeof(ec);
                 rc = getsockopt(sniff->sock_fd, SOL_SOCKET, SO_ERROR, &ec, &eclen);
-                if (rc) ec = 0;
+                if (rc) ec = errno;
                 log_ec(ec, "fd %d socket error", sniff->sock_fd);
                 break;
             }
@@ -365,6 +365,14 @@ static int setup_mmap(struct dns_sniff *sniff)
     };
     int rc = bind(sniff->sock_fd, (struct sockaddr *) &sll, sizeof(sll));
     if (rc) return log_errno_rf("bind to %s failed", sniff->dev_name);
+
+    // attach DNS filter
+    struct sock_fprog bpf = {
+        .len =   sizeof(dns_filter) / sizeof(struct sock_filter),
+        .filter = dns_filter
+    };
+    rc = setsockopt(sniff->sock_fd, SOL_SOCKET, SO_ATTACH_FILTER, &bpf, sizeof(bpf));
+    if (rc) return log_errno_rf("Attach DNS filter to %s failed", sniff->dev_name);
 
     // setup block mode
     struct tpacket_req3 *req = &sniff->req;
