@@ -1006,6 +1006,8 @@ static int sniff_init(struct dns_sniff *sniff)
         if (rc) return rc;
     }
 
+    if (sniff->cmd->mode != MODE_CAPTURE) return rc;
+
     switch(sniff->type) {
     case TYPE_RAW:  rc = setup_raw(sniff); break;
     case TYPE_MMAP: rc = setup_mmap(sniff); break;
@@ -1061,10 +1063,10 @@ int main(int argc, char *argv[])
 
     log_init(NULL, SNIFF_LOGLEVEL);
     if (!(sniff = sniff_create())) { ec = 1; goto done; }
-    if (sniff_parse_argv(sniff, argc, argv)) { ec = 3;  goto done; }
-    if (setup_signals(&sniff->sig)) { ec = 4; goto done; }
-    if (sniff_init(sniff))   { ec = 5; goto done; }
-    if (sniff->cmd->run(sniff)) { ec = 6; goto done; }
+    if (sniff_parse_argv(sniff, argc, argv)) { ec = 2;  goto done; }
+    if (setup_signals(&sniff->sig)) { ec = 3; goto done; }
+    if (sniff_init(sniff))   { ec = 4; goto done; }
+    if (sniff->cmd->run(sniff)) { ec = 5; goto done; }
 
 done:
     if (sniff) sniff_free(sniff);
