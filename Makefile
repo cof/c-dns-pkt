@@ -108,6 +108,16 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
 # -------------------------
 SETCAP_CMD = sudo setcap 'cap_net_raw,cap_net_admin,cap_bpf=eip'
 
+# gen-bpf
+# -------
+.PHONY: gen-bpf
+BPF_FILTER = $(BUILD_DIR)/bpf_filter.h
+BPF_OBJFILE = $(BUILD_DIR)/filter.o
+BPF_CFLAGS = -O2 -I/usr/include
+gen-bpf:
+	bpf-gcc $(BPF_CFLAGS) -c bpf/filter.c -o $(BPF_OBJFILE)
+	bpf-objdump -d $(BPF_OBJFILE) | awk -f bpf/gen_insn.awk > $(BPF_FILTER)
+
 # tags file
 # ----------
 .PHONY: tags

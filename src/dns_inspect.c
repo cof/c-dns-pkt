@@ -97,7 +97,8 @@ struct dns_sniff {
     char dev_name[IFNAMSIZ]; 
     int dev_index;
     int sock_fd; // AF_PACKET/AF_XDP
-    int ebpf_fd; // BPF_PROG_LOAD
+    int bpf_fd;  // BPF_PROG_LOAD
+    int map_fd;  // BPF_MAP_CREATE
     struct membuf umem;
     struct xsk_ring fill_ring;
     struct xsk_ring rx_ring;
@@ -145,47 +146,54 @@ static struct sock_filter dns_filter[] = {
     { 0x6, 0, 0, 0x00000000 },
 };
 
-// eBPF : equivalent of tcpdump -i any udp port 53 -dd
-static struct bpf_insn dns_xdp_filter[] = {
-    /* 0-1: Context Pointers */
-    { 0x61, 0x2, 0x1, 0, 0 }, 
-    { 0x61, 0x3, 0x1, 4, 0 },
-    // ETHERNET (2-5)
-    { 0xbf, 0x4, 0x2, 0, 0 }, 
-    { 0x07, 0x4, 0, 0, 14 },
-    { 0x2d, 0x4, 0x3, 22, 0 },    // 4: if > end goto PASS (27)
-    { 0x69, 0x5, 0x2, 12, 0 },    // 5: R5 = EtherType
-    // IPv4 PATH (6-16)
-    { 0x55, 0x5, 0, 10, 0x0800 }, // 6: if != IPv4 goto IPv6 Check (17)
-    { 0xbf, 0x4, 0x2, 0, 0 }, 
-    { 0x07, 0x4, 0, 0, 42 },
-    { 0x2d, 0x4, 0x3, 17, 0 },     // 9: if > end goto PASS (27)
-    { 0x71, 0x4, 0x2, 23, 0 },     // 10: Protocol
-    { 0x55, 0x4, 0, 15, 17 },      // 11: if != UDP goto PASS (27)
-    { 0x69, 0x4, 0x2, 36, 0 },     // 12: Dport
-    { 0x15, 0x4, 0, 15, 0x3500 },  // 13: if == 53 goto REDIRECT (29)
-    { 0x69, 0x4, 0x2, 34, 0 },     // 14: Sport
-    { 0x15, 0x4, 0, 13, 0x3500 },  // 15: if == 53 goto REDIRECT (29)
-    { 0x05, 0, 0, 10, 0 },         // 16: goto PASS (27)
-    // IPv6 PATH (17-26)
-    { 0x55, 0x5, 0, 9, 0xdd86 },   // 17: if != IPv6 goto PASS (27)
-    { 0xbf, 0x4, 0x2, 0, 0 }, 
-    { 0x07, 0x4, 0, 0, 62 },
-    { 0x2d, 0x4, 0x3, 6, 0 },      // 20: if > end goto PASS (27)
-    { 0x71, 0x4, 0x2, 20, 0 },     // 21: NextHdr
-    { 0x55, 0x4, 0, 4, 17 },       // 22: if != UDP goto PASS (27)
-    { 0x69, 0x4, 0x2, 54, 0 },     // 23: dport
-    { 0x15, 0x4, 0, 4, 0x3500 },   // 24: if == 53 goto REDIRECT (29)
-    { 0x69, 0x4, 0x2, 56, 0 },     // 25: sport
-    { 0x15, 0x4, 0, 2, 0x3500 },   // 26: if == 53 goto REDIRECT (29)
-    // 27-28: PASS
-    { 0xb7, 0, 0, 0, 2 }, 
-    { 0x95, 0, 0, 0, 0 }, 
-    // 29-30 REDIRECT
-    { 0xb7, 0, 0, 0, 4 }, 
-    { 0x95, 0, 0, 0, 0 }
+// eBPF - make gen-bpf - build/bpf_filter.h
+static uint64_t bpf_filter[] = {
+    0x0000000000041361ULL, // [00]ldxw %r3,[%r1+4] 
+    0x0000000000001061ULL, // [01]ldxw %r0,[%r1+0] 
+    0x00000000000002bfULL, // [02]mov %r2,%r0 
+    0x0000000e00000207ULL, // [03]add %r2,0xe 
+    0x00000000000623adULL, // [04]jlt %r3,%r2,6 
+    0x00000000000d0571ULL, // [05]ldxb %r5,[%r0+0xd] 
+    0x0000000800000567ULL, // [06]lsh %r5,8 
+    0x00000000000c0471ULL, // [07]ldxb %r4,[%r0+0xc] 
+    0x000000000000454fULL, // [08]or %r5,%r4 
+    0x0000000800170516ULL, // [09]jeq32 %r5,8,23 
+    0x0000dd8600020516ULL, // [10]jeq32 %r5,0xdd86,2 
+    0x00000002000000b7ULL, // [11]mov %r0,2 
+    0x0000000000000095ULL, // [12]exit 
+    0x00000000000002bfULL, // [13]mov %r2,%r0 
+    0x0000003600000207ULL, // [14]add %r2,0x36 
+    0x00000000fffb322dULL, // [15]jgt %r2,%r3,-5 
+    0x0000000000140071ULL, // [16]ldxb %r0,[%r0+0x14] 
+    0x00000011fff90055ULL, // [17]jne %r0,0x11,-7 
+    0x00000000000020bfULL, // [18]mov %r0,%r2 
+    0x0000000800000007ULL, // [19]add %r0,8 
+    0x00000000fff603adULL, // [20]jlt %r3,%r0,-10 
+    0x0000000000022369ULL, // [21]ldxh %r3,[%r2+2] 
+    0x0000350000020315ULL, // [22]jeq %r3,0x3500,2 
+    0x0000000000002269ULL, // [23]ldxh %r2,[%r2+0] 
+    0x00003500fff20255ULL, // [24]jne %r2,0x3500,-14 
+    0x00000000000003b7ULL, // [25]mov %r3,0 
+    0x0000000000101261ULL, // [26]ldxw %r2,[%r1+0x10] 
+    0x0000000000000118ULL, // [27] <--- MAP_RELOC lddw %r1,0 
+    0x0000000000000000ULL, // [28]
+    0x0000003300000085ULL, // [29]call 51 
+    0x0000002000000067ULL, // [30]lsh %r0,0x20 
+    0x00000020000000c7ULL, // [31]arsh %r0,0x20 
+    0x0000000000000095ULL, // [32]exit 
+    0x00000000000005bfULL, // [33]mov %r5,%r0 
+    0x0000002200000507ULL, // [34]add %r5,0x22 
+    0x00000000ffe753adULL, // [35]jlt %r3,%r5,-25 
+    0x0000000000170471ULL, // [36]ldxb %r4,[%r0+0x17] 
+    0x00000011ffe50455ULL, // [37]jne %r4,0x11,-27 
+    0x00000000000e0461ULL, // [38]ldxw %r4,[%r0+0xe] 
+    0x0000000f00000457ULL, // [39]and %r4,0xf 
+    0x0000000200000467ULL, // [40]lsh %r4,2 
+    0x0000000e00000407ULL, // [41]add %r4,0xe 
+    0x000000000000400fULL, // [42]add %r0,%r4 
+    0x00000000000002bfULL, // [43]mov %r2,%r0 
+    0x00000000ffe50005ULL, // [44]ja -27 
 };
-
 
 static inline void membuf_init(struct membuf *buf, void *mem, size_t len)
 {
@@ -502,9 +510,53 @@ static int setup_mmap(struct dns_sniff *sniff)
 
 /* type:XDP code */
 
+static int xsk_map_create(int maxq)
+{
+    union bpf_attr attr = {
+        .map_type    = BPF_MAP_TYPE_XSKMAP,
+        .key_size    = sizeof(int),   // queue ID
+        .value_size  = sizeof(int),   // socket FD 
+        .max_entries = maxq          // NIC queues
+    };
 
-// attaach BPF prog to device
-static int xdp_link_prog(int if_index, int ebpf_fd) 
+    return syscall(__NR_bpf, BPF_MAP_CREATE, &attr, sizeof(attr));
+}
+
+static int xsk_map_update(int map_fd, int qid, int xsk_fd)
+{
+    union bpf_attr attr = {
+        .map_fd = map_fd,
+        .key    = (uintptr_t) &qid,
+        .value  = (uintptr_t) &xsk_fd,
+        .flags  = BPF_ANY  // create or update entry
+    };
+
+    return syscall(__NR_bpf, BPF_MAP_UPDATE_ELEM, &attr, sizeof(attr));
+}
+
+// look for 
+static bool bpf_patch_map(int map_fd, size_t len, uint64_t bpf[static len])
+{
+    bool patched = false;
+
+    for (size_t i = 0; i < len; i++) {
+        // look for lddw instruction  (opcode 0x18)
+        uint64_t insn = bpf[i];
+        if ((insn & 0xff) != 0x18) continue;
+        // set src_reg=1, clear val, set val
+        insn |= (1ULL << 12);
+        insn &= 0x00000000FFFFFFFFULL;
+        insn |= ((uint64_t) map_fd << 32);
+        bpf[i] = insn;
+        i++;
+        patched = true;
+    }
+
+    return patched;
+}
+
+// attach BPF fd to device
+static int bpf_attach_dev(int bpf_fd, int dev_index) 
 {
     int sock_fd = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
     if (sock_fd < 0) return -1;
@@ -518,7 +570,7 @@ static int xdp_link_prog(int if_index, int ebpf_fd)
         .n.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK,
         .n.nlmsg_type  = RTM_SETLINK,
         .i.ifi_family  = AF_UNSPEC,
-        .i.ifi_index   = if_index,
+        .i.ifi_index   = dev_index,
     };
 
     // attr: XDP Nested
@@ -529,7 +581,7 @@ static int xdp_link_prog(int if_index, int ebpf_fd)
     struct rtattr *sub = mkptr(rta, NLA_HDRLEN);
     sub->rta_type = IFLA_XDP_FD;
     sub->rta_len = NLA_HDRLEN + sizeof(int);
-    memcpy(RTA_DATA(sub), &ebpf_fd, sizeof(int));
+    memcpy(RTA_DATA(sub), &bpf_fd, sizeof(int));
     
     // Sub-attribute: Flags (Generic/SKB mode for maximum compatibility)
     struct rtattr *flg = mkptr(sub, sub->rta_len);
@@ -550,6 +602,7 @@ static int xdp_link_prog(int if_index, int ebpf_fd)
 
     return rc;
 }
+
 
 static void ring_init(struct xsk_ring *ring, 
     void *mem, size_t len, 
@@ -599,16 +652,19 @@ static int sniff_xdp(struct dns_sniff *sniff)
     struct xsk_ring *rx   = &sniff->rx_ring;
     xsk_ring_fill(fill);
 
+    //recvfrom(sniff->sock_fd, NULL, 0, MSG_DONTWAIT, NULL, NULL);
+    //sendto(sniff->sock_fd, NULL, 0, MSG_DONTWAIT, NULL, 0);
+
     struct pollfd pfd = { .fd = sniff->sock_fd, .events = POLLIN };
 
     while (sniff->sig.run) {
+        // wait for pkt
         int rc = poll(&pfd, 1, -1);
         if (rc <= 0) {
             if (rc == 0 || errno == EINTR) continue;
             log_errno("poll %d failed", sniff->sock_fd);
             break;
         }
-        log_debug("Here1 %s", sniff->dev_name);
         if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
             int ec = 0;
             socklen_t eclen = sizeof(ec);
@@ -618,7 +674,6 @@ static int sniff_xdp(struct dns_sniff *sniff)
             break;
         }
         if (!(pfd.revents & POLLIN)) continue;
-
 
         uint32_t rx_ridx = *rx->consumer;
         uint32_t rx_widx = *rx->producer;
@@ -704,25 +759,32 @@ static int setup_xdp(struct dns_sniff *sniff)
     if (ring_mem == MAP_FAILED) return log_errno_rf("mmap rx-ring failed");
     ring_init(&sniff->rx_ring, ring_mem, ring_len, PKT_NUMSLOT, PKT_MAXSIZE, &xdp_off.rx);
 
+    // create map
+    sniff->map_fd = xsk_map_create(1);
+    if (sniff->map_fd == -1) return log_errno_rf("map_create failed");
+    if (!bpf_patch_map(sniff->map_fd, ARR_LEN(bpf_filter), bpf_filter)) {
+        return log_error_rf("patch_map %d failed", sniff->map_fd);
+    }
+
     // load eBPF program
     union bpf_attr attr = {
         .prog_type = BPF_PROG_TYPE_XDP,
-        .insns = (uintptr_t)dns_xdp_filter,
-        .insn_cnt = ARR_LEN(dns_xdp_filter),
+        .insns = (uintptr_t) bpf_filter,
+        .insn_cnt = ARR_LEN(bpf_filter),
         .license = (uintptr_t) "Proprietary",
         .log_buf = (uintptr_t) sniff->emsg,
         .log_size = sizeof(sniff->emsg),
         .log_level = 1
     };
-    sniff->ebpf_fd = syscall(__NR_bpf, BPF_PROG_LOAD, &attr, sizeof(attr));
-    if (sniff->ebpf_fd == -1) {
+    sniff->bpf_fd = syscall(__NR_bpf, BPF_PROG_LOAD, &attr, sizeof(attr));
+    if (sniff->bpf_fd == -1) {
         log_errno("BPF_PROG_LOAD failed");
         log_error("Verifier Log: %s", sniff->emsg);
         return -1;
     }
 
-    // attach prog to device
-    rc = xdp_link_prog(sniff->dev_index, sniff->ebpf_fd);
+    // attach bpf prog to device
+    rc = bpf_attach_dev(sniff->bpf_fd, sniff->dev_index);
     if (rc < 0) return log_errno_rf("attach eBPF to %s failed", sniff->dev_name);
 
     // bind xsd to device
@@ -734,6 +796,9 @@ static int setup_xdp(struct dns_sniff *sniff)
     };
     rc = bind(sniff->sock_fd, (struct sockaddr *) &sxdp, sizeof(sxdp));
     if (rc) return log_errno_rf("bind to %s failed", sniff->dev_name);
+
+    rc = xsk_map_update(sniff->map_fd, 0, sniff->sock_fd);
+    if (rc) return log_errno_rf("map-update %d %d failed", 0, sniff->sock_fd);
 
     log_info("dns-sniff", "DNS active on %s", sniff->dev_name);
 
@@ -937,10 +1002,11 @@ static int sniff_init(struct dns_sniff *sniff)
 // free state
 static void sniff_free(struct dns_sniff *sniff)
 {
-    if (sniff->ebpf_fd != -1) {
-        xdp_link_prog(sniff->dev_index, -1);
-        close(sniff->ebpf_fd);
+    if (sniff->bpf_fd != -1) {
+        bpf_attach_dev(-1, sniff->dev_index);
+        close(sniff->bpf_fd);
     }
+    if (sniff->map_fd != -1) close(sniff->map_fd);
     membuf_deinit(&sniff->umem);
     ring_deinit(&sniff->rx_ring);
     ring_deinit(&sniff->fill_ring);
@@ -961,7 +1027,8 @@ static struct dns_sniff *sniff_create(void)
 
     memset(sniff, 0, sizeof(*sniff));
     sniff->sock_fd = -1;
-    sniff->ebpf_fd = -1;
+    sniff->bpf_fd = -1;
+    sniff->map_fd = -1;
     sniff->type = TYPE_RAW;
 
     return sniff;
