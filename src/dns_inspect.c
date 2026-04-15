@@ -992,8 +992,8 @@ struct cmd_mode cmds[] = {
    { NULL }
 };
 
-
-static int inspect_parse_argv(struct dns_insp *insp, int argc, char *argv[])
+// parse cmd-line args
+static int insp_parse_argv(struct dns_insp *insp, int argc, char *argv[])
 {
     if (argc < 2 || !strcmp(argv[1], "--help")) {
         mode_usage(argv[0], cmds, examples);
@@ -1120,7 +1120,7 @@ int main(int argc, char *argv[])
     log_init(NULL, LOG_INFO);
 
     if (!(insp = insp_create())) { ec = 1; goto done; }
-    if (inspect_parse_argv(insp, argc, argv)) { ec = 2;  goto done; }
+    if (insp_parse_argv(insp, argc, argv)) { ec = 2;  goto done; }
     if (setup_signals(&insp->sig)) { ec = 3; goto done; }
     if (insp_init(insp))     { ec = 4; goto done; }
     if (insp->cmd->run(insp)) { ec = 5; goto done; }
