@@ -71,7 +71,7 @@ int run_cmd(struct strbuf *buf, int flags, const char *fmt, ...)
     log_debug("%s", cmd_str);
 
     char *cmd_args[RUN_MAXARG];
-    int cmd_idx = 0;
+    size_t cmd_idx = 0;
     struct str_slice str = slice_make_cstr(cmd_str);
     while (str.len) {
         if (cmd_idx >= ARR_LEN(cmd_args)) return log_error_rf("cmd_args: no space");
