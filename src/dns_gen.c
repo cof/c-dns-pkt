@@ -839,20 +839,6 @@ static int gen_parse_argv(struct dns_gen *gen, int argc, char *argv[])
     return 0;
 }
 
-// set defaults
-static int gen_init(struct dns_gen *gen)
-{
-    memset(gen, 0, sizeof(*gen));
-
-    // init all fds to -1
-    gen->sock_fd = -1;
-
-    // needed for tids
-    srand(time(NULL));
-
-    return 0;
-}
-
 // free state
 static void gen_free(struct dns_gen *gen)
 {
@@ -871,6 +857,11 @@ static struct dns_gen *gen_create(void)
     gen = malloc(sizeof(*gen));
     if (!gen) return log_errno_rn("Malloc failed for gen state");
 
+    memset(gen, 0, sizeof(*gen));
+    gen->sock_fd = -1;
+
+    // needed for tids
+    srand(time(NULL));
 
     return gen;
 }
@@ -882,10 +873,9 @@ int main(int argc, char *argv[])
 
     log_init(NULL, LOG_INFO);
     if (!(gen = gen_create())) { ec = 1; goto done; }
-    if (gen_init(gen)) { ec = 2; goto done; }
-    if (gen_parse_argv(gen, argc, argv)) { ec = 3;  goto done; }
-    if (setup_signals(&gen->sig))  { ec = 4 ; goto done; }
-    if (gen->cmd->run(gen)) { ec = 5; goto done; }
+    if (gen_parse_argv(gen, argc, argv)) { ec = 2;  goto done; }
+    if (setup_signals(&gen->sig)) { ec = 3; goto done; }
+    if (gen->cmd->run(gen)) { ec = 4; goto done; }
 
 done:
     if (gen) gen_free(gen);
