@@ -152,7 +152,7 @@ static struct sock_filter dns_filter[] = {
     { 0x6, 0, 0, 0x00000000 },
 };
 
-// eBPF - make gen-bpf - build/bpf_filter.h
+// eBPF : make gen-bpf - build/bpf_filter.h
 static uint64_t bpf_filter[] = {
     0x0000000000041361ULL, // [00]ldxw %r3,[%r1+4] 
     0x0000000000001061ULL, // [01]ldxw %r0,[%r1+0] 
@@ -320,8 +320,7 @@ static int insp_process_msg(struct dns_insp *insp, struct mmsghdr *msg)
     return 0;
 }
 
-
-/* type:RAW code */
+/* RAW capture code */
 
 static int capture_raw(struct dns_insp *insp)
 {
@@ -354,7 +353,7 @@ static int capture_raw(struct dns_insp *insp)
 
 int setup_raw(struct dns_insp *insp)
 {
-    log_debug("Seting up %s", insp->dev_name);
+    log_debug("Setting up %s", insp->dev_name);
 
     // setup buffers
     for (int i = 0; i < PKT_MAXRECV; i++) {
@@ -404,7 +403,7 @@ int setup_raw(struct dns_insp *insp)
     return 0;
 }
 
-/* type:MMAP code */
+/* MMAP capture code */
 
 static int capture_mmap(struct dns_insp *insp)
 {
@@ -514,7 +513,7 @@ static int setup_mmap(struct dns_insp *insp)
     return 0;
 }
 
-/* type:XDP code */
+/* XDP capture code */
 
 static int xdp_init_tap(struct dns_insp *insp)
 {
