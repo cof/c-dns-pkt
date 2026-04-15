@@ -396,7 +396,7 @@ int setup_raw(struct dns_insp *insp)
     rc = setsockopt(insp->sock_fd, SOL_PACKET, PACKET_ADD_MEMBERSHIP, &mreq, sizeof(mreq));
     if (rc < 0) return log_errno_rf("setsockopt PACKET_MR_PROMISC");
 
-    log_info("dns-insp", "DNS active on %s", insp->dev_name);
+    log_info("+", "DNS active on %s", insp->dev_name);
 
     // all done
     return 0;
@@ -507,7 +507,7 @@ static int setup_mmap(struct dns_insp *insp)
     if (ring_mem == MAP_FAILED) return log_errno_rf("mmap ring failed");
     membuf_init(&insp->umem, ring_mem, ring_len);
 
-    log_info("dns-insp", "DNS active on %s", insp->dev_name);
+    log_info("+", "DNS active on %s", insp->dev_name);
 
     return 0;
 }
@@ -872,7 +872,7 @@ static int setup_xdp(struct dns_insp *insp)
     rc = xsk_map_update(insp->map_fd, 0, insp->sock_fd);
     if (rc) return log_errno_rf("map-update %d %d failed", 0, insp->sock_fd);
 
-    log_info("dns-insp", "DNS active on %s", insp->dev_name);
+    log_info("+", "DNS active on %s", insp->dev_name);
 
     // all done
     return 0;
