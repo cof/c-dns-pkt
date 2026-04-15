@@ -1,28 +1,30 @@
 /*
- * dns-inpect : DNS packet sniffer
+ * dns-inpect : DNS packet inspector
  * Usage:     : ./dns-inspect --help
- * Example    : ./dns-inpsect capture --interface eth0
+ * Example    : ./dns-inspect capture --interface eth0
  *
  * Overview
  * --------
- * Implements a DNS message packet sniffer on a network interface.
- * Basicaly attachs to a network interface and validates DNS messages.
+ * Implements a DNS message packet inspector.
+ * Can inspect packets read directly from a network interface or pcap file.
  *
- * Type:
- * -----
- * raw  : AF_PACKET + SOCK_RAW + cBPF + recvmmsg()
- * mmap : AF_PACKET + SOCK_RAW + cBPF + PACKET_RX_RING (TPACKET_V3)
- * xdp  : AF_XDP + eBPF + UMEM (RX + Fill Rings)
+ * Supports the following interface capture types:
+ *
+ * raw  : Use AF_PACKET + SOCK_RAW + cBPF + recvmmsg()
+ * mmap : Use AF_PACKET + SOCK_RAW + cBPF + PACKET_RX_RING (TPACKET_V3)
+ * xdp  : Use VETH + AF_XDP + eBPF + UMEM + RX + Fill Rings
  *
  * Notes
  * -----
  * - cBPF is a classic BPF
  * - eBPF is extended BFP
- * - Uses DNS code api to decode/validate/print DNS messages
+ * - Uses DNS-PROTO api to decode/validate/print DNS messages
  * - Uses PCAP api to read/write/trace pcap files
+ * - make gen-bpf created eBPF filter
+ * - make install uses setcap cap_net_raw,cap_net_admin,cap_bpf=eip
  */
 #include <stdbool.h>
-#include <sys/types.h> 
+#include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
@@ -45,9 +47,9 @@
 #include "pcap.h"
 #include "dns_proto.h"
 
-#define SNIFF_LOGLEVEL LOG_INFO
-#define SNIFF_TAP "sniff_tap"
-#define SNIFF_PEER "sniff_peer"
+#define inspect_LOGLEVEL LOG_INFO
+#define inspect_TAP "inspect_tap"
+#define inspect_PEER "inspect_peer"
 
 // supported cmds
 #define MODE_NONE      0
@@ -80,14 +82,14 @@ struct xsk_ring {
     struct membuf buf;
     uint32_t *producer;  // ptr to shared producer index
     uint32_t *consumer;  // ptr to shared consumer index
-    void *descs;         // ptr to descriptor array 
+    void *descs;         // ptr to descriptor array
     uint32_t max_size;
     uint32_t num_slot;
     uint32_t mask;
 };
 
-// inspect state
-struct dns_sniff {
+// app state
+struct dns_insp {
     // config
     struct simple_sig sig;
     pid_t pid;
@@ -96,7 +98,7 @@ struct dns_sniff {
     int type;
     char *filename;
     struct pcap_file *pcap;
-    char dev_name[IFNAMSIZ]; 
+    char dev_name[IFNAMSIZ];
     int dev_index;
     int tap_index;
     int sock_fd; // AF_PACKET/AF_XDP
@@ -152,14 +154,52 @@ static struct sock_filter dns_filter[] = {
 
 // eBPF - make gen-bpf - build/bpf_filter.h
 static uint64_t bpf_filter[] = {
-    0x00000000000003b7ULL, // [00]mov %r3,0 
-    0x0000000000101261ULL, // [01]ldxw %r2,[%r1+0x10] 
-    0x0000000000000118ULL, // [02] <--- MAP_RELOC lddw %r1,0 
-    0x0000000000000000ULL, // [03]
-    0x0000003300000085ULL, // [04]call 51 
-    0x0000000000000095ULL, // [05]exit 
+    0x0000000000041361ULL, // [00]ldxw %r3,[%r1+4] 
+    0x0000000000001061ULL, // [01]ldxw %r0,[%r1+0] 
+    0x00000000000002bfULL, // [02]mov %r2,%r0 
+    0x0000000e00000207ULL, // [03]add %r2,0xe 
+    0x00000000000623adULL, // [04]jlt %r3,%r2,6 
+    0x00000000000d0571ULL, // [05]ldxb %r5,[%r0+0xd] 
+    0x0000000800000567ULL, // [06]lsh %r5,8 
+    0x00000000000c0471ULL, // [07]ldxb %r4,[%r0+0xc] 
+    0x000000000000454fULL, // [08]or %r5,%r4 
+    0x0000000800030516ULL, // [09]jeq32 %r5,8,3 
+    0x0000dd86001c0516ULL, // [10]jeq32 %r5,0xdd86,28 
+    0x00000001000000b7ULL, // [11]mov %r0,1 
+    0x0000000000000095ULL, // [12]exit 
+    0x00000000000005bfULL, // [13]mov %r5,%r0 
+    0x0000002200000507ULL, // [14]add %r5,0x22 
+    0x00000000fffb53adULL, // [15]jlt %r3,%r5,-5 
+    0x0000000000170471ULL, // [16]ldxb %r4,[%r0+0x17] 
+    0x00000011fff90455ULL, // [17]jne %r4,0x11,-7 
+    0x00000000000e0461ULL, // [18]ldxw %r4,[%r0+0xe] 
+    0x0000000f00000457ULL, // [19]and %r4,0xf 
+    0x0000000200000467ULL, // [20]lsh %r4,2 
+    0x0000000e00000407ULL, // [21]add %r4,0xe 
+    0x000000000000400fULL, // [22]add %r0,%r4 
+    0x00000000000002bfULL, // [23]mov %r2,%r0 
+    0x00000000000020bfULL, // [24]mov %r0,%r2 
+    0x0000000800000007ULL, // [25]add %r0,8 
+    0x00000000fff003adULL, // [26]jlt %r3,%r0,-16 
+    0x0000000000022369ULL, // [27]ldxh %r3,[%r2+2] 
+    0x0000350000020315ULL, // [28]jeq %r3,0x3500,2 
+    0x0000000000002269ULL, // [29]ldxh %r2,[%r2+0] 
+    0x00003500ffec0255ULL, // [30]jne %r2,0x3500,-20 
+    0x00000000000003b7ULL, // [31]mov %r3,0 
+    0x0000000000101261ULL, // [32]ldxw %r2,[%r1+0x10] 
+    0x0000000000000118ULL, // [33] <--- MAP_RELOC lddw %r1,0 
+    0x0000000000000000ULL, // [34]
+    0x0000003300000085ULL, // [35]call 51 
+    0x0000002000000067ULL, // [36]lsh %r0,0x20 
+    0x00000020000000c7ULL, // [37]arsh %r0,0x20 
+    0x0000000000000095ULL, // [38]exit 
+    0x00000000000002bfULL, // [39]mov %r2,%r0 
+    0x0000003600000207ULL, // [40]add %r2,0x36 
+    0x00000000ffe1322dULL, // [41]jgt %r2,%r3,-31 
+    0x0000000000140071ULL, // [42]ldxb %r0,[%r0+0x14] 
+    0x00000011ffdf0055ULL, // [43]jne %r0,0x11,-33 
+    0x00000000ffeb0005ULL, // [44]ja -21 
 };
-
 
 static inline void membuf_init(struct membuf *buf, void *mem, size_t len)
 {
@@ -204,12 +244,12 @@ static inline uint16_t u16_dec(const void *buf)
     return (ptr[0] << 8) | ptr[1];
 }
 
-static int sniff_process_pkt(struct dns_sniff *sniff, void *pkt, size_t plen)
+static int insp_process_pkt(struct dns_insp *insp, void *pkt, size_t plen)
 {
     uint8_t *ptr = pkt;
     uint8_t *end = ptr + plen;
 
-    sniff->rcv_pkts++;
+    insp->rcv_pkts++;
 
     // Ethernet layer
     if (ptr + 14 > end) return 0;
@@ -242,7 +282,7 @@ static int sniff_process_pkt(struct dns_sniff *sniff, void *pkt, size_t plen)
         // unknown type
         return 0;
     }
-    ptr += hdr_len;  
+    ptr += hdr_len;
     if (proto != IPPROTO_UDP) return 0;
 
     // UDP layer
@@ -254,28 +294,28 @@ static int sniff_process_pkt(struct dns_sniff *sniff, void *pkt, size_t plen)
     if (src_port != 53 && dst_port != 53) return 0;
 
     // call into api
-    sniff->dns_pkts++;
-    int rc = dns_validate(ptr, end - ptr, sniff->emsg, sizeof(sniff->emsg));
+    insp->dns_pkts++;
+    int rc = dns_validate(ptr, end - ptr, insp->emsg, sizeof(insp->emsg));
     int is_error = (rc < 0);
-    sniff->dns_okay += !is_error;
-    sniff->dns_fail += is_error;
+    insp->dns_okay += !is_error;
+    insp->dns_fail += is_error;
 
-    fputs(sniff->emsg, stderr);
+    fputs(insp->emsg, stderr);
 
     // all done
     return rc;
 }
 
-static int sniff_process_msg(struct dns_sniff *sniff, struct mmsghdr *msg)
+static int insp_process_msg(struct dns_insp *insp, struct mmsghdr *msg)
 {
     uint8_t *pkt_data = msg->msg_hdr.msg_iov->iov_base;
     uint32_t pkt_len = msg->msg_len;
 
-    if (sniff->pcap) {
-        pcap_write(sniff->pcap, pkt_data, pkt_len);
+    if (insp->pcap) {
+        pcap_write(insp->pcap, pkt_data, pkt_len);
     }
 
-    sniff_process_pkt(sniff, pkt_data, pkt_len);
+    insp_process_pkt(insp, pkt_data, pkt_len);
 
     return 0;
 }
@@ -283,82 +323,82 @@ static int sniff_process_msg(struct dns_sniff *sniff, struct mmsghdr *msg)
 
 /* type:RAW code */
 
-static int sniff_raw(struct dns_sniff *sniff)
+static int capture_raw(struct dns_insp *insp)
 {
-    log_debug("Starting capture %s", sniff->dev_name);
+    log_debug("Starting capture %s", insp->dev_name);
 
-    while (sniff->sig.run) {
+    while (insp->sig.run) {
         // read a block
-        int nr = recvmmsg(sniff->sock_fd, sniff->msgs, PKT_MAXRECV, MSG_WAITFORONE, NULL);
+        int nr = recvmmsg(insp->sock_fd, insp->msgs, PKT_MAXRECV, MSG_WAITFORONE, NULL);
         if (nr < 0) {
             if (errno == EINTR) continue;
-            return log_errno_rf("recvmmsg fd %d on dev %s failed", sniff->sock_fd, sniff->dev_name);
+            return log_errno_rf("recvmmsg fd %d on dev %s failed", insp->sock_fd, insp->dev_name);
         }
         for (int i = 0; i < nr; i++) {
-            int rc = sniff_process_msg(sniff, &sniff->msgs[i]);
+            int rc = insp_process_msg(insp, &insp->msgs[i]);
             if (rc) return rc;
         }
     }
 
-    if (sniff->sig.signo) {
+    if (insp->sig.signo) {
         log_msg("\n");
-        log_info("dns-sniff", 
+        log_info("dns-insp",
             "PID:%d shutting down: got signal %d (%s) from UID:%d PID:%d ",
-            sniff->pid,
-            sniff->sig.signo, strsignal(sniff->sig.signo), 
-            sniff->sig.uid, sniff->sig.pid);
+            insp->pid,
+            insp->sig.signo, strsignal(insp->sig.signo),
+            insp->sig.uid, insp->sig.pid);
     }
 
     return 0;
 }
 
-int setup_raw(struct dns_sniff *sniff)
+int setup_raw(struct dns_insp *insp)
 {
-    log_debug("Seting up %s", sniff->dev_name);
+    log_debug("Seting up %s", insp->dev_name);
 
     // setup buffers
     for (int i = 0; i < PKT_MAXRECV; i++) {
-        sniff->vecs[i].iov_base = sniff->bufs[i];
-        sniff->vecs[i].iov_len  = sizeof(sniff->bufs[i]);
-        sniff->msgs[i].msg_hdr.msg_iov  = &sniff->vecs[i];
-        sniff->msgs[i].msg_hdr.msg_iovlen  = 1;
+        insp->vecs[i].iov_base = insp->bufs[i];
+        insp->vecs[i].iov_len  = sizeof(insp->bufs[i]);
+        insp->msgs[i].msg_hdr.msg_iov  = &insp->vecs[i];
+        insp->msgs[i].msg_hdr.msg_iovlen  = 1;
     }
 
     // socket
-    sniff->sock_fd = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
-    if (sniff->sock_fd == -1) return log_errno_rf("open AF_PACKET");
+    insp->sock_fd = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+    if (insp->sock_fd == -1) return log_errno_rf("open AF_PACKET");
 
     // bind to interface - kernel will start sending us pkts
     struct sockaddr_ll sll = {
         .sll_family  = AF_PACKET,
-        .sll_ifindex = sniff->dev_index,
+        .sll_ifindex = insp->dev_index,
         .sll_protocol = htons(ETH_P_ALL)
     };
-    int rc = bind(sniff->sock_fd, (struct sockaddr *) &sll, sizeof(sll));
-    if (rc) return log_errno_rf("bind to %s failed", sniff->dev_name);
+    int rc = bind(insp->sock_fd, (struct sockaddr *) &sll, sizeof(sll));
+    if (rc) return log_errno_rf("bind to %s failed", insp->dev_name);
 
     // attach DNS filter
     struct sock_fprog bpf = {
         .len =   sizeof(dns_filter) / sizeof(struct sock_filter),
         .filter = dns_filter
     };
-    rc = setsockopt(sniff->sock_fd, SOL_SOCKET, SO_ATTACH_FILTER, &bpf, sizeof(bpf));
-    if (rc) return log_errno_rf("Attach DNS filter to %s failed", sniff->dev_name);
+    rc = setsockopt(insp->sock_fd, SOL_SOCKET, SO_ATTACH_FILTER, &bpf, sizeof(bpf));
+    if (rc) return log_errno_rf("Attach DNS filter to %s failed", insp->dev_name);
 
     // set receive buffer size
     int size = RCVBUF_SIZE;
-    rc = setsockopt(sniff->sock_fd, SOL_SOCKET, SO_RCVBUF, &size, sizeof(size));
+    rc = setsockopt(insp->sock_fd, SOL_SOCKET, SO_RCVBUF, &size, sizeof(size));
     if (rc) log_errno_rf("Set RCVBUF size %d failed", size);
 
     // promisc mode
     struct packet_mreq mreq = {
-        .mr_ifindex = sniff->dev_index,
+        .mr_ifindex = insp->dev_index,
         .mr_type    = PACKET_MR_PROMISC
     };
-    rc = setsockopt(sniff->sock_fd, SOL_PACKET, PACKET_ADD_MEMBERSHIP, &mreq, sizeof(mreq));
+    rc = setsockopt(insp->sock_fd, SOL_PACKET, PACKET_ADD_MEMBERSHIP, &mreq, sizeof(mreq));
     if (rc < 0) return log_errno_rf("setsockopt PACKET_MR_PROMISC");
 
-    log_info("dns-sniff", "DNS active on %s", sniff->dev_name);
+    log_info("dns-insp", "DNS active on %s", insp->dev_name);
 
     // all done
     return 0;
@@ -366,43 +406,43 @@ int setup_raw(struct dns_sniff *sniff)
 
 /* type:MMAP code */
 
-static int sniff_mmap(struct dns_sniff *sniff)
+static int capture_mmap(struct dns_insp *insp)
 {
-    log_debug("Starting capture %s", sniff->dev_name);
+    log_debug("Starting capture %s", insp->dev_name);
 
-    sniff->bd_ptr = sniff->umem.mem;
-    sniff->bd_end = sniff->bd_ptr + sniff->umem.len;
+    insp->bd_ptr = insp->umem.mem;
+    insp->bd_end = insp->bd_ptr + insp->umem.len;
 
-    struct pollfd pfd = { .fd = sniff->sock_fd, .events = POLLIN };
+    struct pollfd pfd = { .fd = insp->sock_fd, .events = POLLIN };
 
-    while (sniff->sig.run) {
+    while (insp->sig.run) {
 
-        struct tpacket_block_desc *bd = mkptr(sniff->bd_ptr, 0);
+        struct tpacket_block_desc *bd = mkptr(insp->bd_ptr, 0);
         if (!(bd->hdr.bh1.block_status & TP_STATUS_USER)) {
             // wait for kernel to fill block
-            int rc = poll(&pfd, 1, -1); 
+            int rc = poll(&pfd, 1, -1);
             if (rc <= 0) {
                 if (rc == 0 || errno == EINTR) continue;
-                log_errno("poll %d failed", sniff->sock_fd);
+                log_errno("poll %d failed", insp->sock_fd);
                 break;
             }
             if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
                 int ec = 0;
                 socklen_t eclen = sizeof(ec);
-                rc = getsockopt(sniff->sock_fd, SOL_SOCKET, SO_ERROR, &ec, &eclen);
+                rc = getsockopt(insp->sock_fd, SOL_SOCKET, SO_ERROR, &ec, &eclen);
                 if (rc) ec = errno;
-                log_ec(ec, "fd %d socket error", sniff->sock_fd);
+                log_ec(ec, "fd %d socket error", insp->sock_fd);
                 break;
             }
             // must be POLLIN
             continue;
         }
-        
+
         // jump to first pkt in block
         struct tpacket3_hdr *hdr = mkptr(bd, bd->hdr.bh1.offset_to_first_pkt);
         for (size_t i = 0; i <  bd->hdr.bh1.num_pkts; i++) {
             uint8_t *pkt = mkptr(hdr, hdr->tp_mac);
-            sniff_process_pkt(sniff, pkt, hdr->tp_len);
+            insp_process_pkt(insp, pkt, hdr->tp_len);
             hdr = mkptr(hdr, hdr->tp_next_offset);
         }
 
@@ -410,42 +450,42 @@ static int sniff_mmap(struct dns_sniff *sniff)
         bd->hdr.bh1.block_status = TP_STATUS_KERNEL;
 
         // next block
-        sniff->bd_ptr += sniff->req.tp_block_size;
-        if (sniff->bd_ptr >= sniff->bd_end) {
-            sniff->bd_ptr = sniff->umem.mem;
+        insp->bd_ptr += insp->req.tp_block_size;
+        if (insp->bd_ptr >= insp->bd_end) {
+            insp->bd_ptr = insp->umem.mem;
         }
     }
 
     return 0;
 }
 
-static int setup_mmap(struct dns_sniff *sniff)
+static int setup_mmap(struct dns_insp *insp)
 {
-    log_debug("Setting up %s", sniff->dev_name);
+    log_debug("Setting up %s", insp->dev_name);
 
     // create raw socket
-    sniff->sock_fd = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
-    if (sniff->sock_fd == -1) return log_errno_rf("open AF_PACKET");
+    insp->sock_fd = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
+    if (insp->sock_fd == -1) return log_errno_rf("open AF_PACKET");
 
     // bind to interface
     struct sockaddr_ll sll = {
         .sll_family  = AF_PACKET,
-        .sll_ifindex = sniff->dev_index,
+        .sll_ifindex = insp->dev_index,
         .sll_protocol = htons(ETH_P_ALL)
     };
-    int rc = bind(sniff->sock_fd, (struct sockaddr *) &sll, sizeof(sll));
-    if (rc) return log_errno_rf("bind to %s failed", sniff->dev_name);
+    int rc = bind(insp->sock_fd, (struct sockaddr *) &sll, sizeof(sll));
+    if (rc) return log_errno_rf("bind to %s failed", insp->dev_name);
 
     // attach DNS filter
     struct sock_fprog bpf = {
         .len =   sizeof(dns_filter) / sizeof(struct sock_filter),
         .filter = dns_filter
     };
-    rc = setsockopt(sniff->sock_fd, SOL_SOCKET, SO_ATTACH_FILTER, &bpf, sizeof(bpf));
-    if (rc) return log_errno_rf("Attach DNS filter to %s failed", sniff->dev_name);
+    rc = setsockopt(insp->sock_fd, SOL_SOCKET, SO_ATTACH_FILTER, &bpf, sizeof(bpf));
+    if (rc) return log_errno_rf("Attach DNS filter to %s failed", insp->dev_name);
 
     // init tpacket request
-    struct tpacket_req3 *req = &sniff->req;
+    struct tpacket_req3 *req = &insp->req;
     req->tp_block_size = 4096 * 128; // Must be power of 2 and page-aligned (e.g., 512KB)
     req->tp_block_nr = 100;          // number of blocks in ring
     req->tp_frame_size = PKT_MAXSIZE;
@@ -454,71 +494,74 @@ static int setup_mmap(struct dns_sniff *sniff)
 
     // setup TPACKET_V3
     int ver = TPACKET_V3;
-    rc = setsockopt(sniff->sock_fd, SOL_PACKET, PACKET_VERSION, &ver, sizeof(ver));
+    rc = setsockopt(insp->sock_fd, SOL_PACKET, PACKET_VERSION, &ver, sizeof(ver));
     if (rc) return log_errno_rf("set PACKET_VERSION failed");
 
     // ask kernel to allocate ring buffer
-    rc = setsockopt(sniff->sock_fd, SOL_PACKET, PACKET_RX_RING, req, sizeof(*req));
+    rc = setsockopt(insp->sock_fd, SOL_PACKET, PACKET_RX_RING, req, sizeof(*req));
     if (rc) return log_errno_rf("set PACKET_RX_RING failed");
 
     // map ring buffer to userspace
     size_t ring_len = req->tp_block_size * req->tp_block_nr;
     int prot = PROT_READ | PROT_WRITE;
     int flags = MAP_SHARED;
-    void *ring_mem = mmap(NULL, ring_len, prot, flags, sniff->sock_fd, 0);
+    void *ring_mem = mmap(NULL, ring_len, prot, flags, insp->sock_fd, 0);
     if (ring_mem == MAP_FAILED) return log_errno_rf("mmap ring failed");
-    membuf_init(&sniff->umem, ring_mem, ring_len);
+    membuf_init(&insp->umem, ring_mem, ring_len);
 
-    log_info("dns-sniff", "DNS active on %s", sniff->dev_name);
+    log_info("dns-insp", "DNS active on %s", insp->dev_name);
 
     return 0;
 }
 
 /* type:XDP code */
 
-static int xdp_init_tap(struct dns_sniff *sniff)
+static int xdp_init_tap(struct dns_insp *insp)
 {
     char tmp[512];
     struct strbuf sbuf;
     struct strbuf *buf = strbuf_init(&sbuf, tmp, sizeof(tmp));
 
-    const char *real = sniff->dev_name;
-    const char *tap = SNIFF_TAP;
-    const char *peer = SNIFF_PEER;
+    const char *real = insp->dev_name;
+    const char *tap = inspect_TAP;
+    const char *peer = inspect_PEER;
 
-    // create dummy tap
-    int rc = run_cmd(buf,1, "ip link add %s type veth peer name %s", tap, peer);
+    int flags = RUN_CAPS | RUN_NULL;
+
+    // create veth tap device
+    int rc = run_cmd(buf, flags, "ip link add %s type veth peer name %s", tap, peer);
     if (rc && rc != 2) return rc;
-    sniff->use_tap = 1;
+    insp->use_tap = 1;
 
-    sniff->tap_index = if_nametoindex(tap);
-    if (sniff->tap_index == 0) return log_errno_rf("name_toindex %s failed", tap);
-    if (run_cmd(buf,1, "ip link set %s up", tap)) return -1;
-    if (run_cmd(buf,1, "ip link set %s up", peer)) return -1;
+    insp->tap_index = if_nametoindex(tap);
+    if (insp->tap_index == 0) return log_errno_rf("name_toindex %s failed", tap);
 
-    // clear old tc rules 
-    run_cmd(buf, 1, "tc qdisc del dev %s ingress", real);
-    run_cmd(buf, 1, "tc qdisc del dev %s root", real);
+    if (run_cmd(buf, flags, "ip link set %s up", tap)) return -1;
+    if (run_cmd(buf, flags, "ip link set %s up", peer)) return -1;
+
+    // clear old tc rules
+    run_cmd(buf, flags, "tc qdisc del dev %s ingress", real);
+    run_cmd(buf, flags, "tc qdisc del dev %s root", real);
 
     // add ingress mirror
-    if (run_cmd(buf, 1, "tc qdisc add dev %s handle ffff: ingress", real)) return -1;
-    if (run_cmd(buf, 1, "tc filter add dev %s parent ffff: matchall action mirred egress mirror dev %s", real, peer)) return -1;
+    if (run_cmd(buf, flags, "tc qdisc add dev %s handle ffff: ingress", real)) return -1;
+    if (run_cmd(buf, flags, "tc filter add dev %s parent ffff: matchall action mirred egress mirror dev %s", real, peer)) return -1;
 
     // add egress mirror
-    if (run_cmd(buf, 1, "tc qdisc add dev %s root handle 1: prio", real)) return -1;
-    if (run_cmd(buf, 1, "tc filter add dev %s parent 1: matchall action mirred egress mirror dev %s", real, peer)) return -1;
+    if (run_cmd(buf, flags, "tc qdisc add dev %s root handle 1: prio", real)) return -1;
+    if (run_cmd(buf, flags, "tc filter add dev %s parent 1: matchall action mirred egress mirror dev %s", real, peer)) return -1;
 
     return 0;
 }
 
-static void xdp_deinit_tap(struct dns_sniff *sniff)
+static void xdp_deinit_tap(struct dns_insp *insp)
 {
     char tmp[256];
     struct strbuf sbuf;
     struct strbuf *buf = strbuf_init(&sbuf, tmp, sizeof(tmp));
 
-    const char *real = sniff->dev_name;
-    const char *tap = SNIFF_TAP;
+    const char *real = insp->dev_name;
+    const char *tap = inspect_TAP;
 
     run_cmd(buf, 1, "ip link del %s", tap);
     run_cmd(buf, 1, "tc qdisc del dev %s ingress", real);
@@ -530,7 +573,7 @@ static int xsk_map_create(int maxq)
     union bpf_attr attr = {
         .map_type    = BPF_MAP_TYPE_XSKMAP,
         .key_size    = sizeof(int),   // queue ID
-        .value_size  = sizeof(int),   // socket FD 
+        .value_size  = sizeof(int),   // socket FD
         .max_entries = maxq          // NIC queues
     };
 
@@ -549,7 +592,7 @@ static int xsk_map_update(int map_fd, int qid, int xsk_fd)
     return syscall(__NR_bpf, BPF_MAP_UPDATE_ELEM, &attr, sizeof(attr));
 }
 
-// look for 
+// patch bpf code with map fd
 static bool bpf_patch_map(int map_fd, size_t len, uint64_t bpf[static len])
 {
     bool patched = false;
@@ -571,7 +614,7 @@ static bool bpf_patch_map(int map_fd, size_t len, uint64_t bpf[static len])
 }
 
 // attach BPF fd to device
-static int bpf_attach_dev(int bpf_fd, int dev_index) 
+static int bpf_attach_dev(int bpf_fd, int dev_index)
 {
     int sock_fd = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
     if (sock_fd < 0) return -1;
@@ -579,7 +622,7 @@ static int bpf_attach_dev(int bpf_fd, int dev_index)
     struct {
         struct nlmsghdr  n;
         struct ifinfomsg i;
-        char             buf[64]; 
+        char buf[64];
     } req = {
         .n.nlmsg_len   = NLMSG_LENGTH(sizeof(struct ifinfomsg)),
         .n.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK,
@@ -597,12 +640,12 @@ static int bpf_attach_dev(int bpf_fd, int dev_index)
     sub->rta_type = IFLA_XDP_FD;
     sub->rta_len = NLA_HDRLEN + sizeof(int);
     memcpy(RTA_DATA(sub), &bpf_fd, sizeof(int));
-    
+
     // Sub-attribute: Flags (Generic/SKB mode for maximum compatibility)
     struct rtattr *flg = mkptr(sub, sub->rta_len);
     flg->rta_type = IFLA_XDP_FLAGS;
     flg->rta_len = NLA_HDRLEN + sizeof(uint32_t);
-    uint32_t flags = XDP_FLAGS_SKB_MODE; 
+    uint32_t flags = XDP_FLAGS_SKB_MODE;
     memcpy(RTA_DATA(flg), &flags, sizeof(flags));
 
     // Fix up lengths for nested structure
@@ -618,8 +661,8 @@ static int bpf_attach_dev(int bpf_fd, int dev_index)
     return rc;
 }
 
-static void ring_init(struct xsk_ring *ring, 
-    void *mem, size_t len, 
+static void ring_init(struct xsk_ring *ring,
+    void *mem, size_t len,
     size_t num_slot, size_t max_size,
     struct xdp_ring_offset *offset)
 {
@@ -657,34 +700,31 @@ static void xsk_ring_fill(struct xsk_ring *ring)
     *ring->producer = idx;
 }
 
-static int sniff_xdp(struct dns_sniff *sniff)
+static int capture_xdp(struct dns_insp *insp)
 {
-    log_debug("Starting capture %s", sniff->dev_name);
+    log_debug("Starting capture %s", insp->dev_name);
 
-    struct membuf *umem = &sniff->umem;
-    struct xsk_ring *fill = &sniff->fill_ring;
-    struct xsk_ring *rx   = &sniff->rx_ring;
+    struct membuf *umem = &insp->umem;
+    struct xsk_ring *fill = &insp->fill_ring;
+    struct xsk_ring *rx   = &insp->rx_ring;
     xsk_ring_fill(fill);
 
-    //recvfrom(sniff->sock_fd, NULL, 0, MSG_DONTWAIT, NULL, NULL);
-    //sendto(sniff->sock_fd, NULL, 0, MSG_DONTWAIT, NULL, 0);
+    struct pollfd pfd = { .fd = insp->sock_fd, .events = POLLIN };
 
-    struct pollfd pfd = { .fd = sniff->sock_fd, .events = POLLIN };
-
-    while (sniff->sig.run) {
+    while (insp->sig.run) {
         // wait for pkt
         int rc = poll(&pfd, 1, -1);
         if (rc <= 0) {
             if (rc == 0 || errno == EINTR) continue;
-            log_errno("poll %d failed", sniff->sock_fd);
+            log_errno("poll %d failed", insp->sock_fd);
             break;
         }
         if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
             int ec = 0;
             socklen_t eclen = sizeof(ec);
-            rc = getsockopt(sniff->sock_fd, SOL_SOCKET, SO_ERROR, &ec, &eclen);
+            rc = getsockopt(insp->sock_fd, SOL_SOCKET, SO_ERROR, &ec, &eclen);
             if (rc) ec = errno;
-            log_ec(ec, "fd %d socket error", sniff->sock_fd);
+            log_ec(ec, "fd %d socket error", insp->sock_fd);
             break;
         }
         if (!(pfd.revents & POLLIN)) continue;
@@ -697,7 +737,7 @@ static int sniff_xdp(struct dns_sniff *sniff)
             // get addr
             struct xdp_desc *desc = (struct xdp_desc *) rx->descs + (rx_ridx & rx->mask);
             uint8_t *pkt = mkptr(umem->mem, desc->addr);
-            sniff_process_pkt(sniff, pkt, desc->len);
+            insp_process_pkt(insp, pkt, desc->len);
             // refill addr
             uint64_t *slot = (uint64_t *) fill->descs + (fill_idx & fill->mask);
             *slot = desc->addr;
@@ -713,12 +753,29 @@ static int sniff_xdp(struct dns_sniff *sniff)
     return 0;
 }
 
-static int setup_xdp(struct dns_sniff *sniff)
+/*
+ * 13 steps
+ * --------
+ * 1  - create tap interface (veth)
+ * 2  - mmap / alloc UMEM buffer
+ * 3  - create xsd socket (AF_XDP)
+ * 4  - register UMEM
+ * 5  - create control rings (fill/rx/completion)
+ * 6  - get control ring info
+ * 7  - mem map control rings to userpsace (fill/rx)
+ * 8  - create xsk map
+ * 9  - patch eBPF code with map fd
+ * 10 - load eBPF program into kernel
+ * 11 - attach eBPF to device
+ * 12 - bind xsd to tap device
+ * 13 - update xsk map with xsd fd
+ */
+static int setup_xdp(struct dns_insp *insp)
 {
-    log_debug("Setting up %s", sniff->dev_name);
+    log_debug("Setting up %s", insp->dev_name);
 
-    int rc = xdp_init_tap(sniff);
-    if (rc) return log_error_rf("init tap %s failed", SNIFF_TAP);
+    int rc = xdp_init_tap(insp);
+    if (rc) return log_error_rf("init tap %s failed", inspect_TAP);
 
     // allocate UMEM buffer to store packets
     size_t ring_len = PKT_NUMSLOT * PKT_MAXSIZE;
@@ -727,35 +784,35 @@ static int setup_xdp(struct dns_sniff *sniff)
     off_t offset = 0;
     void *ring_mem = mmap(NULL, ring_len, prot, flags, -1, offset);
     if (ring_mem == MAP_FAILED) return log_errno_rf("mmap UMEM failed");
-    membuf_init(&sniff->umem, ring_mem, ring_len);
+    membuf_init(&insp->umem, ring_mem, ring_len);
 
     // create XDP socket
-    sniff->sock_fd = socket(AF_XDP, SOCK_RAW, 0);
-    if (sniff->sock_fd == -1) return log_errno_rf("open AF_XDP");
+    insp->sock_fd = socket(AF_XDP, SOCK_RAW, 0);
+    if (insp->sock_fd == -1) return log_errno_rf("open AF_XDP");
 
     // register UMEM with kernel
-    struct xdp_umem_reg *reg = &sniff->reg;
-    reg->addr = (uintptr_t) sniff->umem.mem;
-    reg->len = sniff->umem.len;
+    struct xdp_umem_reg *reg = &insp->reg;
+    reg->addr = (uintptr_t) insp->umem.mem;
+    reg->len = insp->umem.len;
     reg->chunk_size = PKT_MAXSIZE;
-    rc = setsockopt(sniff->sock_fd, SOL_XDP, XDP_UMEM_REG, reg, sizeof(*reg));
+    rc = setsockopt(insp->sock_fd, SOL_XDP, XDP_UMEM_REG, reg, sizeof(*reg));
     if (rc) return log_errno_rf("set XDP_UMEM_REG failed");
 
     // create kernel space control rings
     uint32_t nslot = PKT_NUMSLOT;
-    rc = setsockopt(sniff->sock_fd, SOL_XDP, XDP_UMEM_FILL_RING, &nslot, sizeof(nslot));
+    rc = setsockopt(insp->sock_fd, SOL_XDP, XDP_UMEM_FILL_RING, &nslot, sizeof(nslot));
     if (rc) return log_errno_rf("set XDP_UMEM_FILL_RING failed");
     nslot = PKT_NUMSLOT;
-    rc = setsockopt(sniff->sock_fd, SOL_XDP, XDP_RX_RING, &nslot, sizeof(nslot));
+    rc = setsockopt(insp->sock_fd, SOL_XDP, XDP_RX_RING, &nslot, sizeof(nslot));
     if (rc) return log_errno_rf("set XDP_RX_RING failed");
     nslot = PKT_NUMSLOT;
-    rc = setsockopt(sniff->sock_fd, SOL_XDP, XDP_UMEM_COMPLETION_RING, &nslot, sizeof(nslot));
+    rc = setsockopt(insp->sock_fd, SOL_XDP, XDP_UMEM_COMPLETION_RING, &nslot, sizeof(nslot));
     if (rc) return log_errno_rf("set XDP_UMEM_COMPLETION_RING failed");
 
     // get control ring offsets
     struct xdp_mmap_offsets xdp_off;
     socklen_t optlen = sizeof(xdp_off);
-    rc = getsockopt(sniff->sock_fd, SOL_XDP, XDP_MMAP_OFFSETS, &xdp_off, &optlen);
+    rc = getsockopt(insp->sock_fd, SOL_XDP, XDP_MMAP_OFFSETS, &xdp_off, &optlen);
     if (rc) return log_errno_rf("get XDP_MMAP_OFFSETS failed");
 
     // map fill-ring into userspace
@@ -763,24 +820,24 @@ static int setup_xdp(struct dns_sniff *sniff)
     prot = PROT_READ | PROT_WRITE;
     flags = MAP_SHARED;
     offset = XDP_UMEM_PGOFF_FILL_RING;
-    ring_mem = mmap(NULL, ring_len, prot, flags, sniff->sock_fd, offset);
+    ring_mem = mmap(NULL, ring_len, prot, flags, insp->sock_fd, offset);
     if (ring_mem == MAP_FAILED) return log_errno_rf("mmap fill-ring failed");
-    ring_init(&sniff->fill_ring, ring_mem, ring_len, PKT_NUMSLOT, PKT_MAXSIZE, &xdp_off.fr);
+    ring_init(&insp->fill_ring, ring_mem, ring_len, PKT_NUMSLOT, PKT_MAXSIZE, &xdp_off.fr);
 
     // map rx-ring into userspace
     ring_len = xdp_off.rx.desc + PKT_NUMSLOT * sizeof(struct xdp_desc);
     prot = PROT_READ | PROT_WRITE;
     flags = MAP_SHARED;
     offset = XDP_PGOFF_RX_RING;
-    ring_mem = mmap(NULL, ring_len, prot, flags, sniff->sock_fd, offset);
+    ring_mem = mmap(NULL, ring_len, prot, flags, insp->sock_fd, offset);
     if (ring_mem == MAP_FAILED) return log_errno_rf("mmap rx-ring failed");
-    ring_init(&sniff->rx_ring, ring_mem, ring_len, PKT_NUMSLOT, PKT_MAXSIZE, &xdp_off.rx);
+    ring_init(&insp->rx_ring, ring_mem, ring_len, PKT_NUMSLOT, PKT_MAXSIZE, &xdp_off.rx);
 
     // create map
-    sniff->map_fd = xsk_map_create(1);
-    if (sniff->map_fd == -1) return log_errno_rf("map_create failed");
-    if (!bpf_patch_map(sniff->map_fd, ARR_LEN(bpf_filter), bpf_filter)) {
-        return log_error_rf("patch_map %d failed", sniff->map_fd);
+    insp->map_fd = xsk_map_create(1);
+    if (insp->map_fd == -1) return log_errno_rf("map_create failed");
+    if (!bpf_patch_map(insp->map_fd, ARR_LEN(bpf_filter), bpf_filter)) {
+        return log_error_rf("patch_map %d failed", insp->map_fd);
     }
 
     // load eBPF program
@@ -789,82 +846,82 @@ static int setup_xdp(struct dns_sniff *sniff)
         .insns = (uintptr_t) bpf_filter,
         .insn_cnt = ARR_LEN(bpf_filter),
         .license = (uintptr_t) "GPL",
-        .log_buf = (uintptr_t) sniff->emsg,
-        .log_size = sizeof(sniff->emsg),
+        .log_buf = (uintptr_t) insp->emsg,
+        .log_size = sizeof(insp->emsg),
         .log_level = 1
     };
-    sniff->bpf_fd = syscall(__NR_bpf, BPF_PROG_LOAD, &attr, sizeof(attr));
-    if (sniff->bpf_fd == -1) {
+    insp->bpf_fd = syscall(__NR_bpf, BPF_PROG_LOAD, &attr, sizeof(attr));
+    if (insp->bpf_fd == -1) {
         log_errno("BPF_PROG_LOAD failed");
-        log_error("Verifier Log: %s", sniff->emsg);
+        log_error("Verifier Log: %s", insp->emsg);
         return -1;
     }
 
     // attach bpf prog to device
-    rc = bpf_attach_dev(sniff->bpf_fd, sniff->tap_index);
-    if (rc < 0) return log_errno_rf("attach eBPF to %s failed", SNIFF_TAP);
+    rc = bpf_attach_dev(insp->bpf_fd, insp->tap_index);
+    if (rc < 0) return log_errno_rf("attach eBPF to %s failed", inspect_TAP);
 
     // bind xsd to device
     struct sockaddr_xdp sxdp = {
         .sxdp_family   = AF_XDP,
-        .sxdp_ifindex  = sniff->tap_index,
+        .sxdp_ifindex  = insp->tap_index,
         .sxdp_queue_id = 0,
         .sxdp_flags    = XDP_COPY
     };
-    rc = bind(sniff->sock_fd, (struct sockaddr *) &sxdp, sizeof(sxdp));
-    if (rc) return log_errno_rf("bind to %s failed", sniff->dev_name);
+    rc = bind(insp->sock_fd, (struct sockaddr *) &sxdp, sizeof(sxdp));
+    if (rc) return log_errno_rf("bind to %s failed", insp->dev_name);
 
-    rc = xsk_map_update(sniff->map_fd, 0, sniff->sock_fd);
-    if (rc) return log_errno_rf("map-update %d %d failed", 0, sniff->sock_fd);
+    rc = xsk_map_update(insp->map_fd, 0, insp->sock_fd);
+    if (rc) return log_errno_rf("map-update %d %d failed", 0, insp->sock_fd);
 
-    log_info("dns-sniff", "DNS active on %s", sniff->dev_name);
+    log_info("dns-insp", "DNS active on %s", insp->dev_name);
 
     // all done
     return 0;
 }
 
-// run capture cmd
-static int run_capture(struct dns_sniff *sniff)
+// run capture on network interace
+static int run_capture(struct dns_insp *insp)
 {
     int rc;
 
-    switch(sniff->type) {
-    case TYPE_RAW:  rc = sniff_raw(sniff); break;
-    case TYPE_MMAP: rc = sniff_mmap(sniff); break;
-    case TYPE_XDP:  rc = sniff_xdp(sniff); break;
+    switch(insp->type) {
+    case TYPE_RAW:  rc = capture_raw(insp); break;
+    case TYPE_MMAP: rc = capture_mmap(insp); break;
+    case TYPE_XDP:  rc = capture_xdp(insp); break;
     default: rc = -1;
     }
 
     return rc;
 }
 
-// run tracepcap cmd
-static int run_tracepcap(struct dns_sniff *sniff)
+// run tracepcap on pcap file
+static int run_tracepcap(struct dns_insp *insp)
 {
     size_t pkt_len;
 
     // select a buffer
-    uint8_t *buf = sniff->bufs[0];
-    uint32_t buf_len = sizeof(sniff->bufs[0]);
+    uint8_t *buf = insp->bufs[0];
+    uint32_t buf_len = sizeof(insp->bufs[0]);
 
-    while ((pkt_len = pcap_read(sniff->pcap, buf, buf_len)) > 0) {
+    while ((pkt_len = pcap_read(insp->pcap, buf, buf_len)) > 0) {
         // do nothing
     }
 
     return 0;
 }
 
-// run readpcap cmd
-static int run_readpcap(struct dns_sniff *sniff)
+// run readpcap on pcap file
+static int run_readpcap(struct dns_insp *insp)
 {
     size_t pkt_len;
 
     // select a buffer
-    uint8_t *buf = sniff->bufs[0];
-    uint32_t buf_len = sizeof(sniff->bufs[0]);
+    uint8_t *buf = insp->bufs[0];
+    uint32_t buf_len = sizeof(insp->bufs[0]);
 
-    while ((pkt_len = pcap_read(sniff->pcap, buf, buf_len)) > 0) {
-        int rc = sniff_process_pkt(sniff, buf, pkt_len);
+    while ((pkt_len = pcap_read(insp->pcap, buf, buf_len)) > 0) {
+        int rc = insp_process_pkt(insp, buf, pkt_len);
         if (rc) return rc;
     }
 
@@ -878,17 +935,17 @@ static int run_readpcap(struct dns_sniff *sniff)
 enum { opt_ifname, opt_type, opt_fname, opt_pcapng, opt_loglevel };
 
 static struct cmd_opt capt_opts[] = {
-    { "--interface", "Name of interface to sniff DNS msgs", 0, 1, opt_ifname },
+    { "--interface", "Name of interface to insp DNS msgs", 0, 1, opt_ifname },
     { "--type",      "capture type raw|mmap|xdp", "raw", 1, opt_type },
     { "--file",      "Packet capture file", 0, 1, opt_fname },
     { "--pcapng",    "Use pcapng file fmt", 0, 0, opt_pcapng },
     { "--log-level", "logging level", STR(LOG_LEVEL), 1, opt_loglevel  },
-    { NULL } 
+    { NULL }
 };
 
 static struct cmd_opt pcap_opts[] = {
     { "--file", "Name of packet capture file", 0, 1, opt_fname },
-    { NULL } 
+    { NULL }
 };
 
 static const char *examples[] = {
@@ -900,31 +957,31 @@ static const char *examples[] = {
     NULL
 };
 
-static int set_interface(struct dns_sniff *sniff, struct cmd_argv *parse)
+static int set_interface(struct dns_insp *insp, struct cmd_argv *parse)
 {
     const char *dev_name = parse->value;
     size_t len = strlen(dev_name);
 
-    if (len >= sizeof(sniff->dev_name)) {
-       return log_error_rf("%s bigger than max %zu", parse->name, sizeof(sniff->dev_name) - 1);
+    if (len >= sizeof(insp->dev_name)) {
+       return log_error_rf("%s bigger than max %zu", parse->name, sizeof(insp->dev_name) - 1);
     }
 
-    memcpy(sniff->dev_name, dev_name, len);
-    sniff->dev_name[len] = '\0';
+    memcpy(insp->dev_name, dev_name, len);
+    insp->dev_name[len] = '\0';
 
-    sniff->dev_index = if_nametoindex(sniff->dev_name);
-    if (sniff->dev_index == 0) {
-        return log_errno_rf("if_nametoindex for %s failed", sniff->dev_name);
+    insp->dev_index = if_nametoindex(insp->dev_name);
+    if (insp->dev_index == 0) {
+        return log_errno_rf("if_nametoindex for %s failed", insp->dev_name);
     }
 
     return 0;
 }
 
-static int set_type(struct dns_sniff *sniff, struct cmd_argv *parse)
+static int set_type(struct dns_insp *insp, struct cmd_argv *parse)
 {
-    sniff->type = str_totype(parse->value);
-    if (!sniff->type) {
-        return log_cmd_err(sniff->cmd->name, parse->name, "Unknown type");
+    insp->type = str_totype(parse->value);
+    if (!insp->type) {
+        return log_cmd_err(insp->cmd->name, parse->name, "Unknown type");
     }
 
     return 0;
@@ -938,7 +995,7 @@ struct cmd_mode cmds[] = {
 };
 
 
-static int sniff_parse_argv(struct dns_sniff *sniff, int argc, char *argv[])
+static int inspect_parse_argv(struct dns_insp *insp, int argc, char *argv[])
 {
     if (argc < 2 || !strcmp(argv[1], "--help")) {
         mode_usage(argv[0], cmds, examples);
@@ -947,32 +1004,32 @@ static int sniff_parse_argv(struct dns_sniff *sniff, int argc, char *argv[])
 
     // get cmd
     char *mode = argv[1];
-    sniff->cmd = cmd_mode_find(mode, cmds);
-    if (!sniff->cmd) return log_error_rf("Unsupported mode %s", mode);
+    insp->cmd = cmd_mode_find(mode, cmds);
+    if (!insp->cmd) return log_error_rf("Unsupported mode %s", mode);
 
     // process cmd-line options
     int rc;
-    struct cmd_argv parser = { argc, argv, sniff->cmd->opts, 2 } ;
+    struct cmd_argv parser = { argc, argv, insp->cmd->opts, 2 } ;
     while ( (rc = cmd_argv_next(&parser)) >= 0) {
         switch(rc) {
-        case opt_ifname:   rc = set_interface(sniff, &parser); break;
-        case opt_type:     rc = set_type(sniff, &parser); break;
-        case opt_fname:    rc = opt_setstr(&sniff->filename, &parser); break;
+        case opt_ifname:   rc = set_interface(insp, &parser); break;
+        case opt_type:     rc = set_type(insp, &parser); break;
+        case opt_fname:    rc = opt_setstr(&insp->filename, &parser); break;
         case opt_loglevel: rc = opt_setint(&log_level, &parser); break;
-        case opt_pcapng:   sniff->use_pcapng = 1; break;
+        case opt_pcapng:   insp->use_pcapng = 1; break;
         }
         if (rc < 0) break;
     }
     if (rc != OPT_EOF) return rc;
 
     // final checks
-    switch(sniff->cmd->mode) {
+    switch(insp->cmd->mode) {
     case MODE_CAPTURE:
-        if (!*sniff->dev_name) return log_cmd_err(mode, capt_opts[0].name, "is required");
+        if (!*insp->dev_name) return log_cmd_err(mode, capt_opts[0].name, "is required");
         break;
     case MODE_READPCAP:
     case MODE_TRACEPCAP:
-        if (!sniff->filename) return log_cmd_err(mode, pcap_opts[0].name, "is required");
+        if (!insp->filename) return log_cmd_err(mode, pcap_opts[0].name, "is required");
         break;
     }
 
@@ -980,38 +1037,39 @@ static int sniff_parse_argv(struct dns_sniff *sniff, int argc, char *argv[])
     return 0;
 }
 
-static int open_pcap(struct dns_sniff *sniff)
+static int open_pcap(struct dns_insp *insp)
 {
     uint32_t flags = 0;
 
-    switch(sniff->cmd->mode) {
+    switch(insp->cmd->mode) {
     case MODE_CAPTURE: flags |= PCAP_WRITE; break;
     case MODE_READPCAP: flags |= PCAP_READ; break;
     case MODE_TRACEPCAP: flags |= PCAP_READ | PCAP_TRACE; break;
     }
-    if (sniff->use_pcapng) flags |= PCAP_FMTNG;
+    if (insp->use_pcapng) flags |= PCAP_FMTNG;
 
-    sniff->pcap = pcap_open(sniff->filename, flags);
-    if (!sniff->pcap) return -1;
+    insp->pcap = pcap_open(insp->filename, flags);
+    if (!insp->pcap) return -1;
 
     return 0;
 }
 
-static int sniff_init(struct dns_sniff *sniff)
+// setup state after parsing argv
+static int insp_init(struct dns_insp *insp)
 {
     int rc;
 
-    if (sniff->filename) {
-        rc = open_pcap(sniff);
+    if (insp->filename) {
+        rc = open_pcap(insp);
         if (rc) return rc;
     }
 
-    if (sniff->cmd->mode != MODE_CAPTURE) return rc;
+    if (insp->cmd->mode != MODE_CAPTURE) return rc;
 
-    switch(sniff->type) {
-    case TYPE_RAW:  rc = setup_raw(sniff); break;
-    case TYPE_MMAP: rc = setup_mmap(sniff); break;
-    case TYPE_XDP:  rc = setup_xdp(sniff); break;
+    switch(insp->type) {
+    case TYPE_RAW:  rc = setup_raw(insp); break;
+    case TYPE_MMAP: rc = setup_mmap(insp); break;
+    case TYPE_XDP:  rc = setup_xdp(insp); break;
     default: rc = -1;
     }
 
@@ -1019,57 +1077,58 @@ static int sniff_init(struct dns_sniff *sniff)
 }
 
 // free state
-static void sniff_free(struct dns_sniff *sniff)
+static void insp_free(struct dns_insp *insp)
 {
-    if (sniff->bpf_fd != -1) {
-        bpf_attach_dev(-1, sniff->tap_index);
-        close(sniff->bpf_fd);
+    if (insp->bpf_fd != -1) {
+        bpf_attach_dev(-1, insp->tap_index);
+        close(insp->bpf_fd);
     }
-    if (sniff->map_fd != -1) close(sniff->map_fd);
-    membuf_deinit(&sniff->umem);
-    ring_deinit(&sniff->rx_ring);
-    ring_deinit(&sniff->fill_ring);
+    if (insp->map_fd != -1) close(insp->map_fd);
+    membuf_deinit(&insp->umem);
+    ring_deinit(&insp->rx_ring);
+    ring_deinit(&insp->fill_ring);
 
-    if (sniff->sock_fd != -1) close(sniff->sock_fd);
-    if (sniff->use_tap) xdp_deinit_tap(sniff);
+    if (insp->sock_fd != -1) close(insp->sock_fd);
+    if (insp->use_tap) xdp_deinit_tap(insp);
 
-    if (sniff->pcap) pcap_close(sniff->pcap);
-    if (sniff->filename) free(sniff->filename);
+    if (insp->pcap) pcap_close(insp->pcap);
+    if (insp->filename) free(insp->filename);
 
-    free(sniff);
+    free(insp);
 }
 
 // create state
-static struct dns_sniff *sniff_create(void)
+static struct dns_insp *insp_create(void)
 {
-    struct dns_sniff *sniff;
+    struct dns_insp *insp;
 
-    sniff = malloc(sizeof(*sniff));
-    if (!sniff) return log_errno_rn("malloc failed for state");
+    insp = malloc(sizeof(*insp));
+    if (!insp) return log_errno_rn("malloc failed for state");
 
-    memset(sniff, 0, sizeof(*sniff));
-    sniff->sock_fd = -1;
-    sniff->bpf_fd = -1;
-    sniff->map_fd = -1;
-    sniff->type = TYPE_RAW;
+    memset(insp, 0, sizeof(*insp));
+    insp->sock_fd = -1;
+    insp->bpf_fd = -1;
+    insp->map_fd = -1;
+    insp->type = TYPE_RAW;
 
-    return sniff;
+    return insp;
 }
 
 int main(int argc, char *argv[])
 {
-    struct dns_sniff *sniff = NULL;
+    struct dns_insp *insp = NULL;
     int ec = 0;
 
-    log_init(NULL, SNIFF_LOGLEVEL);
-    if (!(sniff = sniff_create())) { ec = 1; goto done; }
-    if (sniff_parse_argv(sniff, argc, argv)) { ec = 2;  goto done; }
-    if (setup_signals(&sniff->sig)) { ec = 3; goto done; }
-    if (sniff_init(sniff))   { ec = 4; goto done; }
-    if (sniff->cmd->run(sniff)) { ec = 5; goto done; }
+    log_init(NULL, inspect_LOGLEVEL);
+
+    if (!(insp = insp_create())) { ec = 1; goto done; }
+    if (inspect_parse_argv(insp, argc, argv)) { ec = 2;  goto done; }
+    if (setup_signals(&insp->sig)) { ec = 3; goto done; }
+    if (insp_init(insp))     { ec = 4; goto done; }
+    if (insp->cmd->run(insp)) { ec = 5; goto done; }
 
 done:
-    if (sniff) sniff_free(sniff);
+    if (insp) insp_free(insp);
 
     return ec;
 }

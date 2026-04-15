@@ -1,19 +1,23 @@
 # Makefile for c-dns-pkt
-# make all
-# make tests
+#
+# targets
+# -------
+# all     : build cmds (dns-inpsect,dns-gen)
+# test    : run tests
+# install : install dns-inspect
+# gen-bpf : generate BFP filter
 
 # #######################
 #     Config
 # #######################
 
-# dirs
-BUILD_DIR = build
-SRC_DIR = src
-INSTALL_DIR = /usr/local/bin
-SCRIPTS_DIR = scripts
+DNS_INSP := dns-inspect
+DNS_GEN  := dns-gen
 
-INSPECT := dns-inspect
-GEN     := dns-gen
+# dirs
+BUILD_DIR := build
+SRC_DIR   := src
+INSTALL_DIR = /usr/local/bin
 
 # build tools
 # --------------
@@ -56,7 +60,7 @@ MAKEFLAGS += --no-print-directory
 # Default target - build cmds
 # --------------------------
 .PHONY: all
-all: $(BUILD_DIR) dns-inspect dns-gen
+all: $(BUILD_DIR) $(DNS_INSP) $(DNS_GEN)
 
 # debug build
 # -----------
@@ -81,14 +85,14 @@ $(BUILD_DIR):
 
 # build our binaries
 
-# dns-inspect
-# -----------
-INSPECT_SRCS = src/util.c src/log.c src/pcap.c src/dns_proto.c src/dns_inspect.c
-INSPECT_OBJS = $(INSPECT_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
-INSPECT_DEPS = $(INSPECT_OBJS:.o=.d)
--include $(INSPECT_DEPS)
-$(INSPECT): $(INSPECT_OBJS) | $(BUILD_DIR)
-	$(cmd_LD) $(CFLAGS) $(LDFLAGS) $(INSPECT_OBJS) -o $@
+# dns-insp
+# ---------
+INSP_SRCS = src/util.c src/log.c src/pcap.c src/dns_proto.c src/dns_inspect.c
+INSP_OBJS = $(INSP_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
+INSP_DEPS = $(INSP_OBJS:.o=.d)
+-include $(INSP_DEPS)
+$(DNS_INSP): $(INSP_OBJS) | $(BUILD_DIR)
+	$(cmd_LD) $(CFLAGS) $(LDFLAGS) $(INSP_OBJS) -o $@
 
 # dns-gen
 # -------
@@ -96,7 +100,7 @@ GEN_SRCS = src/util.c src/log.c src/pcap.c src/dns_proto.c  src/dns_gen.c
 GEN_OBJS = $(GEN_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 GEN_DEPS = $(GEN_OBJS:.o=.d)
 -include $(GEN_DEPS)
-$(GEN): $(GEN_OBJS) | $(BUILD_DIR)
+$(DNS_GEN): $(GEN_OBJS) | $(BUILD_DIR)
 	$(cmd_LD) $(CFLAGS) $(LDFLAGS) $(GEN_OBJS) -o $@
 
 # compile rule
@@ -129,14 +133,14 @@ tags: $(SOURCES)
 # test
 # ----
 .PHONY: test
-test:  $(DNS_INSPECT) $(DNS_GEN)
+test:  $(DNS_INSP) $(DNS_GEN)
 	@echo "Starting tests"
 	$(Q)./test-integration.sh
 
 # setcap
 # -------
 .PHONY: setcap
-setcap : dns-inspect
+setcap : dns-SNIFF
 	@echo "Setting capabilities on $<"
 	$(Q) $(SETCAP_CMD) $<
 
@@ -145,12 +149,12 @@ setcap : dns-inspect
 .PHONY: install
 install:
 	@mkdir -p $(INSTALL_DIR)
-	$(INSTALL) -D -m 755 $(INSPECT) $(INSTALL_DIR)/$(INSPECT)
-	$(INSTALL) -D -m 755 $(GEN) $(INSTALL_DIR)/$(GEN)
-	$(SETCAP_CMD) $(INSTALL_DIR)/$(INSPECT) || true
+	$(INSTALL) -D -m 755 $(DNS_INSP) $(INSTALL_DIR)/$(DNS_INSP)
+	$(INSTALL) -D -m 755 $(DNS_GEN) $(INSTALL_DIR)/$(DNS_GEN)
+	$(SETCAP_CMD) $(INSTALL_DIR)/$(DNS_INSP) || true
 
 # clean
 # ----
 .PHONY: clean
 clean:
-	rm -rf $(BUILD_DIR) $(DNS_INSPECT) $(DNS_GEN)
+	rm -rf $(BUILD_DIR) $(DNS_INSP) $(DNS_GEN)

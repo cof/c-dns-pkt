@@ -1,5 +1,7 @@
 #!/usr/bin/awk -f
 
+# generates bpf filter from  bpf-objdump output
+
 BEGIN {
     count = 0
     print "static uint64_t bpf_filter[] = {"
