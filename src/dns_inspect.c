@@ -46,6 +46,7 @@
 #include "dns_proto.h"
 
 #define SNIFF_LOGLEVEL LOG_INFO
+#define SNIFF_TAP "sniff_tap"
 
 // supported cmds
 #define MODE_NONE      0
@@ -96,6 +97,7 @@ struct dns_sniff {
     struct pcap_file *pcap;
     char dev_name[IFNAMSIZ]; 
     int dev_index;
+    int tap_index;
     int sock_fd; // AF_PACKET/AF_XDP
     int bpf_fd;  // BPF_PROG_LOAD
     int map_fd;  // BPF_MAP_CREATE
@@ -109,6 +111,7 @@ struct dns_sniff {
         struct xdp_umem_reg reg;
     };
     unsigned int use_pcapng : 1; // use pcapng output fmt
+    unsigned int use_tap    : 1; // use tap device
     // packet counters
     uint64_t rcv_pkts;
     uint64_t dns_pkts;
@@ -157,43 +160,44 @@ static uint64_t bpf_filter[] = {
     0x0000000800000567ULL, // [06]lsh %r5,8 
     0x00000000000c0471ULL, // [07]ldxb %r4,[%r0+0xc] 
     0x000000000000454fULL, // [08]or %r5,%r4 
-    0x0000000800170516ULL, // [09]jeq32 %r5,8,23 
-    0x0000dd8600020516ULL, // [10]jeq32 %r5,0xdd86,2 
-    0x00000002000000b7ULL, // [11]mov %r0,2 
+    0x0000000800030516ULL, // [09]jeq32 %r5,8,3 
+    0x0000dd86001c0516ULL, // [10]jeq32 %r5,0xdd86,28 
+    0x00000001000000b7ULL, // [11]mov %r0,1 
     0x0000000000000095ULL, // [12]exit 
-    0x00000000000002bfULL, // [13]mov %r2,%r0 
-    0x0000003600000207ULL, // [14]add %r2,0x36 
-    0x00000000fffb322dULL, // [15]jgt %r2,%r3,-5 
-    0x0000000000140071ULL, // [16]ldxb %r0,[%r0+0x14] 
-    0x00000011fff90055ULL, // [17]jne %r0,0x11,-7 
-    0x00000000000020bfULL, // [18]mov %r0,%r2 
-    0x0000000800000007ULL, // [19]add %r0,8 
-    0x00000000fff603adULL, // [20]jlt %r3,%r0,-10 
-    0x0000000000022369ULL, // [21]ldxh %r3,[%r2+2] 
-    0x0000350000020315ULL, // [22]jeq %r3,0x3500,2 
-    0x0000000000002269ULL, // [23]ldxh %r2,[%r2+0] 
-    0x00003500fff20255ULL, // [24]jne %r2,0x3500,-14 
-    0x00000000000003b7ULL, // [25]mov %r3,0 
-    0x0000000000101261ULL, // [26]ldxw %r2,[%r1+0x10] 
-    0x0000000000000118ULL, // [27] <--- MAP_RELOC lddw %r1,0 
-    0x0000000000000000ULL, // [28]
-    0x0000003300000085ULL, // [29]call 51 
-    0x0000002000000067ULL, // [30]lsh %r0,0x20 
-    0x00000020000000c7ULL, // [31]arsh %r0,0x20 
-    0x0000000000000095ULL, // [32]exit 
-    0x00000000000005bfULL, // [33]mov %r5,%r0 
-    0x0000002200000507ULL, // [34]add %r5,0x22 
-    0x00000000ffe753adULL, // [35]jlt %r3,%r5,-25 
-    0x0000000000170471ULL, // [36]ldxb %r4,[%r0+0x17] 
-    0x00000011ffe50455ULL, // [37]jne %r4,0x11,-27 
-    0x00000000000e0461ULL, // [38]ldxw %r4,[%r0+0xe] 
-    0x0000000f00000457ULL, // [39]and %r4,0xf 
-    0x0000000200000467ULL, // [40]lsh %r4,2 
-    0x0000000e00000407ULL, // [41]add %r4,0xe 
-    0x000000000000400fULL, // [42]add %r0,%r4 
-    0x00000000000002bfULL, // [43]mov %r2,%r0 
-    0x00000000ffe50005ULL, // [44]ja -27 
+    0x00000000000005bfULL, // [13]mov %r5,%r0 
+    0x0000002200000507ULL, // [14]add %r5,0x22 
+    0x00000000fffb53adULL, // [15]jlt %r3,%r5,-5 
+    0x0000000000170471ULL, // [16]ldxb %r4,[%r0+0x17] 
+    0x00000011fff90455ULL, // [17]jne %r4,0x11,-7 
+    0x00000000000e0461ULL, // [18]ldxw %r4,[%r0+0xe] 
+    0x0000000f00000457ULL, // [19]and %r4,0xf 
+    0x0000000200000467ULL, // [20]lsh %r4,2 
+    0x0000000e00000407ULL, // [21]add %r4,0xe 
+    0x000000000000400fULL, // [22]add %r0,%r4 
+    0x00000000000002bfULL, // [23]mov %r2,%r0 
+    0x00000000000020bfULL, // [24]mov %r0,%r2 
+    0x0000000800000007ULL, // [25]add %r0,8 
+    0x00000000fff003adULL, // [26]jlt %r3,%r0,-16 
+    0x0000000000022369ULL, // [27]ldxh %r3,[%r2+2] 
+    0x0000350000020315ULL, // [28]jeq %r3,0x3500,2 
+    0x0000000000002269ULL, // [29]ldxh %r2,[%r2+0] 
+    0x00003500ffec0255ULL, // [30]jne %r2,0x3500,-20 
+    0x00000000000003b7ULL, // [31]mov %r3,0 
+    0x0000000000101261ULL, // [32]ldxw %r2,[%r1+0x10] 
+    0x0000000000000118ULL, // [33] <--- MAP_RELOC lddw %r1,0 
+    0x0000000000000000ULL, // [34]
+    0x0000003300000085ULL, // [35]call 51 
+    0x0000002000000067ULL, // [36]lsh %r0,0x20 
+    0x00000020000000c7ULL, // [37]arsh %r0,0x20 
+    0x0000000000000095ULL, // [38]exit 
+    0x00000000000002bfULL, // [39]mov %r2,%r0 
+    0x0000003600000207ULL, // [40]add %r2,0x36 
+    0x00000000ffe1322dULL, // [41]jgt %r2,%r3,-31 
+    0x0000000000140071ULL, // [42]ldxb %r0,[%r0+0x14] 
+    0x00000011ffdf0055ULL, // [43]jne %r0,0x11,-33 
+    0x00000000ffeb0005ULL, // [44]ja -21 
 };
+
 
 static inline void membuf_init(struct membuf *buf, void *mem, size_t len)
 {
@@ -510,6 +514,53 @@ static int setup_mmap(struct dns_sniff *sniff)
 
 /* type:XDP code */
 
+static int xdp_init_tap(struct dns_sniff *sniff)
+{
+    char tmp[512];
+    struct strbuf sbuf;
+    struct strbuf *buf = strbuf_init(&sbuf, tmp, sizeof(tmp));
+
+    const char *real = sniff->dev_name;
+    const char *tap = SNIFF_TAP;
+
+    // create dummy tap
+    int rc = run_cmd(buf,1, "ip link add %s type dummy", tap);
+    if (rc && rc != 2) return rc;
+    sniff->use_tap = 1;
+
+    sniff->tap_index = if_nametoindex(tap);
+    if (sniff->tap_index == 0) return log_errno_rf("name_toindex %s failed", tap);
+    if (run_cmd(buf,1, "ip link set %s up", tap)) return -1;
+
+    // clear old tc rules 
+    run_cmd(buf, 1, "tc qdisc del dev %s ingress", real);
+    run_cmd(buf, 1, "tc qdisc del dev %s root", real);
+
+    // add ingress mirror
+    if (run_cmd(buf, 1, "tc qdisc add dev %s handle ffff: ingress", real)) return -1;
+    if (run_cmd(buf, 1, "tc filter add dev %s parent ffff: u32 match u32 0 0 action mirred egress mirror dev %s", real, tap)) return -1;
+
+    // add egress mirror
+    if (run_cmd(buf, 1, "tc qdisc add dev %s root handle 1: prio", real)) return -1;
+    if (run_cmd(buf, 1, "tc filter add dev %s parent 1: u32 match u32 0 0 action mirred egress mirror dev %s", real, tap)) return -1;
+
+    return 0;
+}
+
+static void xdp_deinit_tap(struct dns_sniff *sniff)
+{
+    char tmp[256];
+    struct strbuf sbuf;
+    struct strbuf *buf = strbuf_init(&sbuf, tmp, sizeof(tmp));
+
+    const char *real = sniff->dev_name;
+    const char *tap = SNIFF_TAP;
+
+    run_cmd(buf, 1, "ip link del %s", tap);
+    run_cmd(buf, 1, "tc qdisc del dev %s ingress", real);
+    run_cmd(buf, 1, "tc qdisc del dev %s root", real);
+}
+
 static int xsk_map_create(int maxq)
 {
     union bpf_attr attr = {
@@ -602,7 +653,6 @@ static int bpf_attach_dev(int bpf_fd, int dev_index)
 
     return rc;
 }
-
 
 static void ring_init(struct xsk_ring *ring, 
     void *mem, size_t len, 
@@ -703,6 +753,9 @@ static int setup_xdp(struct dns_sniff *sniff)
 {
     log_debug("Setting up %s", sniff->dev_name);
 
+    int rc = xdp_init_tap(sniff);
+    if (rc) return log_error_rf("init tap %s failed", SNIFF_TAP);
+
     // allocate UMEM buffer to store packets
     size_t ring_len = PKT_NUMSLOT * PKT_MAXSIZE;
     int prot = PROT_READ | PROT_WRITE;
@@ -721,7 +774,7 @@ static int setup_xdp(struct dns_sniff *sniff)
     reg->addr = (uintptr_t) sniff->umem.mem;
     reg->len = sniff->umem.len;
     reg->chunk_size = PKT_MAXSIZE;
-    int rc = setsockopt(sniff->sock_fd, SOL_XDP, XDP_UMEM_REG, reg, sizeof(*reg));
+    rc = setsockopt(sniff->sock_fd, SOL_XDP, XDP_UMEM_REG, reg, sizeof(*reg));
     if (rc) return log_errno_rf("set XDP_UMEM_REG failed");
 
     // create kernel space control rings
@@ -771,7 +824,7 @@ static int setup_xdp(struct dns_sniff *sniff)
         .prog_type = BPF_PROG_TYPE_XDP,
         .insns = (uintptr_t) bpf_filter,
         .insn_cnt = ARR_LEN(bpf_filter),
-        .license = (uintptr_t) "Proprietary",
+        .license = (uintptr_t) "GPL",
         .log_buf = (uintptr_t) sniff->emsg,
         .log_size = sizeof(sniff->emsg),
         .log_level = 1
@@ -784,13 +837,13 @@ static int setup_xdp(struct dns_sniff *sniff)
     }
 
     // attach bpf prog to device
-    rc = bpf_attach_dev(sniff->bpf_fd, sniff->dev_index);
-    if (rc < 0) return log_errno_rf("attach eBPF to %s failed", sniff->dev_name);
+    rc = bpf_attach_dev(sniff->bpf_fd, sniff->tap_index);
+    if (rc < 0) return log_errno_rf("attach eBPF to %s failed", SNIFF_TAP);
 
     // bind xsd to device
     struct sockaddr_xdp sxdp = {
         .sxdp_family   = AF_XDP,
-        .sxdp_ifindex  = sniff->dev_index,
+        .sxdp_ifindex  = sniff->tap_index,
         .sxdp_queue_id = 0,
         .sxdp_flags    = XDP_COPY
     };
@@ -1003,14 +1056,17 @@ static int sniff_init(struct dns_sniff *sniff)
 static void sniff_free(struct dns_sniff *sniff)
 {
     if (sniff->bpf_fd != -1) {
-        bpf_attach_dev(-1, sniff->dev_index);
+        bpf_attach_dev(-1, sniff->tap_index);
         close(sniff->bpf_fd);
     }
     if (sniff->map_fd != -1) close(sniff->map_fd);
     membuf_deinit(&sniff->umem);
     ring_deinit(&sniff->rx_ring);
     ring_deinit(&sniff->fill_ring);
+
     if (sniff->sock_fd != -1) close(sniff->sock_fd);
+    if (sniff->use_tap) xdp_deinit_tap(sniff);
+
     if (sniff->pcap) pcap_close(sniff->pcap);
     if (sniff->filename) free(sniff->filename);
 

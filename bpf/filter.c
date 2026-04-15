@@ -13,17 +13,16 @@
 // Define Map for XDP socket
 SEC(".maps")
 struct {
-    int type;  // BPF_MAP_TYPE_XSKMAP
+    int type; 
     int key_size;
     int val_size;
     int max_entry;
 } xsk_map = {
-    .type = 17, 
+    .type = BPF_MAP_TYPE_XSKMAP,
     .key_size = 4,
     .val_size = 4,
     .max_entry = 64
 };
-
 
 SEC("xdp")
 int dns_filter_dual_stack(struct xdp_md *ctx) 
@@ -32,38 +31,38 @@ int dns_filter_dual_stack(struct xdp_md *ctx)
     void *data = (void *)(long)ctx->data;
 
     struct ethhdr *eth = data;
-    // Basic boundary checks
-    if ((void *)(eth + 1) > data_end) return XDP_PASS;
+    if ((void *)(eth + 1) > data_end) return XDP_DROP;
 
     __u16 h_proto = eth->h_proto;
     void *l4_header = NULL;
 
-    // Handle IPv4
+    // IPv4
     if (h_proto == bpf_htons(ETH_P_IP)) {
         struct iphdr *ip = (void *)(eth + 1);
-        if ((void *)(ip + 1) > data_end) return XDP_PASS;
+        if ((void *)(ip + 1) > data_end) return XDP_DROP;
         if (ip->protocol == IPPROTO_UDP) {
             l4_header = (void *)ip + (ip->ihl * 4);
         }
     } 
-    // Handle IPv6
+    // IPv6
     else if (h_proto == bpf_htons(ETH_P_IPV6)) {
         struct ipv6hdr *ipv6 = (void *)(eth + 1);
-        if ((void *)(ipv6 + 1) > data_end) return XDP_PASS;
+        if ((void *)(ipv6 + 1) > data_end) return XDP_DROP;
         if (ipv6->nexthdr == IPPROTO_UDP) {
             l4_header = (void *)(ipv6 + 1);
         }
     }
 
-    // Check UDP port 53 (DNS)
+    // check UDP port 53
     if (l4_header) {
         struct udphdr *udp = l4_header;
-        if ((void *)(udp + 1) > data_end) return XDP_PASS;
+        if ((void *)(udp + 1) > data_end) return XDP_DROP;
         if (udp->dest == bpf_htons(53) || udp->source == bpf_htons(53)) {
             return bpf_redirect_map(&xsk_map, ctx->rx_queue_index, 0);
         }
     }
-    return XDP_PASS;
+
+    return XDP_DROP;
 }
 
 SEC("license")
