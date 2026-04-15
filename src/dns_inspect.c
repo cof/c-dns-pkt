@@ -47,9 +47,8 @@
 #include "pcap.h"
 #include "dns_proto.h"
 
-#define inspect_LOGLEVEL LOG_INFO
-#define inspect_TAP "inspect_tap"
-#define inspect_PEER "inspect_peer"
+#define INSP_TAP "insp_tap"
+#define INSP_PEER "insp_peer"
 
 // supported cmds
 #define MODE_NONE      0
@@ -522,8 +521,8 @@ static int xdp_init_tap(struct dns_insp *insp)
     struct strbuf *buf = strbuf_init(&sbuf, tmp, sizeof(tmp));
 
     const char *real = insp->dev_name;
-    const char *tap = inspect_TAP;
-    const char *peer = inspect_PEER;
+    const char *tap = INSP_TAP;
+    const char *peer = INSP_PEER;
 
     int flags = RUN_CAPS | RUN_NULL;
 
@@ -560,7 +559,7 @@ static void xdp_deinit_tap(struct dns_insp *insp)
     struct strbuf *buf = strbuf_init(&sbuf, tmp, sizeof(tmp));
 
     const char *real = insp->dev_name;
-    const char *tap = inspect_TAP;
+    const char *tap = INSP_TAP;
 
     run_cmd(buf, 1, "ip link del %s", tap);
     run_cmd(buf, 1, "tc qdisc del dev %s ingress", real);
@@ -774,7 +773,7 @@ static int setup_xdp(struct dns_insp *insp)
     log_debug("Setting up %s", insp->dev_name);
 
     int rc = xdp_init_tap(insp);
-    if (rc) return log_error_rf("init tap %s failed", inspect_TAP);
+    if (rc) return log_error_rf("init tap %s failed", INSP_TAP);
 
     // allocate UMEM buffer to store packets
     size_t ring_len = PKT_NUMSLOT * PKT_MAXSIZE;
@@ -858,7 +857,7 @@ static int setup_xdp(struct dns_insp *insp)
 
     // attach bpf prog to device
     rc = bpf_attach_dev(insp->bpf_fd, insp->tap_index);
-    if (rc < 0) return log_errno_rf("attach eBPF to %s failed", inspect_TAP);
+    if (rc < 0) return log_errno_rf("attach eBPF to %s failed", INSP_TAP);
 
     // bind xsd to device
     struct sockaddr_xdp sxdp = {
@@ -1118,7 +1117,7 @@ int main(int argc, char *argv[])
     struct dns_insp *insp = NULL;
     int ec = 0;
 
-    log_init(NULL, inspect_LOGLEVEL);
+    log_init(NULL, LOG_INFO);
 
     if (!(insp = insp_create())) { ec = 1; goto done; }
     if (inspect_parse_argv(insp, argc, argv)) { ec = 2;  goto done; }
