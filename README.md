@@ -40,7 +40,8 @@ A DNS packet inspector that can read DNS messages from a network interface or pc
     $ dns-inspect 
     Usage: dns-inspect [MODE] [OPTIONS]
 
-    MODE:
+    Modes:
+     
       capture   Capture DNS messages from a network interface
       readpcap  Read DNS messages from a pcap file
       tracepcap Read record/block info from a pcap file
@@ -185,7 +186,8 @@ A DNS message and DNS pcap file generator tool.
     $ dns-gen --help
     Usage: dns-gen [MODE] [OPTIONS]
 
-    MODE:
+    Modes:
+     
       query Send DNS query to a server
       resp  Generate a DNS response
       fuzz  Send fuzzed DNS message to server or pcap

@@ -599,7 +599,7 @@ void prog_usage(const char *prog_name, const struct cmd_opt opts[], const char *
     int w = opts_width(opts);
 
     printf("Usage: %s [OPTIONS]\n\n", name);
-    printf("Options:\n");
+    puts("Options:\n");
 
     for (int i = 0; opts[i].name; i++)  {
         const struct cmd_opt *opt = &opts[i];
@@ -635,7 +635,7 @@ void mode_usage(const char *prog_name, const struct cmd_mode modes[], const char
     printf("Usage: %s [MODE] [OPTIONS]\n\n", name);
 
     // list modes
-    printf("MODE:\n");
+    puts("Modes:\n");
     for (size_t i = 0; modes[i].name; i++) {
         printf("  %-*s %s\n", w, modes[i].name, modes[i].desc);
     }
