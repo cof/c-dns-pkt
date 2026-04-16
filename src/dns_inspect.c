@@ -256,7 +256,7 @@ static int insp_process_pkt(struct dns_insp *insp, void *pkt, size_t plen)
     ptr += 14;
     while (is_vlan(type)) {
         if (ptr + 4 > end) return 0;
-        type = dec_u16(ptr + 2);
+        type = u16_dec(ptr + 2);
         ptr += 4;
     }
 
@@ -292,7 +292,7 @@ static int insp_process_pkt(struct dns_insp *insp, void *pkt, size_t plen)
     uint16_t dst_port = u16_dec(&udp->dest);
     if (src_port != 53 && dst_port != 53) return 0;
 
-    // call into api
+    // pass pkt to DNS api
     insp->dns_pkts++;
     int rc = dns_validate(ptr, end - ptr, insp->emsg, sizeof(insp->emsg));
     int is_error = (rc < 0);
@@ -754,7 +754,7 @@ static int capture_xdp(struct dns_insp *insp)
 /*
  * 13 steps
  * --------
- * 1  - create tap interface (veth)
+ * 1  - create veth-tap interface
  * 2  - mmap / alloc UMEM buffer
  * 3  - create xsd socket (AF_XDP)
  * 4  - register UMEM
