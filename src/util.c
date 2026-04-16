@@ -608,6 +608,8 @@ void prog_usage(const char *prog_name, const struct cmd_opt opts[], const char *
         printf("\n");
     }
 
+    if (!examples || !examples[0]) return;
+
     printf("\nExamples:\n");
     for (int i = 0; examples[i]; i++)  {
         printf("  %s %s\n", name, examples[i]);
@@ -653,8 +655,10 @@ void mode_usage(const char *prog_name, const struct cmd_mode modes[], const char
         puts("");
     }
 
+    if (!examples || !examples[0]) return;
+
     // list examples
-    printf("Examples:\n");
+    printf("Examples:\n\n");
     for (int i = 0; examples[i]; i++)  {
         printf("  %s %s\n", name, examples[i]);
     }

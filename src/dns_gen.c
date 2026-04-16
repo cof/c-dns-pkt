@@ -369,14 +369,14 @@ static int gen_chk_dnsrsp(struct dns_gen *gen)
     // check DNS msg is response
     int is_rsp = hdr->flags & DNS_FLAGS_QR ? 1 : 0;
     if (!is_rsp) {
-        return log_info_rc("dns-gen", 1,
+        return log_info_rc("+", 1,
             "Unexpected DNS message ID: 0x%04x Flags: 0x%04x Len %zu",
             hdr->id, hdr->flags, gen->msg_len);
     }
 
     // check Transaction ID
     if (hdr->id != gen->tid_sent) {
-        return log_info_rc("dng-gen", 2,
+        return log_info_rc("+", 2,
             "Response ID 0x%04x does not match Request ID 0x%04x", 
             hdr->id, gen->tid_sent);
     }
@@ -384,7 +384,7 @@ static int gen_chk_dnsrsp(struct dns_gen *gen)
     // check Result Code
     int rcode = hdr->flags & DNS_FLAGS_RCODE;
     if (rcode != DNS_RCODE_NOERROR) {
-        return log_info_rc("dng-gen", 3,
+        return log_info_rc("+", 3,
             "Response ID 0x%04x failed with error %s", 
             hdr->id, rcode_tostr(rcode));
     }
@@ -489,8 +489,9 @@ static int run_query(struct dns_gen *gen)
 // run response cmd
 static int run_resp(struct dns_gen *gen)
 {
-    int rc; 
+    dns_hdr_init(&gen->msg.hdr, gen->id, DNS_FLAGS_QR);
 
+    int rc;
     if ((rc = pcap_start_pkt(gen))) return rc;
     if ((rc = gen_enc_dnsmsg(gen))) return rc;
     if ((rc = pcap_end_pkt(gen))) return rc;
@@ -629,11 +630,11 @@ enum {
 };
 
 struct cmd_opt query_opts[] = {
-    { "--name",   "<NAME> A DNS name", 0, 1,  QUERY_NAME },
-    { "--type",  "<TYPE> A DNS type A|NS|CNAME|SOA|PTR|HINFO|MX|TXT|AAAA|SRV", 0, 1, QUERY_TYPE },
-    { "--class", "<CLASS> A DNS class IN|CS|CH|HS|ANY", 0, 1, QUERY_CLASS },
-    { "--flags", "<FLAGS> Query flags AD:0|CD:0|RD:0", 0, 1, QUERY_FLAGS },
-    { "--server", "<ADDR> Server IP address or name", 0, 1, QUERY_SERVER },
+    { "--name",   "<NAME> domain name to lookup", 0, 1,  QUERY_NAME },
+    { "--type",  "<A|NS|CNAME|SOA|PTR|HINFO|MX|TXT|AAAA|SRV> query type", 0, 1, QUERY_TYPE },
+    { "--class", "<IN|CS|CH|HS|ANY> query class", 0, 1, QUERY_CLASS },
+    { "--flags", "<AD|CD|RD> list of query flags e.g AD:0|RD:1", 0, 1, QUERY_FLAGS },
+    { "--server", "<ADDR> server IP address", 0, 1, QUERY_SERVER },
     { "--timeout", "<TimeOut> Response timeout in ms", 0, 1, QUERY_TIMEOUT },
     { "--tcp",  "Use TCP to send msg (instead of UDP)", 0, 0, QUERY_TCP },
     { "--log",  "Log DNS message that are sent", 0, 0, QUERY_LOG },
@@ -653,7 +654,7 @@ struct cmd_opt resp_opts[] = {
 };
 
 struct cmd_opt fuzz_opts[] = {
-    { "--type"   ,"<FUZZ> type must be hdr-trunc|hdr-opcode|hdr-rcode|hdr-qdcnt|qd-cmploop|qd-badjmp", 0, 1, FUZZ_TYPE },
+    { "--type"   ,"<hdr-trunc|hdr-opcode|hdr-rcode|hdr-qdcnt|qd-cmploop|qd-badjmp> fuzz type", 0, 1, FUZZ_TYPE },
     { "--id"     ,"<ID> A DNS header id",  0, 1, FUZZ_ID  },
     { "--server" ,"<ADDR> Server address to send pdu to", 0, 1, FUZZ_SERVER },
     { "--output" ,"<FILE> pcap file name", 0, 1, FUZZ_OUTPUT },
@@ -663,9 +664,9 @@ struct cmd_opt fuzz_opts[] = {
 
 static const char *examples[] = {
     "query --name example.com --type A --server 8.8.8.8",
-    "query --name example.com --type A --server 8.8.8.8 --flags 'AD:1|CD:1|RD:0'",
+    "query --name example.com --type A --server 8.8.8.8 --flags 'AD:0|CD:0|RD:1'",
     "query --name example.com --type MX --server 8.8.8.8 --tcp",
-    "response --id 0x1234 --name test.local --answer 192.168.1.1 --output packet.bin",
+    "resp --id 0x1234 --name test.local --answer 192.168.1.1 --output packet.bin",
     "fuzz --type qd-cmploop --server 127.0.0.1",
     "fuzz --type qd-badjmp --output f.pcapng --pcapng",
     NULL
@@ -741,20 +742,70 @@ static int set_id(struct dns_gen *gen, struct cmd_argv *parse)
     return 0;
 }
 
+// decode ip-addr str
+static uint32_t ipstr_decode(struct str_slice str, void *dst, size_t len)
+{
+    if (ip4_str_decode(str.ptr, str.len, dst)) return DNS_TYPE_A;
+    if (ip6_str_decode(str.ptr, str.len, dst)) return DNS_TYPE_AAAA;
+    slice_tomem(str, dst, len);
+    return DNS_TYPE_CNAME;
+}
+
+// addr =  ip4addr|ip6addr|regname [<ttl>] [class=IN|CS|CH|HS]
 static int add_sect(struct dns_gen *gen, int sc, struct cmd_argv *parse)
 {
+    // get name
+    struct str_slice rr_str = slice_make_cstr(parse->value);
+    struct str_slice name = slice_splitch(&rr_str, ' ');
+    slice_trim(&name);
+
+    if (name.len > DNS_NAME_MAXSTR) {
+        return log_error_rf("%s <addr> len %zu bigger than max %d", 
+            dns_sc_tostr(sc), name.len, DNS_NAME_MAXSTR);
+    }
+
     struct dns_rr rr = { 0 };
-    int rc;
+
+    // decode ip4|ip6|name
+    char tmp[DNS_NAME_MAXLEN+1];
+    rr.type = ipstr_decode(name, tmp, sizeof(tmp));
+    switch(rr.type) {
+    case DNS_TYPE_A: 
+        memcpy(rr.rdata.a, tmp, 4); 
+        break;
+    case DNS_TYPE_AAAA: 
+        memcpy(rr.rdata.aaaa, tmp, 16); 
+        break;
+    case DNS_TYPE_CNAME: 
+        rr.rdata.cname = tmp; 
+        break;
+    }
+
+    // look for remaining attrs (e.g 3600 CH)
+    while (rr_str.len) {
+        struct str_slice attr = slice_splitch(&rr_str, ' ');
+        slice_trim(&attr);
+        // covert slice to cptr
+        char name[20];
+        size_t len = min(attr.len, sizeof(name) - 1);
+        memcpy(name, attr.ptr, len);
+        name[len] = '\0';
+        // lookup code
+        int dns_class = dns_get_class(name);
+        if (dns_class != 0) {
+            rr.class = dns_class;
+        }
+        else if (slice_isnumeric(attr)) {
+            rr.ttl = atol(attr.ptr);
+        }
+    }
     
     // load defaults
-    if (!rr.name)  rr.name = gen->dns_name;
+    if (!rr.name)  rr.name  = gen->dns_name;
     if (!rr.class) rr.class = gen->dns_class;
-    if (!rr.ttl)   rr.ttl = gen->ttl;
+    if (!rr.ttl)   rr.ttl   = gen->ttl;
 
-    if ((rc = dns_rr_load(&rr, sc, parse->value))) return rc;
-    if ((rc = dns_add_rr(&gen->msg, sc,  &rr))) return rc;
-
-    return 0;
+    return dns_add_rr(&gen->msg, sc,  &rr);
 }
 
 // parse cmd-line args
@@ -774,6 +825,9 @@ static int gen_parse_argv(struct dns_gen *gen, int argc, char *argv[])
     switch(gen->cmd->mode) {
     case MODE_QUERY:
         gen->dns_flags = DNS_FLAGS_RD;
+        gen->dns_class = DNS_CLASS_IN;
+        break;
+    case MODE_RESP:
         gen->dns_class = DNS_CLASS_IN;
         break;
     case MODE_FUZZ:

@@ -10,9 +10,9 @@
  *
  * Supports the following interface capture types:
  *
- * raw  : Use AF_PACKET + SOCK_RAW + cBPF + recvmmsg()
- * mmap : Use AF_PACKET + SOCK_RAW + cBPF + PACKET_RX_RING (TPACKET_V3)
- * xdp  : Use VETH + AF_XDP + eBPF + UMEM + RX + Fill Rings
+ * raw  : AF_PACKET, SOCK_RAW, cBPF and recvmmsg()
+ * mmap : AF_PACKET, SOCK_RAW, cBPF and PACKET_RX_RING (TPACKET_V3)
+ * xdp  : veth-tap, AF_XDP, eBPF, UMEM (fill/rx rings) and BPF map patching
  *
  * Notes
  * -----
@@ -340,7 +340,7 @@ static int capture_raw(struct dns_insp *insp)
 
     if (insp->sig.signo) {
         log_msg("\n");
-        log_info("dns-insp",
+        log_info("+",
             "PID:%d shutting down: got signal %d (%s) from UID:%d PID:%d ",
             insp->pid,
             insp->sig.signo, strsignal(insp->sig.signo),
@@ -987,9 +987,9 @@ static int set_type(struct dns_insp *insp, struct cmd_argv *parse)
 }
 
 struct cmd_mode cmds[] = {
-    { MODE_RUN(run_capture),   MODE_CAPTURE,   capt_opts, "capture",  "capture DNS msgs from network interface" },
-    { MODE_RUN(run_readpcap),  MODE_READPCAP,  pcap_opts, "readpcap", "read DNS msgs from pcap file" },
-    { MODE_RUN(run_tracepcap), MODE_TRACEPCAP, pcap_opts, "tracepcap","trace a pcap file"  },
+    { MODE_RUN(run_capture),   MODE_CAPTURE,   capt_opts, "capture",  "Capture DNS messages from a network interface" },
+    { MODE_RUN(run_readpcap),  MODE_READPCAP,  pcap_opts, "readpcap", "Read DNS messages from a pcap file" },
+    { MODE_RUN(run_tracepcap), MODE_TRACEPCAP, pcap_opts, "tracepcap","Read record/block info from a pcap file" },
    { NULL }
 };
 
