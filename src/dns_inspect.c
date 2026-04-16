@@ -1,7 +1,7 @@
 /*
- * dns-inpect : DNS packet inspector
- * Usage:     : ./dns-inspect --help
- * Example    : ./dns-inspect capture --interface eth0
+ * dns-inspect : DNS packet inspector
+ * Usage:      : ./dns-inspect --help
+ * Example     : ./dns-inspect capture --interface eth0
  *
  * Overview
  * --------
@@ -930,24 +930,25 @@ static int run_readpcap(struct dns_insp *insp)
  * cmd-line options
  *
  */
-enum { opt_ifname, opt_type, opt_fname, opt_pcapng, opt_loglevel };
+enum { opt_ifname, opt_type, opt_fname, opt_loglevel, opt_pcapng };
 
 static struct cmd_opt capt_opts[] = {
-    { "--interface", "Name of interface to insp DNS msgs", 0, 1, opt_ifname },
-    { "--type",      "capture type raw|mmap|xdp", "raw", 1, opt_type },
-    { "--file",      "Packet capture file", 0, 1, opt_fname },
-    { "--pcapng",    "Use pcapng file fmt", 0, 0, opt_pcapng },
-    { "--log-level", "logging level", STR(LOG_LEVEL), 1, opt_loglevel  },
+    { "--interface", "<name> network interface to listen on", 0, 1, opt_ifname },
+    { "--type",      "<raw|mmap|xdp> capture method", "raw", 1, opt_type },
+    { "--file",      "<path> path to save captured packets", 0, 1, opt_fname },
+    { "--log-level", "<level> logging level", STR(LOG_INFO), 1, opt_loglevel  },
+    { "--pcapng",    "use pcapng file fmt", 0, 0, opt_pcapng },
     { NULL }
 };
 
 static struct cmd_opt pcap_opts[] = {
-    { "--file", "Name of packet capture file", 0, 1, opt_fname },
+    { "--file", "<path> path to capture file to read", 0, 1, opt_fname },
     { NULL }
 };
 
 static const char *examples[] = {
     "capture --interface eth0",
+    "capture --interface eth0 --type mmap",
     "capture --interface eth0 --file dns.pcap",
     "capture --interface eth0 --file dns.pcapng --pcapng",
     "readpcap --file dns.pcap",
@@ -986,9 +987,9 @@ static int set_type(struct dns_insp *insp, struct cmd_argv *parse)
 }
 
 struct cmd_mode cmds[] = {
-    { MODE_RUN(run_capture),   MODE_CAPTURE,   capt_opts, "capture",  "capture DNS msgs from an interface" },
-    { MODE_RUN(run_readpcap),  MODE_READPCAP,  pcap_opts, "readpcap", "Read DNS msgs from packet capture file" },
-    { MODE_RUN(run_tracepcap), MODE_TRACEPCAP, pcap_opts, "tracepcap","trace a packet capture file"  },
+    { MODE_RUN(run_capture),   MODE_CAPTURE,   capt_opts, "capture",  "capture DNS msgs from network interface" },
+    { MODE_RUN(run_readpcap),  MODE_READPCAP,  pcap_opts, "readpcap", "read DNS msgs from pcap file" },
+    { MODE_RUN(run_tracepcap), MODE_TRACEPCAP, pcap_opts, "tracepcap","trace a pcap file"  },
    { NULL }
 };
 
