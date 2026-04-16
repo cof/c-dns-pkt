@@ -182,52 +182,52 @@ A DNS message and DNS pcap file generator tool.
 
 **Usage**
 
-	$ dns-gen --help
-	Usage: dns-gen [MODE] [OPTIONS]
+    $ dns-gen --help
+    Usage: dns-gen [MODE] [OPTIONS]
 
-	MODE:
-	  query Send DNS query to a server
-	  resp  Generate a DNS response
-	  fuzz  Send fuzzed DNS message to server or pcap
+    MODE:
+      query Send DNS query to a server
+      resp  Generate a DNS response
+      fuzz  Send fuzzed DNS message to server or pcap
 
-	query options:
+    query options:
 
-	  --name    <NAME> domain name to lookup
-	  --type    <A|NS|CNAME|SOA|PTR|HINFO|MX|TXT|AAAA|SRV> query type
-	  --class   <IN|CS|CH|HS|ANY> query class
-	  --flags   <AD|CD|RD> list of query flags e.g AD:0|RD:1
-	  --server  <ADDR> Server IP address
-	  --timeout <TimeOut> Response timeout in ms
-	  --tcp     Use TCP to send msg (instead of UDP)
-	  --log     Log DNS message that are sent
+      --name    <NAME> domain name to lookup
+      --type    <A|NS|CNAME|SOA|PTR|HINFO|MX|TXT|AAAA|SRV> query type
+      --class   <IN|CS|CH|HS|ANY> query class
+      --flags   <AD|CD|RD> list of query flags e.g AD:0|RD:1
+      --server  <ADDR> Server IP address
+      --timeout <TimeOut> Response timeout in ms
+      --tcp     Use TCP to send msg (instead of UDP)
+      --log     Log DNS message that are sent
 
-	resp options:
+    resp options:
 
-	  --id         <ID> A DNS header id
-	  --name       <NAME> A DNS name
-	  --flags      <FLAGS> Query flags name:value name=AD|CD|RD and val=0|1
-	  --answer     <ANS>  answer record
-	  --authority  <AUTH> auth record
-	  --additional <ADD>  add record
-	  --output     <FILE> pcap file name
-	  --pcapng     Use pcapng file fmt
+      --id         <ID> A DNS header id
+      --name       <NAME> A DNS name
+      --flags      <FLAGS> Query flags name:value name=AD|CD|RD and val=0|1
+      --answer     <ANS>  answer record
+      --authority  <AUTH> auth record
+      --additional <ADD>  add record
+      --output     <FILE> pcap file name
+      --pcapng     Use pcapng file fmt
 
-	fuzz options:
+    fuzz options:
 
-	  --type   <hdr-trunc|hdr-opcode|hdr-rcode|hdr-qdcnt|qd-cmploop|qd-badjmp> fuzz type
-	  --id     <ID> A DNS header id
-	  --server <ADDR> Server address to send pdu to
-	  --output <FILE> pcap file name
-	  --pcapng Use pcapng file fmt
+      --type   <hdr-trunc|hdr-opcode|hdr-rcode|hdr-qdcnt|qd-cmploop|qd-badjmp> fuzz type
+      --id     <ID> A DNS header id
+      --server <ADDR> Server address to send pdu to
+      --output <FILE> pcap file name
+      --pcapng Use pcapng file fmt
 
-	Examples:
+    Examples:
 
-	  dns-gen query --name example.com --type A --server 8.8.8.8
-	  dns-gen query --name example.com --type A --server 8.8.8.8 --flags 'AD:0|CD:0|RD:1'
-	  dns-gen query --name example.com --type MX --server 8.8.8.8 --tcp
-	  dns-gen resp --id 0x1234 --name test.local --answer 192.168.1.1 --output packet.bin
-	  dns-gen fuzz --type qd-cmploop --server 127.0.0.1
-	  dns-gen fuzz --type qd-badjmp --output f.pcapng --pcapng
+      dns-gen query --name example.com --type A --server 8.8.8.8
+      dns-gen query --name example.com --type A --server 8.8.8.8 --flags 'AD:0|CD:0|RD:1'
+      dns-gen query --name example.com --type MX --server 8.8.8.8 --tcp
+      dns-gen resp --id 0x1234 --name test.local --answer 192.168.1.1 --output packet.bin
+      dns-gen fuzz --type qd-cmploop --server 127.0.0.1
+      dns-gen fuzz --type qd-badjmp --output f.pcapng --pcapng
 
 
 ### 2.1 **Query mode**
