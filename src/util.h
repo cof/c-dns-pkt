@@ -976,6 +976,6 @@ struct cmd_mode {
 
 struct cmd_mode *cmd_mode_find(char *mode, struct cmd_mode modes[]);
 void prog_usage(const char *prog_name, const struct cmd_opt opts[], const char *examples[]);
-void mode_usage(const char *prog_name, struct cmd_mode modes[], const char *examples[]);
+void mode_usage(const char *prog_name, const struct cmd_mode modes[], const char *examples[]);
 
 #endif

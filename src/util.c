@@ -568,20 +568,43 @@ int cmd_argv_next(struct cmd_argv *parse)
     return parse->opt->code ? parse->opt->code : parse->opt_idx;
 }
 
+static inline int opts_width(const struct cmd_opt opts[])
+{
+    int max_width  = 0;
+
+    for (int i = 0; opts[i].name; i++)  {
+        int len = strlen(opts[i].name);
+        if (len > max_width) max_width = len;
+    }
+
+    return max_width;
+}
+
+static inline int modes_width(const struct cmd_mode modes[])
+{
+    size_t max_width  = 0;
+
+    for (int i = 0; modes[i].name; i++)  {
+        size_t len = strlen(modes[i].name);
+        if (len > max_width) max_width = len;
+    }
+
+    return max_width;
+}
+
 // print program usage
 void prog_usage(const char *prog_name, const struct cmd_opt opts[], const char *examples[])
 {
     const char *name = get_basename(prog_name) ?: "<null>";
-    int w = 15;
+    int w = opts_width(opts);
 
     printf("Usage: %s [OPTIONS]\n\n", name);
     printf("Options:\n");
 
     for (int i = 0; opts[i].name; i++)  {
-        printf(" %-*s %s", w, opts[i].name, opts[i].desc);
-        if (opts[i].def_str) {
-            printf(" (default=%s)", opts[i].def_str);
-        }
+        const struct cmd_opt *opt = &opts[i];
+        printf(" %-*s %s", w, opt->name, opt->desc);
+        if (opt->def_str) printf(" (default=%s)", opt->def_str);
         printf("\n");
     }
 
@@ -602,10 +625,10 @@ struct cmd_mode *cmd_mode_find(char *mode, struct cmd_mode modes[])
 }
 
 // print mode usage
-void mode_usage(const char *prog_name, struct cmd_mode modes[], const char *examples[])
+void mode_usage(const char *prog_name, const struct cmd_mode modes[], const char *examples[])
 {
     const char *name = get_basename(prog_name) ?: "<null>";
-    int w = 15;
+    int w = modes_width(modes);
 
     printf("Usage: %s [MODE] [OPTIONS]\n\n", name);
 
@@ -618,13 +641,16 @@ void mode_usage(const char *prog_name, struct cmd_mode modes[], const char *exam
 
     // list options
     for (size_t i = 0; modes[i].name; i++) {
-        printf("%s Options:\n", modes[i].name);
-        struct cmd_opt *opts = modes[i].opts;
+        printf("%s options:\n\n", modes[i].name);
+        const struct cmd_opt *opts = modes[i].opts;
+        w = opts_width(opts);
         for (size_t j = 0; opts[j].name; j++) {
-            struct cmd_opt *opt = &opts[j];
-            printf("  %-*s %s\n", w, opt->name, opt->desc);
+            const struct cmd_opt *opt = &opts[j];
+            printf("  %-*s %s", w, opt->name, opt->desc);
+            if (opt->def_str) printf(" (default=%s)", opt->def_str);
+            puts("");
         }
-        printf("\n");
+        puts("");
     }
 
     // list examples
