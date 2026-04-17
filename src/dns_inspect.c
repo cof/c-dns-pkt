@@ -639,16 +639,16 @@ static int bpf_attach_dev(int bpf_fd, int dev_index)
     sub->rta_len = NLA_HDRLEN + sizeof(int);
     memcpy(RTA_DATA(sub), &bpf_fd, sizeof(int));
 
-    // Sub-attribute: Flags (Generic/SKB mode for maximum compatibility)
+    // sub-attribute: set Generic XDP (SKB_MODE) for max compatibility
     struct rtattr *flg = mkptr(sub, sub->rta_len);
     flg->rta_type = IFLA_XDP_FLAGS;
     flg->rta_len = NLA_HDRLEN + sizeof(uint32_t);
     uint32_t flags = XDP_FLAGS_SKB_MODE;
     memcpy(RTA_DATA(flg), &flags, sizeof(flags));
 
-    // Fix up lengths for nested structure
-    rta->rta_len = (char *)flg + flg->rta_len - (char *)rta;
-    req.n.nlmsg_len = (char *)rta + rta->rta_len - (char *)&req;
+    // fix up lengths for nested structure
+    rta->rta_len    =  (char *) mkptr(flg, flg->rta_len) - (char *) rta;
+    req.n.nlmsg_len =  (char *) mkptr(rta, rta->rta_len) - (char *) &req;
 
     // send msg via netlink
     int rc = send(sock_fd, &req, req.n.nlmsg_len, 0);
@@ -755,7 +755,7 @@ static int capture_xdp(struct dns_insp *insp)
  * 13 steps
  * --------
  * 1  - create veth-tap interface
- * 2  - mmap / alloc UMEM buffer
+ * 2  - alloc UMEM buffer
  * 3  - create xsd socket (AF_XDP)
  * 4  - register UMEM
  * 5  - create control rings (fill/rx/completion)
