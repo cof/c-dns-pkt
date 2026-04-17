@@ -330,22 +330,24 @@ static int gen_enc_dnsmsg(struct dns_gen *gen)
 static int gen_log_answer(struct dns_gen *gen)
 {
     double delta_ms = time_diff_ms(&gen->ts_sent, &gen->ts_recv);
+
     printf("Received response in %ums: ", (uint32_t) delta_ms);
 
+    // convert answer sections to str
     struct dns_msg *msg = &gen->msg;
-    struct dns_rr *rr;
-
-    // convert msg sections to str
     char *desc = NULL;
-    if (dns_msg_cnt_rec(msg) == 0) {
+    uint32_t num_rr = dns_cnt_rr(msg);
+
+    if (num_rr == 0) {
         // no sections
         desc = "<None>";
     }
-    else if ((rr = dns_msg_get_rec(msg)) != NULL)  {
+    else if (num_rr == 1) {
         // one section
-        desc = gen->emsg; *desc = '\0';
-        int rc = dns_rr_tostr(rr, 0, desc, sizeof(gen->emsg));
-        if (rc < 0) return rc;
+        desc = gen->emsg;
+        struct dns_rr *rr = dns_get_rr(msg);
+        int rc = dns_rr_tostr(rr, gen->emsg, sizeof(gen->emsg));
+        if (rc <= 0) *desc = '\0';
         // trim whitespace
         while (*desc && *desc == ' ') desc++;
     }
@@ -353,11 +355,11 @@ static int gen_log_answer(struct dns_gen *gen)
         // multiple sections
         desc = gen->emsg; *desc = '\0';
         printf("\n");
-        int rc = dns_msg_sects_tostr(msg, desc, sizeof(gen->emsg));
-        if (rc < 0) return rc;
+        dns_sects_tostr(msg, desc, sizeof(gen->emsg));
     }
 
     printf("%s\n", desc);
+
     return 0;
 }
 
@@ -880,7 +882,7 @@ static int gen_parse_argv(struct dns_gen *gen, int argc, char *argv[])
         break;
     case MODE_RESP:
         if (!*gen->dns_name) return log_cmd_err(mode, resp_opts[1].name, "is required");
-        if (!dns_msg_cnt_rec(&gen->msg)) return log_cmd_err(mode, "answer|authority|additional", "is required");
+        if (!dns_cnt_rr(&gen->msg)) return log_cmd_err(mode, "answer|authority|additional", "is required");
         if (!gen->output) return log_cmd_err(mode, resp_opts[6].name, "is required");
         break;
     case MODE_FUZZ:
