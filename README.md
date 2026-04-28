@@ -1,8 +1,8 @@
-# DNS Packet
+# DNS packet
 A DNS packet inspector and DNS message generator.
 
-- **dns-inspect**  a DNS packet inspector
-- **dns-gen**      A DNS message generator
+- `dns-inspect` a DNS packet inspector
+- `dns-gen`     a DNS message generator
 
 ## Prerequisites
 
