@@ -1,10 +1,10 @@
 /*
- * PCAP - A packet capture file API 
+ * PCAP - A packet capture file API
  * --------------------------------
  * An api  for reading and wrting packet capture files featuring
  * - Both PCAP and PCAPNG file format support
  * - Auto-detect pcap or pcapng format when reading
- * - write either simple or enhanced packet blocks SPB|EPB 
+ * - write either simple or enhanced packet blocks SPB|EPB
  * - uses clock_getime for timestamps
  * - trace mode for debugging pcap files
  *
@@ -20,7 +20,7 @@
  *
  * API
  * ---
- * pcap_open(file_name, mode) : open pcap file 
+ * pcap_open(file_name, mode) : open pcap file
  * pcap_close(pf)             : close pcap file
  * pcap_read(pf, buf, len)    : read packet from file into buffe
  * pcap_write(pf, buf, len)   : write packet to file
@@ -46,8 +46,8 @@
 // link types
 #define LINKTYPE_ETHERNET 1
 
-/* 
- * PCAP file format 
+/*
+ * PCAP file format
  * ----------------
  * pcap_file = global_header, { packet_record } ;
  * packet_record = packet_header, packet_data ;
@@ -60,7 +60,7 @@
 // endian codes
 #define PCAP_MAGIC_LE_USEC 0xA1B2C3D4
 #define PCAP_MAGIC_LE_NSEC 0xA1B23C4D
-#define PCAP_MAGIC_BE_USEC 0xD4C3B2A1 
+#define PCAP_MAGIC_BE_USEC 0xD4C3B2A1
 #define PCAP_MAGIC_BE_NSEC 0x4D3C2B1A
 
 // 24 byte header
@@ -76,13 +76,13 @@ struct pcap_hdr {
 
 // 16 byte record header
 struct pcap_rec {
-    uint32_t ts_sec;   //  Timestamp (Seconds) 
-    uint32_t ts_usec;  // Timestamp (Microseconds or nanoseconds)   
-    uint32_t incl_len; // Captured Packet Length  
-    uint32_t orig_len; // Original Packet Length 
+    uint32_t ts_sec;   //  Timestamp (Seconds)
+    uint32_t ts_usec;  // Timestamp (Microseconds or nanoseconds)
+    uint32_t incl_len; // Captured Packet Length
+    uint32_t orig_len; // Original Packet Length
 };
 
-/*  
+/*
  *  PCAPng file format
  *  -------------------
  *  pcapng_file    = pcapng_section, { pcapng_section } ;
@@ -100,7 +100,7 @@ struct pcap_rec {
  */
 
 // block types
-#define PCAP_SHB_TYPE    0x0A0D0D0A 
+#define PCAP_SHB_TYPE    0x0A0D0D0A
 #define PCAP_IDB_TYPE    0x00000001
 #define PCAP_EPB_TYPE    0x00000006
 #define PCAP_SPB_TYPE    0x00000003
@@ -113,7 +113,7 @@ struct pcap_rec {
 struct pcap_shb_hdr {
     uint32_t type;      // Block Type = 0x0A0D0D0A
     uint32_t tot_len;   // Block Total Length
-    uint32_t bom;       // Byte-Order Magic 
+    uint32_t bom;       // Byte-Order Magic
     uint16_t ver_major; // Major Version
     uint16_t ver_minor; // Minor Version
     int64_t  sec_len;   // Section Length
@@ -132,7 +132,7 @@ struct pcap_idb_hdr {
 struct pcap_spb_hdr {
     uint32_t type;      // Block Type = 0x00000003
     uint32_t tot_len; // Block Total Length
-    uint32_t orig_len;  // Original Packet Length  
+    uint32_t orig_len;  // Original Packet Length
 };
 
 // 32 byte - Enhanced Packet Block header
@@ -142,8 +142,8 @@ struct pcap_epb_hdr {
     uint32_t if_id;     // Interface ID
     uint32_t ts_high;   // Timestamp Upper 32 bits
     uint32_t ts_low;    // Timesgtamp lower 32 bits
-    uint32_t incl_len;  // Captured Packet Length 
-    uint32_t orig_len;  // Original Packet Length  
+    uint32_t incl_len;  // Captured Packet Length
+    uint32_t orig_len;  // Original Packet Length
 };
 
 /* pcap api */
@@ -155,7 +155,7 @@ struct pcap_file {
         struct pcap_hdr     hdr;
         struct pcap_shb_hdr shb;
     };
-    struct pcap_idb_hdr idb;  
+    struct pcap_idb_hdr idb;
     int (*read_hdr)(struct pcap_file *file);
     ssize_t (*read_pkt)(struct pcap_file *file, void *buf, size_t len);
     int (*write_hdr)(struct pcap_file *file);
@@ -191,7 +191,7 @@ struct pcap_file {
 /*
  * pcap_file API
  * -------------
- *  pcap_open(file_name, mode) : open pcap file 
+ *  pcap_open(file_name, mode) : open pcap file
  *  pcap_close(pf)             : close pcap file
  *  pcap_read(pf, buf, len)    : read packet from file into buffe
  *  pcap_write(pf, buf, len)   : write packet to file

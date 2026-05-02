@@ -13,7 +13,7 @@
 // Define Map for XDP socket
 SEC(".maps")
 struct {
-    int type; 
+    int type;
     int key_size;
     int val_size;
     int max_entry;
@@ -25,7 +25,7 @@ struct {
 };
 
 SEC("xdp")
-int dns_filter_dual_stack(struct xdp_md *ctx) 
+int dns_filter_dual_stack(struct xdp_md *ctx)
 {
     void *data_end = (void *)(long)ctx->data_end;
     void *data = (void *)(long)ctx->data;
@@ -43,7 +43,7 @@ int dns_filter_dual_stack(struct xdp_md *ctx)
         if (ip->protocol == IPPROTO_UDP) {
             l4_header = (void *)ip + (ip->ihl * 4);
         }
-    } 
+    }
     // IPv6
     else if (h_proto == bpf_htons(ETH_P_IPV6)) {
         struct ipv6hdr *ipv6 = (void *)(eth + 1);

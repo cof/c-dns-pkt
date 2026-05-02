@@ -8,7 +8,7 @@ BEGIN {
 }
 
 # look for likes like 10:   bf 02 00 00 00 00 00 00  mov %r2,%r0
-/^[ ]*[0-9a-f]+:/ { 
+/^[ ]*[0-9a-f]+:/ {
 
     # extract hex bytes
     hex_str = ""
@@ -24,7 +24,7 @@ BEGIN {
     # extract assembly
     asm = ""
     for (i = 2; i <= NF; i++) {
-        if ($i !~ /^[0-9a-f]{2}$/) { 
+        if ($i !~ /^[0-9a-f]{2}$/) {
             for (j = i; j <= NF; j++) {
                 asm = asm $j " "
             }

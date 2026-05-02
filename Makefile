@@ -138,16 +138,9 @@ tags: $(SOURCES)
 # test
 # ----
 .PHONY: test
-test:  $(DNS_INSP) $(DNS_GEN)
+test: $(DNS_INSP) $(DNS_GEN)
 	@echo "Starting tests"
 	$(Q)./test-integration.sh
-
-# setcap
-# -------
-.PHONY: setcap
-setcap : dns-SNIFF
-	@echo "Setting capabilities on $<"
-	$(Q) $(SETCAP_CMD) $<
 
 # install
 # -------

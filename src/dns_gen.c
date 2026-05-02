@@ -59,7 +59,7 @@ struct dns_gen {
     uint32_t ttl;
     char *output;
     struct pcap_file *pcap;
-    struct dns_msg msg; // msg to encode/decode 
+    struct dns_msg msg; // msg to encode/decode
     uint32_t timeout;   // send / recv timeout in ms
     uint16_t fuzz_type;
     uint8_t pkt_buf[DNS_MAX_PDUSIZE];
@@ -122,7 +122,7 @@ static int get_flag_val(struct str_slice str)
    Compute Internet Checksum for "count" bytes
    beginning at location "addr".
 */
-static uint16_t ip_checksum(const void *vaddr, size_t count) 
+static uint16_t ip_checksum(const void *vaddr, size_t count)
 {
     const uint8_t *addr = vaddr;
     uint32_t sum = 0;
@@ -171,11 +171,11 @@ static int pcap_end_pkt(struct dns_gen *gen)
     };
     wptr -= sizeof(udp);
     memcpy(wptr, &udp, sizeof(udp));
-   
+
     // rewind to IPv4 header
-    struct iphdr ip = { 
-        .version = 4, 
-        .ihl = 5, 
+    struct iphdr ip = {
+        .version = 4,
+        .ihl = 5,
         .ttl = 255,
         .tot_len = htons(msg_len + 8 + 20),
         .protocol = IPPROTO_UDP
@@ -188,10 +188,10 @@ static int pcap_end_pkt(struct dns_gen *gen)
     memcpy(wptr, &ip, sizeof(ip));
 
     // rewind to Ethernet header
-    struct ethhdr eth = { 
-        .h_dest   = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x02 }, 
-        .h_source = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x01 }, 
-        .h_proto = htons(ETH_P_IP) 
+    struct ethhdr eth = {
+        .h_dest   = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x02 },
+        .h_source = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x01 },
+        .h_proto = htons(ETH_P_IP)
     };
     wptr -= sizeof(eth);
     memcpy(wptr, &eth, sizeof(eth));
@@ -270,7 +270,7 @@ static int gen_rcv_dnspkt(struct dns_gen *gen)
 
 // send pkt to server
 static int gen_snd_dnspkt(struct dns_gen *gen)
-{ 
+{
     ssize_t nw = write(gen->sock_fd, gen->pkt_buf, gen->pkt_len);
     if (nw != (ssize_t) gen->pkt_len) return gen_io_err(nw, "write");
 
@@ -379,7 +379,7 @@ static int gen_chk_dnsrsp(struct dns_gen *gen)
     // check Transaction ID
     if (hdr->id != gen->tid_sent) {
         return log_info_rc("+", 2,
-            "Response ID 0x%04x does not match Request ID 0x%04x", 
+            "Response ID 0x%04x does not match Request ID 0x%04x",
             hdr->id, gen->tid_sent);
     }
 
@@ -387,7 +387,7 @@ static int gen_chk_dnsrsp(struct dns_gen *gen)
     int rcode = hdr->flags & DNS_FLAGS_RCODE;
     if (rcode != DNS_RCODE_NOERROR) {
         return log_info_rc("+", 3,
-            "Response ID 0x%04x failed with error %s", 
+            "Response ID 0x%04x failed with error %s",
             hdr->id, rcode_tostr(rcode));
     }
 
@@ -452,7 +452,7 @@ static int gen_con_server(struct dns_gen *gen)
     };
     int rc = inet_pton(AF_INET, gen->server, &addr.sin_addr);
     if (!rc) return log_errno_rf("Cant parse IPv4 address");
-    
+
     // create TCP or UDP socket
     int sock_type = gen->use_tcp ? SOCK_STREAM : SOCK_DGRAM;
     gen->sock_fd = socket(addr.sin_family, sock_type, 0);
@@ -575,7 +575,7 @@ static int gen_enc_badmsg(struct dns_gen *gen)
 
     return 0;
 }
- 
+
 // run fuzz cmd
 static int run_fuzz(struct dns_gen *gen)
 {
@@ -695,7 +695,7 @@ static int set_dns_name(struct dns_gen *gen, struct cmd_argv *parse)
     return 0;
 }
 
-static int set_type_str(struct dns_gen *gen, 
+static int set_type_str(struct dns_gen *gen,
     uint16_t *val, int(*lookup)(const char *str),
     struct cmd_argv *parse)
 {
@@ -705,7 +705,7 @@ static int set_type_str(struct dns_gen *gen,
     return 0;
 }
 
-// parse flags string e.g 'AD:1|CD:1|RD:0' 
+// parse flags string e.g 'AD:1|CD:1|RD:0'
 static int set_dns_flags(struct dns_gen *gen, struct cmd_argv *parse)
 {
     struct str_slice flags_str = slice_make_cstr(parse->value);
@@ -762,7 +762,7 @@ static int add_sect(struct dns_gen *gen, int sc, struct cmd_argv *parse)
     slice_trim(&name);
 
     if (name.len > DNS_NAME_MAXSTR) {
-        return log_error_rf("%s <addr> len %zu bigger than max %d", 
+        return log_error_rf("%s <addr> len %zu bigger than max %d",
             dns_sc_tostr(sc), name.len, DNS_NAME_MAXSTR);
     }
 
@@ -772,14 +772,14 @@ static int add_sect(struct dns_gen *gen, int sc, struct cmd_argv *parse)
     char tmp[DNS_NAME_MAXLEN+1];
     rr.type = ipstr_decode(name, tmp, sizeof(tmp));
     switch(rr.type) {
-    case DNS_TYPE_A: 
-        memcpy(rr.rdata.a, tmp, 4); 
+    case DNS_TYPE_A:
+        memcpy(rr.rdata.a, tmp, 4);
         break;
-    case DNS_TYPE_AAAA: 
-        memcpy(rr.rdata.aaaa, tmp, 16); 
+    case DNS_TYPE_AAAA:
+        memcpy(rr.rdata.aaaa, tmp, 16);
         break;
-    case DNS_TYPE_CNAME: 
-        rr.rdata.cname = tmp; 
+    case DNS_TYPE_CNAME:
+        rr.rdata.cname = tmp;
         break;
     }
 
@@ -801,7 +801,7 @@ static int add_sect(struct dns_gen *gen, int sc, struct cmd_argv *parse)
             rr.ttl = atol(attr.ptr);
         }
     }
-    
+
     // load defaults
     if (!rr.name)  rr.name  = gen->dns_name;
     if (!rr.class) rr.class = gen->dns_class;
