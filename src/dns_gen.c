@@ -100,7 +100,7 @@ static int get_fuzz_type(const char *str)
     return 0;
 }
 
-static int get_dns_flag(struct str_slice str)
+static int get_dns_flag(struct slice str)
 {
     char tmp[10];
     size_t len = min(sizeof(tmp) - 1, str.len);
@@ -109,7 +109,7 @@ static int get_dns_flag(struct str_slice str)
     return dns_get_flag(tmp);
 }
 
-static int get_flag_val(struct str_slice str)
+static int get_flag_val(struct slice str)
 {
     if (str.len != 1) return 0;
     if (*str.ptr == '0') return 1;
@@ -708,16 +708,16 @@ static int set_type_str(struct dns_gen *gen,
 // parse flags string e.g 'AD:1|CD:1|RD:0'
 static int set_dns_flags(struct dns_gen *gen, struct cmd_argv *parse)
 {
-    struct str_slice flags_str = slice_make_cstr(parse->value);
+    struct slice flags_str = slice_make_cstr(parse->value);
     uint16_t flags = 0;
     const char *mode = gen->cmd->name;
 
     while (flags_str.len) {
         // get name
-        struct str_slice flag = slice_splitch(&flags_str, '|');
+        struct slice flag = slice_splitch(&flags_str, '|');
         slice_trim(&flag);
         // get value
-        struct str_slice onoff = slice_rsplit(&flag, ':');
+        struct slice onoff = slice_rsplit(&flag, ':');
         slice_trim(&onoff);
         // get flag mask
         uint16_t mask = get_dns_flag(flag);
@@ -745,7 +745,7 @@ static int set_id(struct dns_gen *gen, struct cmd_argv *parse)
 }
 
 // decode ip-addr str
-static uint32_t ipstr_decode(struct str_slice str, void *dst, size_t len)
+static uint32_t ipstr_decode(struct slice str, void *dst, size_t len)
 {
     if (ip4_str_decode(str.ptr, str.len, dst)) return DNS_TYPE_A;
     if (ip6_str_decode(str.ptr, str.len, dst)) return DNS_TYPE_AAAA;
@@ -757,8 +757,8 @@ static uint32_t ipstr_decode(struct str_slice str, void *dst, size_t len)
 static int add_sect(struct dns_gen *gen, int sc, struct cmd_argv *parse)
 {
     // get name
-    struct str_slice rr_str = slice_make_cstr(parse->value);
-    struct str_slice name = slice_splitch(&rr_str, ' ');
+    struct slice rr_str = slice_make_cstr(parse->value);
+    struct slice name = slice_splitch(&rr_str, ' ');
     slice_trim(&name);
 
     if (name.len > DNS_NAME_MAXSTR) {
@@ -785,7 +785,7 @@ static int add_sect(struct dns_gen *gen, int sc, struct cmd_argv *parse)
 
     // look for remaining attrs (e.g 3600 CH)
     while (rr_str.len) {
-        struct str_slice attr = slice_splitch(&rr_str, ' ');
+        struct slice attr = slice_splitch(&rr_str, ' ');
         slice_trim(&attr);
         // convert slice to cptr
         char name[20];

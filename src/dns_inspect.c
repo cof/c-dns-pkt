@@ -517,8 +517,8 @@ static int setup_mmap(struct dns_insp *insp)
 static int xdp_init_tap(struct dns_insp *insp)
 {
     char tmp[512];
-    struct strbuf sbuf;
-    struct strbuf *buf = strbuf_init(&sbuf, tmp, sizeof(tmp));
+    struct sbuf sbuf;
+    struct sbuf *buf = sbuf_init(&sbuf, tmp, sizeof(tmp));
 
     const char *real = insp->dev_name;
     const char *tap = INSP_TAP;
@@ -555,8 +555,8 @@ static int xdp_init_tap(struct dns_insp *insp)
 static void xdp_deinit_tap(struct dns_insp *insp)
 {
     char tmp[256];
-    struct strbuf sbuf;
-    struct strbuf *buf = strbuf_init(&sbuf, tmp, sizeof(tmp));
+    struct sbuf sbuf;
+    struct sbuf *buf = sbuf_init(&sbuf, tmp, sizeof(tmp));
 
     const char *real = insp->dev_name;
     const char *tap = INSP_TAP;
