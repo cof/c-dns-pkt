@@ -32,9 +32,9 @@ There are two parts to this project:
 ## Design notes
 
 This project is basically an exercise in minimalist system programming.
-In an an era where large third party frameworks often the default, its far too easy 
-these days for developers to lose sight of the underlying algorithms, resource costs
-or the actual kernel ABI being used.
+In an an era where large third party frameworks are often the default,
+its far too easy these days for developers to lose sight of the underlying
+algorithms, resource costs or the actual kernel ABI being used.
 
 By implementing DNS RFC's, pcap file formats, and XDP packet filtering from first
 principles ,this project aims to show that a zero-dependency C stack remains a highly
