@@ -760,7 +760,7 @@ static int capture_xdp(struct dns_insp *insp)
  * 4  - register UMEM
  * 5  - create control rings (fill/rx/completion)
  * 6  - get control ring info
- * 7  - mem map control rings to userpsace (fill/rx)
+ * 7  - mem map control rings to userspace (fill/rx)
  * 8  - create xsk map
  * 9  - patch eBPF code with map fd
  * 10 - load eBPF program into kernel
@@ -878,7 +878,7 @@ static int setup_xdp(struct dns_insp *insp)
     return 0;
 }
 
-// run capture on network interace
+// run capture on network interface
 static int run_capture(struct dns_insp *insp)
 {
     int rc;

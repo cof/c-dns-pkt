@@ -1,5 +1,11 @@
 # DNS packet
-A DNS packet inspector and DNS message generator.
+
+A high performance DNS packet inspector and message generator.
+
+This project began as a 4-day "impossible sprint" to implement a DNS subsystem from first principles with just plain old vim,tmux and gcc. 
+It has since evolved into a research work on deep packet inspection and DNS testing.
+
+There are two parts to this project:
 
 - `dns-inspect` a DNS packet inspector
 - `dns-gen`     a DNS message generator
@@ -25,8 +31,18 @@ A DNS packet inspector and DNS message generator.
 
 ## Design notes
 
-- Both tools are single-threaded written in C with no 3rd party libs
-- Both dns-inspect and dns-gen use custom apis
+This project is basically an exercise in minimalist system programming.
+In an an era where large third party frameworks often the default, its far too easy 
+these days for developers to lose sight of the underlying algorithms, resource costs
+or the actual kernel ABI being used.
+
+By implementing DNS RFC's, pcap file formats, and XDP packet filtering from first
+principles ,this project aims to show that a zero-dependency C stack remains a highly
+effective choice for writing network packet test tools.
+
+Code is organised as follows:
+
+- single-threaded applications written in C with no 3rd party libs
 - DNS API  - DNS message codec in `dns_proto.h` and `dns_proto.c`
 - PCAP API - PCAP/PCAPNG read/write support in `pcap.h` and `pcap.c`
 - LOG API  - Info and error logging in `log.h` and `log.c`
@@ -34,6 +50,8 @@ A DNS packet inspector and DNS message generator.
 
 ## 1. dns-inspect
 A DNS packet inspector that can read DNS messages from a network interface or pcap file.
+
+Tool supports both legacy and state-of-the-art capture modes, including AF_PACKET, PACKET_MMAP and XDP.
 
 **Usage**
 
@@ -73,6 +91,7 @@ A DNS packet inspector that can read DNS messages from a network interface or pc
 
 
 ### 1.1 **Capture mode**
+
 Captures, decodes, and prints DNS traffic from a network interface in real-time.
 
 **Features**

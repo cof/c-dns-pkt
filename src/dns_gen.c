@@ -5,7 +5,7 @@
  *
  * Overview
  * --------
- * Basicaly a DNS packet generator for testing DNS servers or dns-inspect.
+ * Basically a DNS packet generator for testing DNS servers or dns-inspect.
  *
  * Notes
  * -----
@@ -451,7 +451,7 @@ static int gen_con_server(struct dns_gen *gen)
         .sin_port = htons(atoi("53"))
     };
     int rc = inet_pton(AF_INET, gen->server, &addr.sin_addr);
-    if (!rc) return log_errno_rf("Cant parse IPv4 address");
+    if (!rc) return log_errno_rf("Can't parse IPv4 address");
 
     // create TCP or UDP socket
     int sock_type = gen->use_tcp ? SOCK_STREAM : SOCK_DGRAM;
@@ -787,7 +787,7 @@ static int add_sect(struct dns_gen *gen, int sc, struct cmd_argv *parse)
     while (rr_str.len) {
         struct str_slice attr = slice_splitch(&rr_str, ' ');
         slice_trim(&attr);
-        // covert slice to cptr
+        // convert slice to cptr
         char name[20];
         size_t len = min(attr.len, sizeof(name) - 1);
         memcpy(name, attr.ptr, len);
