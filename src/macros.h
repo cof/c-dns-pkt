@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: MIT | (c) 2024-2026 [cof] */
+/* SPDX-License-Identifier: MIT | (c) 2026 [cof] */
 
 /*
  * ARR_LEN(a) - return length of array
