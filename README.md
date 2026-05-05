@@ -37,7 +37,7 @@ its far too easy these days for developers to lose sight of the underlying
 algorithms, resource costs or the actual kernel ABI being used.
 
 By implementing DNS RFC's, pcap file formats, and XDP packet filtering from first
-principles ,this project aims to show that a zero-dependency C stack remains a highly
+principles, this project aims to show that a zero-dependency C stack remains a highly
 effective choice for writing network packet test tools.
 
 Code is organised as follows:
