@@ -1,3 +1,5 @@
+/* SPDX-License-Identifier: MIT | (c) 2024-2026 [cof] */
+
 /*
  * PCAP - A packet capture file API
  * --------------------------------
