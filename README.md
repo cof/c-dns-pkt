@@ -1,4 +1,4 @@
-# DNS packet
+# DNS Tools
 
 A high performance DNS packet inspector and message generator.
 
