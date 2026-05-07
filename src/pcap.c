@@ -117,7 +117,7 @@ static int pcap_write_block(struct pcap_file *file, const char *name, void *bloc
 static int pcap_seek_data(struct pcap_file *file, const char *name, long len, int whence)
 {
     if (fseek(file->fp, len, whence) != 0) {
-        return pcap_log_errno_rf(file, "pcap: %s seek %lu whence %d failed", name, len, whence);
+        return pcap_log_errno_rf(file, "pcap: %s seek %ld whence %d failed", name, len, whence);
     }
 
     return 0;
@@ -561,7 +561,7 @@ static size_t pcap_read_epb(struct pcap_file *file, void *buf, size_t buf_len)
     if (file->trace_rec) {
         log_info("PCAPNG",
             "blk=%lu name=%s type=0x%08x tot_len=%u"
-            " if_id=%d ts_high=%d ts_low=%u inc_len=%u orig_len=%u",
+            " if_id=%u ts_high=%u ts_low=%u inc_len=%u orig_len=%u",
             file->rec_cnt, "EPB", epb.type, epb.tot_len,
             epb.if_id, epb.ts_high, epb.ts_low, epb.incl_len, epb.orig_len);
     }
@@ -611,7 +611,7 @@ static int pcap_write_epb(struct pcap_file *file, void *buf, size_t buf_len)
     if (file->trace_rec) {
         log_info("PCAPNG",
             "blk=%lu name=%s type=0x%08x tot_len=%u"
-            " if_id=%d ts_high=%d ts_low=%u inc_len=%u orig_len=%u",
+            " if_id=%u ts_high=%u ts_low=%u inc_len=%u orig_len=%u",
             file->rec_cnt, "EPB", epb.type, epb.tot_len,
             epb.if_id, epb.ts_high, epb.ts_low, epb.incl_len, epb.orig_len);
     }

@@ -343,7 +343,7 @@ static int capture_raw(struct dns_insp *insp)
     if (insp->sig.signo) {
         log_msg("\n");
         log_info("+",
-            "PID:%d shutting down: got signal %d (%s) from UID:%d PID:%d ",
+            "PID:%d shutting down: got signal %d (%s) from UID:%u PID:%d ",
             insp->pid,
             insp->sig.signo, strsignal(insp->sig.signo),
             insp->sig.uid, insp->sig.pid);
