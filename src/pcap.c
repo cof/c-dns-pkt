@@ -776,7 +776,7 @@ static int pcap_setup_hdr(struct pcap_file *file)
         : (file->write_hdr)(file);
 }
 
-struct pcap_file *pcap_open(const char *path_name, uint32_t flags)
+struct pcap_file *pcap_open(const char *path, uint32_t flags)
 {
     struct pcap_file *file;
 
@@ -801,10 +801,10 @@ struct pcap_file *pcap_open(const char *path_name, uint32_t flags)
     if (flags & PCAP_READ) file->is_reader = 1;
     if (flags & PCAP_SPB) file->use_spb = 1;
 
-    if (pcap_open_file(file, path_name) != 0) goto err;
-    if (pcap_setup_fmt(file, fmt) != 0) goto err;
-    if (pcap_setup_hdr(file) != 0) goto err;
-    if (pcap_setup_ts(file)  != 0) goto err;
+    if (pcap_open_file(file, path)) goto err;
+    if (pcap_setup_fmt(file, fmt)) goto err;
+    if (pcap_setup_hdr(file)) goto err;
+    if (pcap_setup_ts(file)) goto err;
 
     // all done
     return file;

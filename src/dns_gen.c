@@ -308,7 +308,7 @@ static int gen_enc_dnsmsg(struct dns_gen *gen)
     size_t space = sizeof(gen->pkt_buf) - gen->pkt_len;
 
     // tcp - reserve space for prefix
-    void *wbuf = buf;
+    uint8_t *wbuf = buf;
     if (gen->use_tcp) {
         wbuf += 2;
         space -= 2;
@@ -351,7 +351,7 @@ static int gen_log_answer(struct dns_gen *gen)
         int rc = dns_rr_tostr(rr, gen->emsg, sizeof(gen->emsg));
         if (rc <= 0) *desc = '\0';
         // trim whitespace
-        while (*desc && *desc == ' ') desc++;
+        while (*desc == ' ') desc++;
     }
     else {
         // multiple sections
@@ -790,12 +790,12 @@ static int add_sect(struct dns_gen *gen, int sc, struct cmd_argv *parse)
         struct slice attr = slice_splitch(&rr_str, ' ');
         slice_trim(&attr);
         // convert slice to cptr
-        char name[20];
+        char class_name[20];
         size_t len = min(attr.len, sizeof(name) - 1);
-        memcpy(name, attr.ptr, len);
-        name[len] = '\0';
+        memcpy(class_name, attr.ptr, len);
+        class_name[len] = '\0';
         // lookup code
-        int dns_class = dns_get_class(name);
+        int dns_class = dns_get_class(class_name);
         if (dns_class != 0) {
             rr.class = dns_class;
         }
