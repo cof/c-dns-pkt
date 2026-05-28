@@ -1,9 +1,18 @@
 # DNS Tools
 
-A high performance DNS packet inspector and message generator.
+A research project into DNS packet inspection and DNS protocol testing.
 
-This project began as a 4-day "impossible sprint" to implement a DNS subsystem from first principles with just plain old vim,tmux and gcc. 
-It has since evolved into a research work on deep packet inspection and DNS testing.
+By implementing DNS RFC's, pcap file formats, and XDP packet filtering from
+first principles, project aims to show that a zero-dependency C stack 
+still remains a good choice for writing network packet test tools.
+
+Code is organised as follows:
+
+- single-threaded applications written in C with no 3rd party libs
+- DNS API  - DNS message codec in `dns_proto.h` and `dns_proto.c`
+- PCAP API - PCAP/PCAPNG read/write support in `pcap.h` and `pcap.c`
+- LOG API  - Info and error logging in `log.h` and `log.c`
+- UTIL API - string,cmd-line,signal handling in `util.h` and `util.c`
 
 There are two parts to this project:
 
@@ -29,24 +38,6 @@ There are two parts to this project:
 - **make clean**: Removes all compiled binaries, object files
 - **make debug**: Compile code with debug flags
 
-## Design notes
-
-This project is an exercise in minimalist system programming.
-In an an era where large third party frameworks are often the default,
-its far too easy these days for developers to lose sight of the underlying
-algorithms, resource costs or the actual kernel ABI being used.
-
-By implementing DNS RFC's, pcap file formats, and XDP packet filtering from first
-principles, this project aims to show that a zero-dependency C stack remains a highly
-effective choice for writing network packet test tools.
-
-Code is organised as follows:
-
-- single-threaded applications written in C with no 3rd party libs
-- DNS API  - DNS message codec in `dns_proto.h` and `dns_proto.c`
-- PCAP API - PCAP/PCAPNG read/write support in `pcap.h` and `pcap.c`
-- LOG API  - Info and error logging in `log.h` and `log.c`
-- UTIL API - string,cmd-line,signal handling in `util.h` and `util.c`
 
 ## 1. dns-inspect
 A DNS packet inspector that can read DNS messages from a network interface or pcap file.
