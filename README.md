@@ -1,10 +1,10 @@
-# DNS Tools
+# DNS Packet Inspector & Generator
 
 A research project into DNS packet inspection and DNS protocol testing.
 
-By implementing DNS RFC's, pcap file formats, and XDP packet filtering from
-first principles, project aims to show that a zero-dependency C stack 
-still remains a good choice for writing network packet test tools.
+Implements DNS RFCs, PCAP/PCAPNNG file formats, and AF_PACKET/PACKET_MMAP/XDP
+packet filtering from scratch using a zero-dependency C stack. 
+Designed as a lightweight foundation for network packet test tools.
 
 Code is organised as follows:
 
