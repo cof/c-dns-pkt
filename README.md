@@ -8,7 +8,7 @@ Designed as a lightweight foundation for network packet test tools.
 
 Code is organised as follows:
 
-- single-threaded applications written in C with no 3rd party libs
+- Single-threaded C applications with no third-party libs
 - DNS API  - DNS message codec in `dns_proto.h` and `dns_proto.c`
 - PCAP API - PCAP/PCAPNG read/write support in `pcap.h` and `pcap.c`
 - LOG API  - Info and error logging in `log.h` and `log.c`
