@@ -5,7 +5,7 @@
 # all     : build cmds (dns-inpsect,dns-gen)
 # test    : run tests
 # install : install dns-inspect
-# gen-bpf : generate BFP filter
+# gen-bpf : generate BPF filter
 
 # #######################
 #     Config

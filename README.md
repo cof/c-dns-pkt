@@ -33,10 +33,11 @@ There are two parts to this project:
 ## Building the Project
 
 - **make all** (Default): Compiles dns-inspect and dns-gen
-- **make test** : Compiles and test dns-inspect and dns-gen
+- **make test** : Run tests
 - **make install** : install to /usr/local/bin (default) (caps enabled)
 - **make clean**: Removes all compiled binaries, object files
 - **make debug**: Compile code with debug flags
+- **make gen-bpf**: Regenerate the internal BPF filter (Developers only)
 
 
 ## 1. dns-inspect

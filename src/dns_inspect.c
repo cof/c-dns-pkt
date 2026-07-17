@@ -19,7 +19,7 @@
  * Notes
  * -----
  * - cBPF is a classic BPF
- * - eBPF is extended BFP
+ * - eBPF is extended BPF
  * - Uses DNS-PROTO api to decode/validate/print DNS messages
  * - Uses PCAP api to read/write/trace pcap files
  * - make gen-bpf created eBPF filter
