@@ -104,8 +104,9 @@ struct pcap_rec {
 // block types
 #define PCAP_SHB_TYPE    0x0A0D0D0A
 #define PCAP_IDB_TYPE    0x00000001
-#define PCAP_EPB_TYPE    0x00000006
 #define PCAP_SPB_TYPE    0x00000003
+#define PCAP_EPB_TYPE    0x00000006
+#define PCAP_DSB_TYPE    0x0000000A
 
 // endian codes
 #define PCAP_BOM_NATIVE  0x1A2B3C4D
@@ -148,6 +149,13 @@ struct pcap_epb_hdr {
     uint32_t orig_len;  // Original Packet Length
 };
 
+struct pcap_dsb_hdr {
+    uint32_t type;      // Block Type = 0x0000000A
+    uint32_t tot_len;   // Block Total Length
+    uint32_t secrets_type;  // Secrets Type
+    uint32_t secrets_len;   // Secrets Length
+};
+
 /* pcap api */
 
 // api state
@@ -167,6 +175,7 @@ struct pcap_file {
     unsigned int is_reader : 1; // we read pcap
     unsigned int is_ng     : 1; // pcapng fmt
     unsigned int must_swap : 1; // need to swap endian
+    unsigned int have_shb  : 1; // read or set SHB
     unsigned int have_idb  : 1; // read or set IDB
     unsigned int use_spb   : 1; // Use SPB instead of default EPB
     unsigned int sys_err   : 1; // file error

@@ -322,6 +322,8 @@ static int pcap_read_shb(struct pcap_file *file)
     int rc = pcap_read_block(file, "SHB", shb, sizeof(*shb));
     if (rc) return rc;
 
+    file->have_shb = 1;
+
     if (!pcap_bom_isng(shb->bom)) {
         return log_error_rf("pcapng: Bad SHB byte-order magic 0x%08x", shb->bom);
     }
@@ -370,6 +372,7 @@ static int pcap_write_shb(struct pcap_file *file)
     if (rc) return rc;
 
     // write an IDB on next packet
+    file->have_shb = 1;
     file->have_idb = 0;
 
     if (file->trace_rec) {
@@ -634,6 +637,57 @@ static int pcap_write_epb(struct pcap_file *file, void *buf, size_t buf_len)
     return 0;
 }
 
+// pcapng - read Decryption Secrets Block into buffer - return pkt_len or zero on error or eof
+static size_t pcap_read_dsb(struct pcap_file *file, void *buf, size_t buf_len)
+{
+    if (!file->have_shb) {
+        return log_error_rz("pcapng: bad block %lu type %s %s", file->rec_cnt, "DSB", "missing SHB");
+    }
+
+    // read the header
+    struct pcap_dsb_hdr dsb;
+    int rc = pcap_read_block(file, "DSB", &dsb, sizeof(dsb));
+    if (rc) return 0;
+
+    if (file->must_swap) {
+        dsb.type = __builtin_bswap32(dsb.type);
+        dsb.tot_len = __builtin_bswap32(dsb.tot_len);
+        dsb.secrets_type = __builtin_bswap32(dsb.secrets_type);
+        dsb.secrets_len = __builtin_bswap32(dsb.secrets_len);
+    }
+
+    if (file->trace_rec) {
+        log_info("PCAPNG",
+            "blk=%lu name=%s type=0x%08x len=%u"
+            " secrets_type=0x%08x secrets_len=%u",
+            file->rec_cnt, "DSB", dsb.type, dsb.tot_len,
+            dsb.secrets_type, dsb.secrets_len);
+    }
+
+    if (dsb.tot_len < sizeof(dsb)) {
+        return log_error_rz("pcapng: bad block %lu type %s len %u", file->rec_cnt, "DSB", dsb.tot_len);
+    }
+
+    uint32_t cap_len = dsb.tot_len - (sizeof(dsb) + 4);
+    if (cap_len > buf_len) {
+        return log_error_rz("pcapng: block %lu type %s len %u > buf %zu",
+            file->rec_cnt, "DSB", cap_len, buf_len);
+    }
+
+    // read secrets data
+    rc = pcap_read_data(file, "DSB", buf, cap_len);
+    if (rc) return 0;
+
+    // skip padding + footer
+    uint32_t skip_len = dsb.tot_len - (sizeof(dsb) + cap_len);
+    rc = pcap_data_skip(file, "DSB", skip_len);
+    if (rc) return 0;
+
+    // report secrets data length
+    return cap_len;
+}
+
+
 // pcapng - skip block
 static int pcap_skip_block(struct pcap_file *file)
 {
@@ -691,8 +745,9 @@ static ssize_t pcap_read_xpb(struct pcap_file *file, void *buf, size_t len)
         switch(block_type) {
         case PCAP_SHB_TYPE: if (pcap_read_shb(file)) return -1; break;
         case PCAP_IDB_TYPE: if (pcap_read_idb(file)) return -1; break;
-        case PCAP_EPB_TYPE: return pcap_read_epb(file, buf, len);
         case PCAP_SPB_TYPE: return pcap_read_spb(file, buf, len);
+        case PCAP_EPB_TYPE: return pcap_read_epb(file, buf, len);
+        case PCAP_DSB_TYPE: return pcap_read_dsb(file, buf, len);
         default: if (pcap_skip_block(file)) return -1;
         }
     }
