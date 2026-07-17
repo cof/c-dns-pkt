@@ -642,7 +642,7 @@ static int pcap_skip_block(struct pcap_file *file)
         uint32_t tot_len;
     } blk;
 
-    int rc = pcap_read_block(file, "skip", &blk, sizeof(&blk));
+    int rc = pcap_read_block(file, "skip", &blk, sizeof(blk));
     if (rc) return rc;
 
     if (file->must_swap) {
@@ -650,12 +650,18 @@ static int pcap_skip_block(struct pcap_file *file)
         blk.tot_len = __builtin_bswap32(blk.tot_len);
     }
 
+    if (file->trace_rec) {
+        log_info("PCAPNG",
+            "blk=%lu name=%s type=0x%08x tot_len=%u",
+            file->rec_cnt, "???", blk.type, blk.tot_len);
+    }
+
     if (blk.tot_len < sizeof(blk)) {
         return log_error_rf("pcap: Bad block %lu tot_len %u", file->rec_cnt + 1, blk.tot_len);
     }
 
     // skip options
-    return pcap_data_skip(file, "skip-block", blk.tot_len - sizeof(blk) + 4);
+    return pcap_data_skip(file, "skip-block", blk.tot_len - sizeof(blk));
 }
 
 // pcapng - peek block type

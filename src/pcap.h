@@ -216,7 +216,7 @@ static inline int pcap_islg(uint32_t magic)
     if (magic == PCAP_MAGIC_LE_USEC) return 1;
     if (magic == PCAP_MAGIC_LE_NSEC) return 1;
     if (magic == PCAP_MAGIC_BE_USEC) return 1;
-    if (magic == PCAP_MAGIC_BE_USEC) return 1;
+    if (magic == PCAP_MAGIC_BE_NSEC) return 1;
 
     return 0;
 }
