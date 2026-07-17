@@ -105,6 +105,8 @@ struct pcap_rec {
 #define PCAP_SHB_TYPE    0x0A0D0D0A
 #define PCAP_IDB_TYPE    0x00000001
 #define PCAP_SPB_TYPE    0x00000003
+#define PCAP_NRB_TYPE    0x00000004
+#define PCAP_ISB_TYPE    0x00000005
 #define PCAP_EPB_TYPE    0x00000006
 #define PCAP_DSB_TYPE    0x0000000A
 
