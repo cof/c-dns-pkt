@@ -352,7 +352,7 @@ static int capture_raw(struct dns_insp *insp)
     return 0;
 }
 
-int setup_raw(struct dns_insp *insp)
+static int setup_raw(struct dns_insp *insp)
 {
     log_debug("Setting up %s", insp->dev_name);
 
