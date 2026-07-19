@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT | (c) 2026 [cof] */
 
-/* 
+/*
  * STR_UTIL API
  * ------------
  * codec  : simple encoders/decoders
@@ -188,8 +188,8 @@ size_t ip6_str_encode(const uint8_t addr[static 16], int flags, char *str, size_
  * str_tolower(str, len)      : lower case a string
  * str_toupper(str, len)      : upper case a string
  * str_countch(str, len, ch)  : count number of ch in str
- * str_cmpmem(s1,len,s2,len2)  : cmp mem return < 0, 0, > 0 if lt, eq or gt
- * str_cmpmemi(s1,len,s2,len2) : cmp mem ignore case return < 0, 0, > 0 if lt, eq or gt
+ * str_cmp(s1,len,s2,len2)     : cmp mem return < 0, 0, > 0 if lt, eq or gt
+ * str_casecmp(s1,len,s2,len2) : cmp mem ignore case return < 0, 0, > 0 if lt, eq or gt
  * str_startswith(str,len,ch) : true if str begins with ch
  * str_endswith(str,len,ch)   : true if str ends with ch
  * str_isnumeric(str, len)    : true if str is numeric
@@ -350,14 +350,14 @@ char *u32_tostr(uint32_t val);
  * a simple string buffer API
  */
 
-// sbuf state
+// string buffer state
 struct sbuf {
-    uint8_t *mem;
-    uint8_t *ptr;
-    uint8_t *end;
+    uint8_t *mem; // buffer start
+    uint8_t *ptr; // current position
+    uint8_t *end; // buffer end
 };
 
-/* sbuf api
+/* string buffer api
  * ----------
  * SBUF_INIT(mem, len)      : macro for compile-time init
  * sbuf_init(buf, mem, len) : load buffer with mem and size
@@ -369,8 +369,8 @@ struct sbuf {
  * sbuf_len(buf)      : return buffer size
  * sbuf_rem(buf)      : return space remaining
  * sbuf_pos(buf)      : return space used
- * sbuf_mksp(buf,len) : return ptr if space else null
- * sbuf_endz(buf)     : set ptr pos to nul char
+ * sbuf_mksp(buf,len) : reserve space for len bytes (returns NULL if full)
+ * sbuf_endz(buf)     : set last byte of packet buffer to nul char if space
  * -
  * sbuf_putm(buf,  mem, len)      : append mem
  * sbuf_putmc(buf, mem, len, ch)  : append mem + ch
@@ -380,20 +380,20 @@ struct sbuf {
  * sbuf_puts(buf, str)            : append str
  * sbuf_putn(buf, num)            : append number
  * sbuf_putcn(buf, num)           : append ch + number
- * run_cmd(buf, flags, fmt, ...)    : run a system cmd
+ * run_cmd(buf, flags, fmt, ...)  : run a system cmd
  */
 
 #define SBUF_INIT(_mem, _len) { \
-    (uint8_t *) _mem, \
-    (uint8_t *) _mem, \
-    (uint8_t *) _mem + _len \
+    (uint8_t *) (_mem), \
+    (uint8_t *) (_mem), \
+    (uint8_t *) (_mem) + (_len) \
 }
 
 static inline struct sbuf *sbuf_init(struct sbuf *buf, void *mem, size_t len)
 {
     buf->mem = mem;
     buf->ptr = buf->mem;
-    buf->end = buf->mem + len;
+    buf->end = buf->mem ? buf->mem + len : NULL;
 
     return buf;
 }
