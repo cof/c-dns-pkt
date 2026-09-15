@@ -301,7 +301,7 @@ static int insp_process_pkt(struct dns_insp *insp, void *pkt, size_t plen)
     insp->dns_okay += !is_error;
     insp->dns_fail += is_error;
 
-    fputs(insp->emsg, stderr);
+    fputs(insp->emsg, stdout);
 
     // all done
     return rc;
@@ -1026,11 +1026,13 @@ static int insp_parse_argv(struct dns_insp *insp, int argc, char *argv[])
     // final checks
     switch(insp->cmd->mode) {
     case MODE_CAPTURE:
-        if (!*insp->dev_name) return log_cmd_err(mode, capt_opts[0].name, "is required");
+        if (!*insp->dev_name)
+            return log_cmd_err(mode, capt_opts[0].name, "is required");
         break;
     case MODE_READPCAP:
     case MODE_TRACEPCAP:
-        if (!insp->filename) return log_cmd_err(mode, pcap_opts[0].name, "is required");
+        if (!insp->filename) 
+            return log_cmd_err(mode, pcap_opts[0].name, "is required");
         break;
     }
 
