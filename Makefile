@@ -142,7 +142,8 @@ tags: $(SOURCES)
 .PHONY: test
 test: $(DNS_INSP) $(DNS_GEN)
 	@echo "Starting tests"
-	$(Q)./test-integration.sh
+	$(Q)./tests/test-integration.sh
+	$(Q)./tests/test-diff.sh
 
 # install
 # -------
@@ -157,4 +158,4 @@ install:
 # ----
 .PHONY: clean
 clean:
-	rm -rf $(BUILD_DIR) $(DNS_INSP) $(DNS_GEN)
+	rm -rf $(BUILD_DIR) $(DNS_INSP) $(DNS_GEN) tags

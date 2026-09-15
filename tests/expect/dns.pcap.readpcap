@@ -1,0 +1,16 @@
+[QUERY] ID 0x57b4 QR:0 OPCODE:QUERY RD:1 AD:1
+  Question: example.com IN A
+  Additional: <Root> OPT UDP-size:1232 Ext-RCODE:0 EDNS0:0 DNSEC-OK:0
+[RESPONSE] ID 0x57b4 QR:1 OPCODE:QUERY RD:1 RA:1 RCODE:NoError
+  Question: example.com IN A
+  Answer: example.com 26 IN A 104.18.27.120
+  Answer: example.com 26 IN A 104.18.26.120
+  Additional: <Root> OPT UDP-size:512 Ext-RCODE:0 EDNS0:0 DNSEC-OK:0
+[QUERY] ID 0xbdd4 QR:0 OPCODE:QUERY RD:1 AD:1
+  Question: example.com IN AAAA
+  Additional: <Root> OPT UDP-size:1232 Ext-RCODE:0 EDNS0:0 DNSEC-OK:0
+[RESPONSE] ID 0xbdd4 QR:1 OPCODE:QUERY RD:1 RA:1 RCODE:NoError
+  Question: example.com IN AAAA
+  Answer: example.com 286 IN AAAA 38.6.71.0
+  Answer: example.com 286 IN AAAA 38.6.71.0
+  Additional: <Root> OPT UDP-size:512 Ext-RCODE:0 EDNS0:0 DNSEC-OK:0
