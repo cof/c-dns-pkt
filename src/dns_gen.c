@@ -751,7 +751,8 @@ static uint32_t ipstr_decode(struct slice str, void *dst, size_t len)
 {
     if (ip4_str_decode(str.ptr, str.len, dst)) return DNS_TYPE_A;
     if (ip6_str_decode(str.ptr, str.len, dst)) return DNS_TYPE_AAAA;
-    slice_tomem(str, dst, len);
+    if (!slice_tocstr(str, dst, len)) return 0;
+
     return DNS_TYPE_CNAME;
 }
 
