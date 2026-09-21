@@ -7,21 +7,22 @@
 #include <linux/ipv6.h>
 #include <linux/udp.h>
 
-#undef SEC
-#define SEC(name) __attribute__((section(name), used))
-
-// Define Map for XDP socket
+/* Define Map for XDP socket
+ *
+ * This is a raw/legacy BPF map definition struct read directly 
+ * by our custom loader. This is NOT a libbpf/BTF map defintion.
+ */
 SEC(".maps")
 struct {
-    int type;
-    int key_size;
-    int val_size;
-    int max_entry;
+    __u32 type;
+    __u32 key_size;
+    __u32 value_size;
+    __u32 max_entries;
 } xsk_map = {
     .type = BPF_MAP_TYPE_XSKMAP,
-    .key_size = 4,
-    .val_size = 4,
-    .max_entry = 64
+    .key_size = sizeof(__u32),
+    .val_size = sizeof(__u32),
+    .max_entries = 64
 };
 
 SEC("xdp")
@@ -33,35 +34,40 @@ int dns_filter_dual_stack(struct xdp_md *ctx)
     struct ethhdr *eth = data;
     if ((void *)(eth + 1) > data_end) return XDP_DROP;
 
-    __u16 h_proto = eth->h_proto;
-    void *l4_header = NULL;
+    __u16 h_proto = bpf_ntohs(eth->h_proto);
+    struct udphdr *udp = NULL;
 
-    // IPv4
-    if (h_proto == bpf_htons(ETH_P_IP)) {
+    if (h_proto == ETH_P_IP) {
+        // IPv4
         struct iphdr *ip = (void *)(eth + 1);
         if ((void *)(ip + 1) > data_end) return XDP_DROP;
+        // check the header length
+        if (ip->ihl < 5) return XDP_DROP;
+        void *payload = (void *)ip + (ip->ihl * 4);
+        if (payload > data_end) return XDP_DROP;
         if (ip->protocol == IPPROTO_UDP) {
-            l4_header = (void *)ip + (ip->ihl * 4);
+            udp = payload;
         }
     }
-    // IPv6
-    else if (h_proto == bpf_htons(ETH_P_IPV6)) {
+    else if (h_proto == ETH_P_IPV6) {
+        // IPv6
         struct ipv6hdr *ipv6 = (void *)(eth + 1);
-        if ((void *)(ipv6 + 1) > data_end) return XDP_DROP;
+        void *payload = (void *)(ipv6 + 1);
+        if (payload > data_end) return XDP_DROP;
         if (ipv6->nexthdr == IPPROTO_UDP) {
-            l4_header = (void *)(ipv6 + 1);
+            udp = payload;
         }
     }
 
-    // check UDP port 53
-    if (l4_header) {
-        struct udphdr *udp = l4_header;
-        if ((void *)(udp + 1) > data_end) return XDP_DROP;
-        if (udp->dest == bpf_htons(53) || udp->source == bpf_htons(53)) {
+    // check UDP port is 53 (DNS)
+    if (udp && (void *)(udp + 1) <= data_end) {
+        __u16 dns_port = bpf_htons(53);
+        if (udp->dest == dns_port || udp->source == dns_port) {
             return bpf_redirect_map(&xsk_map, ctx->rx_queue_index, 0);
         }
     }
 
+    // drop everthing that not DNS
     return XDP_DROP;
 }
 

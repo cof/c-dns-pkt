@@ -115,7 +115,7 @@ struct dns_insp {
         struct xdp_umem_reg reg;
     };
     unsigned int use_pcapng : 1; // use pcapng output fmt
-    unsigned int use_tap    : 1; // use tap device
+    unsigned int use_mirror : 1; // use veth mirror
     // packet counters
     uint64_t rcv_pkts;
     uint64_t dns_pkts;
@@ -253,9 +253,9 @@ static int insp_process_pkt(struct dns_insp *insp, void *pkt, size_t plen)
     insp->rcv_pkts++;
 
     // Ethernet layer
-    if (ptr + 14 > end) return 0;
+    if (ptr + ETH_HLEN > end) return 0;
     uint16_t type = u16_dec(ptr + 12);
-    ptr += 14;
+    ptr += ETH_HLEN;
     while (is_vlan(type)) {
         if (ptr + 4 > end) return 0;
         type = u16_dec(ptr + 2);
@@ -263,28 +263,24 @@ static int insp_process_pkt(struct dns_insp *insp, void *pkt, size_t plen)
     }
 
     // IP layer
-    int hdr_len = 0;
-    int proto = 0;
     if (type == ETH_P_IP) {
         if (ptr + sizeof(struct iphdr) > end) return 0;
         struct iphdr *ip = (void *) ptr;
-        if (ip->version != 4) return 0;
-        hdr_len = ip->ihl * 4;
-        proto = ip->protocol;
+        if (ip->version != 4 || ip->ihl < 5 || ip->protocol != IPPROTO_UDP) return 0;
+        size_t ihl = ip->ihl * 4;
+        if (ihl > (size_t) (end - ptr)) return 0;
+        ptr += ihl;
     }
     else if (type == ETH_P_IPV6) {
         if (ptr + sizeof(struct ipv6hdr) > end) return 0;
         struct ipv6hdr *ip6 = (void *) ptr;
-        if (ip6->version != 6) return 0;
-        proto = ip6->nexthdr;
-        hdr_len = 40;
+        if (ip6->version != 6 || ip6->nexthdr != IPPROTO_UDP) return 0;
+        ptr += sizeof(*ip6);
     }
     else {
         // unknown type
         return 0;
     }
-    ptr += hdr_len;
-    if (proto != IPPROTO_UDP) return 0;
 
     // UDP layer
     if (ptr + sizeof(struct udphdr) > end) return 0;
@@ -322,35 +318,6 @@ static int insp_process_msg(struct dns_insp *insp, struct mmsghdr *msg)
 }
 
 /* RAW capture code */
-
-static int capture_raw(struct dns_insp *insp)
-{
-    log_debug("Starting capture %s", insp->dev_name);
-
-    while (insp->sig.run) {
-        // read a block
-        int nr = recvmmsg(insp->sock_fd, insp->msgs, PKT_MAXRECV, MSG_WAITFORONE, NULL);
-        if (nr < 0) {
-            if (errno == EINTR) continue;
-            return log_errno_rf("recvmmsg fd %d on dev %s failed", insp->sock_fd, insp->dev_name);
-        }
-        for (int i = 0; i < nr; i++) {
-            int rc = insp_process_msg(insp, &insp->msgs[i]);
-            if (rc) return rc;
-        }
-    }
-
-    if (insp->sig.signo) {
-        log_msg("\n");
-        log_info("+",
-            "PID:%d shutting down: got signal %d (%s) from UID:%u PID:%d ",
-            insp->pid,
-            insp->sig.signo, strsignal(insp->sig.signo),
-            insp->sig.uid, insp->sig.pid);
-    }
-
-    return 0;
-}
 
 static int setup_raw(struct dns_insp *insp)
 {
@@ -404,60 +371,37 @@ static int setup_raw(struct dns_insp *insp)
     return 0;
 }
 
-/* MMAP capture code */
-
-static int capture_mmap(struct dns_insp *insp)
+static int capture_raw(struct dns_insp *insp)
 {
     log_debug("Starting capture %s", insp->dev_name);
 
-    insp->bd_ptr = insp->umem.mem;
-    insp->bd_end = insp->bd_ptr + insp->umem.len;
-
-    struct pollfd pfd = { .fd = insp->sock_fd, .events = POLLIN };
-
     while (insp->sig.run) {
-
-        struct tpacket_block_desc *bd = mkptr(insp->bd_ptr, 0);
-        if (!(bd->hdr.bh1.block_status & TP_STATUS_USER)) {
-            // wait for kernel to fill block
-            int rc = poll(&pfd, 1, -1);
-            if (rc <= 0) {
-                if (rc == 0 || errno == EINTR) continue;
-                log_errno("poll %d failed", insp->sock_fd);
-                break;
-            }
-            if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
-                int ec = 0;
-                socklen_t eclen = sizeof(ec);
-                rc = getsockopt(insp->sock_fd, SOL_SOCKET, SO_ERROR, &ec, &eclen);
-                if (rc) ec = errno;
-                log_ec(ec, "fd %d socket error", insp->sock_fd);
-                break;
-            }
-            // must be POLLIN
-            continue;
+        // read a block
+        int nr = recvmmsg(insp->sock_fd, insp->msgs, PKT_MAXRECV, MSG_WAITFORONE, NULL);
+        if (nr < 0) {
+            if (errno == EINTR) continue;
+            return log_errno_rf("recvmmsg fd %d on dev %s failed", insp->sock_fd, insp->dev_name);
         }
-
-        // jump to first pkt in block
-        struct tpacket3_hdr *hdr = mkptr(bd, bd->hdr.bh1.offset_to_first_pkt);
-        for (size_t i = 0; i <  bd->hdr.bh1.num_pkts; i++) {
-            uint8_t *pkt = mkptr(hdr, hdr->tp_mac);
-            insp_process_pkt(insp, pkt, hdr->tp_len);
-            hdr = mkptr(hdr, hdr->tp_next_offset);
+        for (int i = 0; i < nr; i++) {
+            int rc = insp_process_msg(insp, &insp->msgs[i]);
+            if (rc) return rc;
         }
+    }
 
-        // release block back to kernel
-        bd->hdr.bh1.block_status = TP_STATUS_KERNEL;
-
-        // next block
-        insp->bd_ptr += insp->req.tp_block_size;
-        if (insp->bd_ptr >= insp->bd_end) {
-            insp->bd_ptr = insp->umem.mem;
-        }
+    if (insp->sig.signo) {
+        log_msg("\n");
+        log_info("+",
+            "PID:%d shutting down: got signal %d (%s) from UID:%u PID:%d ",
+            insp->pid,
+            insp->sig.signo, strsignal(insp->sig.signo),
+            insp->sig.uid, insp->sig.pid);
     }
 
     return 0;
 }
+
+
+/* MMAP capture code */
 
 static int setup_mmap(struct dns_insp *insp)
 {
@@ -514,9 +458,107 @@ static int setup_mmap(struct dns_insp *insp)
     return 0;
 }
 
-/* XDP capture code */
+static int capture_mmap(struct dns_insp *insp)
+{
+    log_debug("Starting capture %s", insp->dev_name);
 
-static int xdp_init_tap(struct dns_insp *insp)
+    insp->bd_ptr = insp->umem.mem;
+    insp->bd_end = insp->bd_ptr + insp->umem.len;
+
+    struct pollfd pfd = { .fd = insp->sock_fd, .events = POLLIN };
+
+    while (insp->sig.run) {
+
+        struct tpacket_block_desc *bd = mkptr(insp->bd_ptr, 0);
+        if (!(bd->hdr.bh1.block_status & TP_STATUS_USER)) {
+            // wait for kernel to fill block
+            int rc = poll(&pfd, 1, -1);
+            if (rc <= 0) {
+                if (rc == 0 || errno == EINTR) continue;
+                log_errno("poll %d failed", insp->sock_fd);
+                break;
+            }
+            if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+                int ec = 0;
+                socklen_t eclen = sizeof(ec);
+                rc = getsockopt(insp->sock_fd, SOL_SOCKET, SO_ERROR, &ec, &eclen);
+                if (rc) ec = errno;
+                log_ec(ec, "fd %d socket error", insp->sock_fd);
+                break;
+            }
+            // must be POLLIN
+            continue;
+        }
+
+        // jump to first pkt in block
+        struct tpacket3_hdr *hdr = mkptr(bd, bd->hdr.bh1.offset_to_first_pkt);
+        for (size_t i = 0; i <  bd->hdr.bh1.num_pkts; i++) {
+            uint8_t *pkt = mkptr(hdr, hdr->tp_mac);
+            insp_process_pkt(insp, pkt, hdr->tp_len);
+            hdr = mkptr(hdr, hdr->tp_next_offset);
+        }
+
+        // release block back to kernel
+        bd->hdr.bh1.block_status = TP_STATUS_KERNEL;
+
+        // next block
+        insp->bd_ptr += insp->req.tp_block_size;
+        if (insp->bd_ptr >= insp->bd_end) {
+            insp->bd_ptr = insp->umem.mem;
+        }
+    }
+
+    return 0;
+}
+
+
+/*
+ * XDP capture code
+ * ================
+ *
+ *  Traffic entering and leaving the real interface is mirrored by tc
+ *  into the 'peer' veth interface. The packets transparently traverse 
+ *  the virtual pipe and emerge on the 'tap' veth interface, where our 
+ *  XDP/AF_XDP filter program is attached to capture them.
+ *
+ *  This lets the inspector observe both directions out-of-band without 
+ *  putting the real production interface itself into XDP mode.
+
+ *  Data Flow Architecture:
+ *
+ *        +-----------------------------------+
+ *        |          Real Interface           |
+ *        +-----+-----------------------+-----+
+ *              |                       |
+ *        +-----V-----+           +-----V-----+
+ *        | tc mirred |           | tc mirred |
+ *        |  Ingress  |           |  Egress   |
+ *        +-----+-----+           +-----+-----+
+ *              |                       |
+ *              +-----------+-----------+
+ *                          |
+ *                    +-----V-----+
+ *                    | veth peer |  <-- Mirror Destination
+ *                    +-----+-----+
+ *                          | (Virtual Pipe Handoff)
+ *                    +-----V-----+
+ *                    | veth tap  |  <-- XDP Capture Device
+ *                    +-----+-----+
+ *                    | XDP Hook  |---> [Non-DNS] ---> XDP_DROP
+ *   KERNEL SPACE     +-----+-----+
+ *  ========================|========================
+ *   USER SPACE             | bpf_redirect_map(&xsk_map)
+ *                    +-----V-----+
+ *                    |  AF_XDP   |
+ *                    | UMEM Ring |
+ *                    +-----+-----+
+ *                    |  Sniffer  |
+ *                    +-----------+
+ */
+
+
+//  Create a veth-based mirror for the real interface.
+static int xdp_mirror_init(struct dns_insp *insp)
 {
     char tmp[512];
     struct sbuf sbuf;
@@ -526,12 +568,13 @@ static int xdp_init_tap(struct dns_insp *insp)
     const char *tap = INSP_TAP;
     const char *peer = INSP_PEER;
 
+    // ensure child inherit capabilities
     int flags = RUN_CAPS | RUN_NULL;
 
     // create veth tap device
     int rc = run_cmd(buf, flags, "ip link add %s type veth peer name %s", tap, peer);
     if (rc && rc != 2) return rc;
-    insp->use_tap = 1;
+    insp->use_mirror = 1;
 
     insp->tap_index = if_nametoindex(tap);
     if (insp->tap_index == 0) return log_errno_rf("name_toindex %s failed", tap);
@@ -554,7 +597,7 @@ static int xdp_init_tap(struct dns_insp *insp)
     return 0;
 }
 
-static void xdp_deinit_tap(struct dns_insp *insp)
+static void xdp_mirror_deinit(struct dns_insp *insp)
 {
     char tmp[256];
     struct sbuf sbuf;
@@ -774,7 +817,7 @@ static int setup_xdp(struct dns_insp *insp)
 {
     log_debug("Setting up %s", insp->dev_name);
 
-    int rc = xdp_init_tap(insp);
+    int rc = xdp_mirror_init(insp);
     if (rc) return log_error_rf("init tap %s failed", INSP_TAP);
 
     // allocate UMEM buffer to store packets
@@ -951,6 +994,7 @@ static struct cmd_opt pcap_opts[] = {
 static const char *examples[] = {
     "capture --interface eth0",
     "capture --interface eth0 --type mmap",
+    "capture --interface eth0 --type xdp",
     "capture --interface eth0 --file dns.pcap",
     "capture --interface eth0 --file dns.pcapng --pcapng",
     "readpcap --file dns.pcap",
@@ -1092,7 +1136,7 @@ static void insp_free(struct dns_insp *insp)
     ring_deinit(&insp->fill_ring);
 
     if (insp->sock_fd != -1) close(insp->sock_fd);
-    if (insp->use_tap) xdp_deinit_tap(insp);
+    if (insp->use_mirror) xdp_mirror_deinit(insp);
 
     if (insp->pcap) pcap_close(insp->pcap);
     if (insp->filename) free(insp->filename);
