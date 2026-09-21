@@ -1,23 +1,21 @@
-# DNS Packet Inspector & Generator
+# DNS packet sniffer, inspector and generator
 
-A research project into DNS packet inspection and DNS protocol testing.
+A C-based DNS packet sniffer, inspector and generator for capturing, decoding, validating, and generating DNS messages.
 
-Implements DNS RFCs, PCAP/PCAPNNG file formats, and AF_PACKET/PACKET_MMAP/XDP
-packet filtering from scratch using a zero-dependency C stack. 
-Designed as a lightweight foundation for network packet test tools.
+It can capture DNS traffic, read and write PCAP/PCAPNG files, and generate, send, and fuzz DNS messages.
 
 Code is organised as follows:
 
 - Single-threaded C applications with no third-party libs
 - DNS API  - DNS message codec in `dns_proto.h` and `dns_proto.c`
-- PCAP API - PCAP/PCAPNG read/write support in `pcap.h` and `pcap.c`
+- PCAP API - pcap/pcapng read/write support in `pcap.h` and `pcap.c`
 - LOG API  - Info and error logging in `log.h` and `log.c`
-- UTIL API - string,cmd-line,signal handling in `util.h` and `util.c`
+- UTIL API - string,command-line,signal handling in `util.h` and `util.c`
 
 There are two parts to this project:
 
-- `dns-inspect` a DNS packet inspector
-- `dns-gen`     a DNS message generator
+- `dns-inspect` capture, inspect, decode, validate DNS packets
+- `dns-gen`     generate, send and fuzz DNS messages
 
 ## Prerequisites
 
@@ -41,9 +39,10 @@ There are two parts to this project:
 
 
 ## 1. dns-inspect
-A DNS packet inspector that can read DNS messages from a network interface or pcap file.
 
-Tool supports both legacy and state-of-the-art capture modes, including AF_PACKET, PACKET_MMAP and XDP.
+A DNS packet sniffer and inspector that can capture DNS messages from a network interface or read them from a PCAP/PCAPNG file.
+
+Tool supports both legacy and state-of-the-art packet capture modes, including AF_PACKET, PACKET_MMAP and XDP.
 
 **Usage**
 
@@ -60,7 +59,7 @@ Tool supports both legacy and state-of-the-art capture modes, including AF_PACKE
 
       --interface <name> network interface to listen on
       --type      <raw|mmap|xdp> capture method (default=raw)
-      --file      <path> path to save captured packets
+      --file      <path> path to write captured packets
       --log-level <level> logging level (default=3)
       --pcapng    use pcapng file fmt
 
@@ -76,6 +75,7 @@ Tool supports both legacy and state-of-the-art capture modes, including AF_PACKE
      
       dns-inspect capture --interface eth0
       dns-inspect capture --interface eth0 --type mmap
+      dns-inspect capture --interface eth0 --type xdp
       dns-inspect capture --interface eth0 --file dns.pcap
       dns-inspect capture --interface eth0 --file dns.pcapng --pcapng
       dns-inspect readpcap --file dns.pcap
@@ -84,13 +84,13 @@ Tool supports both legacy and state-of-the-art capture modes, including AF_PACKE
 
 ### 1.1 **Capture mode**
 
-Captures, decodes, and prints DNS traffic from a network interface in real-time.
+Captures, decodes, and prints DNS traffic from a network interface in real time.
 
 **Features**
 
 - Flexible attachment: supports raw, mmap, and xdp capture types
 - Kernel filtering: Uses BPF/eBPF to filter DNS packets in kernel space
-- PCAP support: can save DNS traffic to a pcap file
+- PCAP support: can write DNS traffic to a PCAP file
 - RFC 1035 compliant: can decode and validate any DNS message
 - SETCAP: can be installed with non-root sniffer capabilities
 
@@ -132,7 +132,7 @@ Captures, decodes, and prints DNS traffic from a network interface in real-time.
 
 
 ### 1.2 **Readpcap mode**
-Reads DNS message from packet capture flle, decodes and prints them to stdout.
+Reads DNS messages from packet capture flle, decodes and prints them to stdout.
 
 **Features**
 
@@ -141,8 +141,8 @@ Reads DNS message from packet capture flle, decodes and prints them to stdout.
 
 **Design**
 
-- PCAP api to read packets
-- DNS api to decode and validate DNS message
+- PCAP API to read packets
+- DNS API to decode and validate DNS message
 
 **Example usage**
 
@@ -266,7 +266,7 @@ Sends a DNS query to a DNS server
     Send query (UDP) ID:0xb45e for example.com IN A
     Received response in 29ms: example.com IN A 104.20.23.154
 
-### 2.1 **Response mode**
+### 2.2 **Response mode**
 Generates DNS response messages and save them to packet capture file.
 
 **Features**
@@ -277,7 +277,7 @@ Generates DNS response messages and save them to packet capture file.
 
 **Design**
 
-- UTIL API : to gather cmd-line options
+- UTIL API : to gather command-line options
 - DNS API  : build and encode a DNS message
 - PCAP API : to generate pcap file
 
@@ -292,12 +292,12 @@ Generates DNS response messages and save them to packet capture file.
       Answer: test.local 0 IN A 172.168.0.10
       Authority: test.local 0 IN CNAME example.com
 
-### 2.1 **Fuzz mode**
+### 2.3 **Fuzz mode**
 Generates invalid DNS query messages for sending to a server or pcap file.
 
 **Features**
 
-- Uses cmd-line options to control message generation
+- Uses command-line options to control message generation
 - Writes DNS messages to a pcap file
 - Supports both PCAP and PCAPNG file formats
 

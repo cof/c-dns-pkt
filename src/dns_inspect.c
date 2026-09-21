@@ -1,14 +1,14 @@
 /* SPDX-License-Identifier: MIT | (c) 2026 [cof] */
 
 /*
- * dns-inspect : DNS packet inspector
+ * dns-inspect : DNS packet sniffer and inspector
  * Usage:      : ./dns-inspect --help
  * Example     : ./dns-inspect capture --interface eth0
  *
  * Overview
  * --------
- * Implements a DNS message packet inspector.
- * Can inspect packets read directly from a network interface or pcap file.
+ * Implements a DNS message packet sniffer and inspector.
+ * Can inspect packets captured from a network interface or PCAP/PCAPNG file.
  *
  * Supports the following interface capture types:
  *
