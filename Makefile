@@ -126,8 +126,8 @@ BPF_FILTER = $(BUILD_DIR)/bpf_filter.h
 BPF_OBJFILE = $(BUILD_DIR)/filter.o
 BPF_CFLAGS = -O2 -I/usr/include
 gen-bpf:
-	bpf-gcc $(BPF_CFLAGS) -c bpf/filter.c -o $(BPF_OBJFILE)
-	bpf-objdump -d $(BPF_OBJFILE) | awk -f bpf/gen_insn.awk > $(BPF_FILTER)
+	bpf-gcc $(BPF_CFLAGS) -c ebpf/filter.c -o $(BPF_OBJFILE)
+	bpf-objdump -d $(BPF_OBJFILE) | awk -f ebpf/gen_insn.awk > $(BPF_FILTER)
 
 # tags file
 # ----------

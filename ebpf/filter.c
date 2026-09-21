@@ -7,6 +7,11 @@
 #include <linux/ipv6.h>
 #include <linux/udp.h>
 
+// Fix for bpf-gcc pragma parsing bug
+#undef SEC
+#define SEC(name) __attribute__((section(name), used))
+
+
 /* Define Map for XDP socket
  *
  * This is a raw/legacy BPF map definition struct read directly 
@@ -21,7 +26,7 @@ struct {
 } xsk_map = {
     .type = BPF_MAP_TYPE_XSKMAP,
     .key_size = sizeof(__u32),
-    .val_size = sizeof(__u32),
+    .value_size = sizeof(__u32),
     .max_entries = 64
 };
 

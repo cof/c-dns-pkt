@@ -176,42 +176,45 @@ static uint64_t bpf_filter[] = {
     0x00000000000c0471ULL, // [07] ldxb %r4,[%r0+0xc]
     0x000000000000454fULL, // [08] or %r5,%r4
     0x0000000800030516ULL, // [09] jeq32 %r5,8,3
-    0x0000dd86001c0516ULL, // [10] jeq32 %r5,0xdd86,28
+    0x0000dd86001e0516ULL, // [10] jeq32 %r5,0xdd86,30
     0x00000001000000b7ULL, // [11] mov %r0,1
     0x0000000000000095ULL, // [12] exit
-    0x00000000000005bfULL, // [13] mov %r5,%r0
-    0x0000002200000507ULL, // [14] add %r5,0x22
-    0x00000000fffb53adULL, // [15] jlt %r3,%r5,-5
-    0x0000000000170471ULL, // [16] ldxb %r4,[%r0+0x17]
-    0x00000011fff90455ULL, // [17] jne %r4,0x11,-7
-    0x00000000000e0461ULL, // [18] ldxw %r4,[%r0+0xe]
-    0x0000000f00000457ULL, // [19] and %r4,0xf
-    0x0000000200000467ULL, // [20] lsh %r4,2
-    0x0000000e00000407ULL, // [21] add %r4,0xe
-    0x000000000000400fULL, // [22] add %r0,%r4
-    0x00000000000002bfULL, // [23] mov %r2,%r0
-    0x00000000000020bfULL, // [24] mov %r0,%r2
-    0x0000000800000007ULL, // [25] add %r0,8
-    0x00000000fff003adULL, // [26] jlt %r3,%r0,-16
-    0x0000000000022369ULL, // [27] ldxh %r3,[%r2+2]
-    0x0000350000020315ULL, // [28] jeq %r3,0x3500,2
-    0x0000000000002269ULL, // [29] ldxh %r2,[%r2+0]
-    0x00003500ffec0255ULL, // [30] jne %r2,0x3500,-20
-    0x00000000000003b7ULL, // [31] mov %r3,0
-    0x0000000000101261ULL, // [32] ldxw %r2,[%r1+0x10]
-    0x0000000000000118ULL, // [33] <--- MAP_RELOC lddw %r1,0
-    0x0000000000000000ULL, // [34]
-    0x0000003300000085ULL, // [35] call 51
-    0x0000002000000067ULL, // [36] lsh %r0,0x20
-    0x00000020000000c7ULL, // [37] arsh %r0,0x20
-    0x0000000000000095ULL, // [38] exit
-    0x00000000000002bfULL, // [39] mov %r2,%r0
-    0x0000003600000207ULL, // [40] add %r2,0x36
-    0x00000000ffe1322dULL, // [41] jgt %r2,%r3,-31
-    0x0000000000140071ULL, // [42] ldxb %r0,[%r0+0x14]
-    0x00000011ffdf0055ULL, // [43] jne %r0,0x11,-33
-    0x00000000ffeb0005ULL, // [44] ja -21
+    0x00000000000002bfULL, // [13] mov %r2,%r0
+    0x0000002200000207ULL, // [14] add %r2,0x22
+    0x00000000fffb23adULL, // [15] jlt %r3,%r2,-5
+    0x00000000000e0461ULL, // [16] ldxw %r4,[%r0+0xe]
+    0x0000000f00000457ULL, // [17] and %r4,0xf
+    0x00000004fff804b6ULL, // [18] jle32 %r4,4,-8
+    0x0000000200000467ULL, // [19] lsh %r4,2
+    0x0000000e00000407ULL, // [20] add %r4,0xe
+    0x00000000000005bfULL, // [21] mov %r5,%r0
+    0x000000000000450fULL, // [22] add %r5,%r4
+    0x00000000fff353adULL, // [23] jlt %r3,%r5,-13
+    0x0000000000170071ULL, // [24] ldxb %r0,[%r0+0x17]
+    0x00000011fff10055ULL, // [25] jne %r0,0x11,-15
+    0x00000000000052bfULL, // [26] mov %r2,%r5
+    0x0000000800000207ULL, // [27] add %r2,8
+    0x00000000ffee23adULL, // [28] jlt %r3,%r2,-18
+    0x0000000000025369ULL, // [29] ldxh %r3,[%r5+2]
+    0x0000350000020315ULL, // [30] jeq %r3,0x3500,2
+    0x0000000000005569ULL, // [31] ldxh %r5,[%r5+0]
+    0x00003500ffea0555ULL, // [32] jne %r5,0x3500,-22
+    0x00000000000003b7ULL, // [33] mov %r3,0
+    0x0000000000101261ULL, // [34] ldxw %r2,[%r1+0x10]
+    0x0000000000000118ULL, // [35] <--- MAP_RELOC lddw %r1,0
+    0x0000000000000000ULL, // [36]
+    0x0000003300000085ULL, // [37] call 51
+    0x0000002000000067ULL, // [38] lsh %r0,0x20
+    0x00000020000000c7ULL, // [39] arsh %r0,0x20
+    0x0000000000000095ULL, // [40] exit
+    0x00000000000005bfULL, // [41] mov %r5,%r0
+    0x0000003600000507ULL, // [42] add %r5,0x36
+    0x00000000ffdf53adULL, // [43] jlt %r3,%r5,-33
+    0x0000000000140071ULL, // [44] ldxb %r0,[%r0+0x14]
+    0x00000011ffdd0055ULL, // [45] jne %r0,0x11,-35
+    0x00000000ffeb0005ULL, // [46] ja -21
 };
+
 
 static inline void membuf_init(struct membuf *buf, void *mem, size_t len)
 {
@@ -522,20 +525,20 @@ static int capture_mmap(struct dns_insp *insp)
     return 0;
 }
 
-
 /*
  * XDP capture code
  * ================
  *
- *  Traffic entering and leaving the real interface is mirrored by tc
- *  into the 'peer' veth interface. The packets transparently traverse 
- *  the virtual pipe and emerge on the 'tap' veth interface, where our 
- *  XDP/AF_XDP filter program is attached to capture them.
+ * We need a tc ingress mirror on incoming packets to prevent XDP capture
+ * from breaking userspace DNS traffic. Because XDP is ingress only we also
+ * need a tc egress mirror to redirect outgoing DNS packets to our XDP program.
  *
- *  This lets the inspector observe both directions out-of-band without 
- *  putting the real production interface itself into XDP mode.
-
- *  Data Flow Architecture:
+ * Traffic entering and leaving the real interface is mirrored by tc into the
+ * peer end of the veth interface. The packets transparently traverse the
+ * virtual ethernet device from peer end to the tap end, where our XDP
+ * filter program is attached which redirects DNS packets to AF_XDP socket.
+ *
+ * Data Flow Architecture:
  *
  *        +-----------------------------------+
  *        |          Real Interface           |
@@ -566,7 +569,6 @@ static int capture_mmap(struct dns_insp *insp)
  *                    |  Sniffer  |
  *                    +-----------+
  */
-
 
 //  Create a veth-based mirror for the real interface.
 static int xdp_mirror_init(struct dns_insp *insp)
