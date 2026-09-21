@@ -332,7 +332,13 @@ static int insp_process_msg(struct dns_insp *insp, struct mmsghdr *msg)
     return 0;
 }
 
-/* RAW capture code */
+/* 
+ * RAW capture code
+ * ================
+ * Uses a standard AF_PACKET raw socket to read ethernet frames.
+ * The kernel copyes captured packets into the socket's receive buffer
+ * which can then be read by userspace.
+ */
 
 static int setup_raw(struct dns_insp *insp)
 {
@@ -415,9 +421,15 @@ static int capture_raw(struct dns_insp *insp)
     return 0;
 }
 
-
-/* MMAP capture code */
-
+/* 
+ * MMAP capture code 
+ * =================
+ * Uses PACKET_MMAP with block based TPACKET_V3 instead of the legacy frame based V1/V2.
+ * The kernel copies captured packets directly into shared memory-mapped blocks allowing
+ * multiple ethernet frames to be packed into a single block.
+ * Batching multiple frames per block reduces context-switches and helps prevent packet
+ * drops by the sniffer under heavy load.
+ */
 static int setup_mmap(struct dns_insp *insp)
 {
     log_debug("Setting up %s", insp->dev_name);
@@ -529,46 +541,35 @@ static int capture_mmap(struct dns_insp *insp)
 /*
  * XDP capture code
  * ================
+ * We use bpf_redirect_map and veth-based tc mirrors to capture DNS packets.
  *
- * We need a tc ingress mirror on incoming packets to prevent XDP capture
- * from breaking userspace DNS traffic. Because XDP is ingress only we also
- * need a tc egress mirror to redirect outgoing DNS packets to our XDP program.
+ * A tc mirror copies packets rather than redirecting them so running
+ * bpf_redirect_map on the veth device does not steal the DNS packets from
+ * userspace applications running on the real interface.
+
+ * As XDP is ingress only we need both tc ingress and tc egress mirrors on the
+ * real interface to capture DNS traffic in both directions.
  *
- * Traffic entering and leaving the real interface is mirrored by tc into the
- * peer end of the veth interface. The packets transparently traverse the
- * virtual ethernet device from peer end to the tap end, where our XDP
- * filter program is attached which redirects DNS packets to AF_XDP socket.
+ * Data Flow:
  *
- * Data Flow Architecture:
+ *                  real_dev
+ *                 /        \
+ *      tc ingress          tc egress
+ *      mirror              mirror
+ *                 \        /
+ *                veth (peer)
+ *                     |
+ *                veth (tap) -- XDP program attached here
+ *                     |
+ *              dns? --+-- not dns
+ *               |            |
+ *        redirect_map    XDP_DROP
+ *               |
+ *            AF_XDP
+ *               |
+ *           userspace
+ *           sniffer
  *
- *        +-----------------------------------+
- *        |          Real Interface           |
- *        +-----+-----------------------+-----+
- *              |                       |
- *        +-----V-----+           +-----V-----+
- *        | tc mirred |           | tc mirred |
- *        |  Ingress  |           |  Egress   |
- *        +-----+-----+           +-----+-----+
- *              |                       |
- *              +-----------+-----------+
- *                          |
- *                    +-----V-----+
- *                    | veth peer |  <-- Mirror Destination
- *                    +-----+-----+
- *                          | (Virtual Pipe Handoff)
- *                    +-----V-----+
- *                    | veth tap  |  <-- XDP Capture Device
- *                    +-----+-----+
- *                    | XDP Hook  |---> [Non-DNS] ---> XDP_DROP
- *   KERNEL SPACE     +-----+-----+
- *  ========================|========================
- *   USER SPACE             | bpf_redirect_map(&xsk_map)
- *                    +-----V-----+
- *                    |  AF_XDP   |
- *                    | UMEM Ring |
- *                    +-----+-----+
- *                    |  Sniffer  |
- *                    +-----------+
  */
 
 //  Create a veth-based mirror for the real interface.
@@ -631,7 +632,7 @@ static int xsk_map_create(int maxq)
         .map_type    = BPF_MAP_TYPE_XSKMAP,
         .key_size    = sizeof(int),   // queue ID
         .value_size  = sizeof(int),   // socket FD
-        .max_entries = maxq          // NIC queues
+        .max_entries = maxq           // NIC queues
     };
 
     return syscall(__NR_bpf, BPF_MAP_CREATE, &attr, sizeof(attr));
