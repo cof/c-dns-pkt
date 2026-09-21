@@ -259,6 +259,7 @@ static inline uint16_t u16_dec(const void *buf)
     return (ptr[0] << 8) | ptr[1];
 }
 
+// Parse the ethernet frame layers to locate and validate the DNS payload
 static int insp_process_pkt(struct dns_insp *insp, void *pkt, size_t plen)
 {
     uint8_t *ptr = pkt;
@@ -390,7 +391,7 @@ static int capture_raw(struct dns_insp *insp)
     log_debug("Starting capture %s", insp->dev_name);
 
     while (insp->sig.run) {
-        // read a block
+        // read ethernet frames from the AF_PACKET socket
         int nr = recvmmsg(insp->sock_fd, insp->msgs, PKT_MAXRECV, MSG_WAITFORONE, NULL);
         if (nr < 0) {
             if (errno == EINTR) continue;
@@ -504,7 +505,7 @@ static int capture_mmap(struct dns_insp *insp)
             continue;
         }
 
-        // jump to first pkt in block
+        // jump to first packet in block
         struct tpacket3_hdr *hdr = mkptr(bd, bd->hdr.bh1.offset_to_first_pkt);
         for (size_t i = 0; i <  bd->hdr.bh1.num_pkts; i++) {
             uint8_t *pkt = mkptr(hdr, hdr->tp_mac);
@@ -515,7 +516,7 @@ static int capture_mmap(struct dns_insp *insp)
         // release block back to kernel
         bd->hdr.bh1.block_status = TP_STATUS_KERNEL;
 
-        // next block
+        // advance to next block in ring buffer
         insp->bd_ptr += insp->req.tp_block_size;
         if (insp->bd_ptr >= insp->bd_end) {
             insp->bd_ptr = insp->umem.mem;
@@ -768,7 +769,7 @@ static int capture_xdp(struct dns_insp *insp)
     struct pollfd pfd = { .fd = insp->sock_fd, .events = POLLIN };
 
     while (insp->sig.run) {
-        // wait for pkt
+        // wait for kernel signal that new packets are in the RX ring
         int rc = poll(&pfd, 1, -1);
         if (rc <= 0) {
             if (rc == 0 || errno == EINTR) continue;
@@ -785,6 +786,7 @@ static int capture_xdp(struct dns_insp *insp)
         }
         if (!(pfd.revents & POLLIN)) continue;
 
+        // pocess all available packets in the RX ring buffer
         uint32_t rx_ridx = *rx->consumer;
         uint32_t rx_widx = *rx->producer;
         uint32_t fill_idx = *fill->producer;
@@ -801,6 +803,8 @@ static int capture_xdp(struct dns_insp *insp)
             fill_idx++;
             rx_ridx++;
         }
+
+        // submit the updated ring positions back to the kernel
         __sync_synchronize();
         *fill->producer = fill_idx;
         *rx->consumer = rx_ridx;
