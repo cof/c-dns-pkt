@@ -49,6 +49,17 @@
 #include "pcap.h"
 #include "dns_proto.h"
 
+// Exit codes
+enum {
+    EXIT_EOK = 0,
+    EXIT_ECREATE,   // 1: State allocation failed
+    EXIT_EARGV,     // 2: Command line parsing failed
+    EXIT_ESIGNAL,   // 3: Signal handler registration failed
+    EXIT_EINIT,     // 4: init failed
+    EXIT_ERUN       // 5: Run failed
+};
+
+
 #define INSP_TAP "insp_tap"
 #define INSP_PEER "insp_peer"
 
@@ -1052,6 +1063,12 @@ static int insp_parse_argv(struct dns_insp *insp, int argc, char *argv[])
     insp->cmd = cmd_mode_find(mode, cmds);
     if (!insp->cmd) return log_error_rf("Unsupported mode %s", mode);
 
+    if (argc == 2) {
+        // no options ?
+        mode_usage(argv[0], cmds, examples);
+        exit(0);
+    }
+
     // process cmd-line options
     int rc;
     struct cmd_argv parser = { argc, argv, insp->cmd->opts, 2 } ;
@@ -1164,15 +1181,15 @@ static struct dns_insp *insp_create(void)
 int main(int argc, char *argv[])
 {
     struct dns_insp *insp = NULL;
-    int ec = 0;
+    int ec = EXIT_EOK;
 
     log_init(NULL, LOG_INFO);
 
-    if (!(insp = insp_create())) { ec = 1; goto done; }
-    if (insp_parse_argv(insp, argc, argv)) { ec = 2;  goto done; }
-    if (setup_signals(&insp->sig)) { ec = 3; goto done; }
-    if (insp_init(insp))     { ec = 4; goto done; }
-    if (insp->cmd->run(insp)) { ec = 5; goto done; }
+    if (!(insp = insp_create())) { ec = EXIT_ECREATE; goto done; }
+    if (insp_parse_argv(insp, argc, argv)) { ec = EXIT_EARGV;  goto done; }
+    if (setup_signals(&insp->sig)) { ec = EXIT_ESIGNAL; goto done; }
+    if (insp_init(insp))     { ec = EXIT_EINIT; goto done; }
+    if (insp->cmd->run(insp)) { ec = EXIT_ERUN; goto done; }
 
 done:
     if (insp) insp_free(insp);

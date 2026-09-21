@@ -26,6 +26,15 @@
 #include "pcap.h"
 #include "dns_proto.h"
 
+// Exit codes
+enum {
+    EXIT_EOK = 0,
+    EXIT_ECREATE,   // 1: State allocation failed
+    EXIT_EARGV,     // 2: Command line parsing failed
+    EXIT_ESIGNAL,   // 3: Signal handler registration failed
+    EXIT_ERUN       // 5: Run loop failed
+};
+
 // supported cmds
 #define MODE_NONE  0
 #define MODE_QUERY 1
@@ -826,6 +835,12 @@ static int gen_parse_argv(struct dns_gen *gen, int argc, char *argv[])
     gen->cmd = cmd_mode_find(mode, cmds);
     if (!gen->cmd) return log_error_rf("Unsupported mode %s", mode);
 
+    if (argc == 2) {
+        // no options ?
+        mode_usage(argv[0], cmds, examples);
+        exit(0);
+    }
+
     // set mode defaults
     switch(gen->cmd->mode) {
     case MODE_QUERY:
@@ -928,13 +943,13 @@ static struct dns_gen *gen_create(void)
 int main(int argc, char *argv[])
 {
     struct dns_gen *gen = NULL;
-    int ec = 0;
+    int ec = EXIT_EOK;
 
     log_init(NULL, LOG_INFO);
-    if (!(gen = gen_create())) { ec = 1; goto done; }
-    if (gen_parse_argv(gen, argc, argv)) { ec = 2;  goto done; }
-    if (setup_signals(&gen->sig)) { ec = 3; goto done; }
-    if (gen->cmd->run(gen)) { ec = 4; goto done; }
+    if (!(gen = gen_create())) { ec = EXIT_ECREATE; goto done; }
+    if (gen_parse_argv(gen, argc, argv)) { ec = EXIT_EARGV;  goto done; }
+    if (setup_signals(&gen->sig)) { ec = EXIT_ESIGNAL; goto done; }
+    if (gen->cmd->run(gen)) { ec = EXIT_ERUN; goto done; }
 
 done:
     if (gen) gen_free(gen);
