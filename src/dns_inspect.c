@@ -572,7 +572,7 @@ static int capture_mmap(struct dns_insp *insp)
  *
  */
 
-//  Create a veth-based mirror for the real interface.
+// Create a veth-based mirror for the real interface.
 static int xdp_mirror_init(struct dns_insp *insp)
 {
     char tmp[512];
@@ -583,7 +583,7 @@ static int xdp_mirror_init(struct dns_insp *insp)
     const char *tap = INSP_TAP;
     const char *peer = INSP_PEER;
 
-    // ensure child inherit capabilities
+    // ensure ip/tc child process inherit network capabilities
     int flags = RUN_CAPS | RUN_NULL;
 
     // create veth tap device
@@ -597,7 +597,7 @@ static int xdp_mirror_init(struct dns_insp *insp)
     if (run_cmd(buf, flags, "ip link set %s up", tap)) return -1;
     if (run_cmd(buf, flags, "ip link set %s up", peer)) return -1;
 
-    // clear old tc rules
+    // clear old tc rules - ignore errors
     run_cmd(buf, flags, "tc qdisc del dev %s ingress", real);
     run_cmd(buf, flags, "tc qdisc del dev %s root", real);
 
