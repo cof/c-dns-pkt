@@ -921,6 +921,7 @@ static int setup_xdp(struct dns_insp *insp)
     // load eBPF program
     union bpf_attr attr = {
         .prog_type = BPF_PROG_TYPE_XDP,
+        .prog_name = "dns_insp",
         .insns = (uintptr_t) bpf_filter,
         .insn_cnt = ARR_LEN(bpf_filter),
         .license = (uintptr_t) "GPL",
