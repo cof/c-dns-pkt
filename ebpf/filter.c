@@ -31,7 +31,7 @@ struct {
 };
 
 SEC("xdp")
-int dns_filter_dual_stack(struct xdp_md *ctx)
+int dns_insp(struct xdp_md *ctx)
 {
     void *data_end = (void *)(long)ctx->data_end;
     void *data = (void *)(long)ctx->data;
@@ -68,7 +68,8 @@ int dns_filter_dual_stack(struct xdp_md *ctx)
     if (udp && (void *)(udp + 1) <= data_end) {
         __u16 dns_port = bpf_htons(53);
         if (udp->dest == dns_port || udp->source == dns_port) {
-            return bpf_redirect_map(&xsk_map, ctx->rx_queue_index, 0);
+            // redirect packet to userpsace - drop if ring is full
+            return bpf_redirect_map(&xsk_map, ctx->rx_queue_index, XDP_DROP);
         }
     }
 
