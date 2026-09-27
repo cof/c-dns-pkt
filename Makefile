@@ -94,7 +94,7 @@ $(BUILD_DIR):
 
 # dns-insp
 # ---------
-INSP_SRCS = src/util.c src/str_util.c src/log.c src/pcap.c src/dns_proto.c src/dns_inspect.c
+INSP_SRCS = src/util.c src/str_util.c src/log.c src/pcap.c src/dns_proto.c src/dns_insp.c
 INSP_OBJS = $(INSP_SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 INSP_DEPS = $(INSP_OBJS:.o=.d)
 -include $(INSP_DEPS)
