@@ -28,6 +28,7 @@
 #include <stdbool.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+
 #include <sys/mman.h>
 #include <sys/syscall.h>
 #include <linux/filter.h>
@@ -60,8 +61,6 @@ enum {
 };
 
 
-#define INSP_TAP "insp_tap"
-#define INSP_PEER "insp_peer"
 
 // supported cmds
 #define MODE_NONE      0
@@ -100,6 +99,10 @@ struct xsk_ring {
     uint32_t mask;
 };
 
+// veth mirror interface
+const char *veth_tap =  "dns-insp-tap";
+const char *veth_sink = "dns-insp-sink";
+
 // app state
 struct dns_insp {
     // config
@@ -111,8 +114,8 @@ struct dns_insp {
     char *filename;
     struct pcap_file *pcap;
     char dev_name[IFNAMSIZ];
-    int dev_index;
-    int tap_index;
+    int dev_index; // capture interface
+    int xdp_index; // veth sink
     int sock_fd; // AF_PACKET/AF_XDP
     int bpf_fd;  // BPF_PROG_LOAD
     int map_fd;  // BPF_MAP_CREATE
@@ -541,35 +544,39 @@ static int capture_mmap(struct dns_insp *insp)
 /*
  * XDP capture code
  * ================
- * We use bpf_redirect_map and veth-based tc mirrors to capture DNS packets.
+ * We use veth based tc mirrors and bpf_redirect_map to capture DNS packets.
  *
- * A tc mirror copies packets rather than redirecting them so running
- * bpf_redirect_map on the veth device does not steal the DNS packets from
- * userspace applications running on the real interface.
-
- * As XDP is ingress only we need both tc ingress and tc egress mirrors on the
+ * A tc mirror MUST be used to copy traffic from the real interface to a
+ * veth device to prevent bpf_redirect_map from stealing DNS traffic from
+ * the capture interface.
+ *
+ * XDP is ingress only so we need to add ingress and egress mirrors to the 
  * real interface to capture DNS traffic in both directions.
+ *
+ * Note: veth is required here instead of dummy or tap because a tc mirror 
+ * copies packets to the TX path of an interface but XDP runs on the RX path.
  *
  * Data Flow:
  *
- *                  real_dev
- *                 /        \
- *      tc ingress          tc egress
- *      mirror              mirror
+ *                  interface
+ *                 /         \
+ *        ingress_mirror   egress_mirror
  *                 \        /
- *                veth (peer)
+ *                  veth-tap
  *                     |
- *                veth (tap) -- XDP program attached here
+ *                veth-sink
  *                     |
- *              dns? --+-- not dns
- *               |            |
- *        redirect_map    XDP_DROP
- *               |
- *            AF_XDP
- *               |
- *           userspace
- *           sniffer
- *
+ *                XDP program
+ *                    |
+ *                   DNS?
+ *                 /      \
+ *               yes       no
+ *                |         |
+ *          redirect_map  XDP_DROP
+ *                |
+ *              AF_XDP
+ *                |
+ *            userspace
  */
 
 // Create a veth-based mirror for the real interface.
@@ -579,36 +586,49 @@ static int xdp_mirror_init(struct dns_insp *insp)
     struct sbuf sbuf;
     struct sbuf *buf = sbuf_init(&sbuf, tmp, sizeof(tmp));
 
-    const char *real = insp->dev_name;
-    const char *tap = INSP_TAP;
-    const char *peer = INSP_PEER;
-
     // ensure ip/tc child process inherit network capabilities
     int flags = RUN_CAPS | RUN_NULL;
 
-    // create veth tap device
-    int rc = run_cmd(buf, flags, "ip link add %s type veth peer name %s", tap, peer);
-    if (rc && rc != 2) return rc;
+    // create veth interface
+    int rc = run_cmd(buf, flags,
+        "ip link add %s type veth peer name %s", veth_tap, veth_sink);
+    if (rc && rc != 2) 
+        return log_error_rf("failed to add veth %s/%s", veth_tap, veth_sink);
     insp->use_mirror = 1;
 
-    insp->tap_index = if_nametoindex(tap);
-    if (insp->tap_index == 0) return log_errno_rf("name_toindex %s failed", tap);
+    // get index for bpf attach
+    insp->xdp_index = if_nametoindex(veth_sink);
+    if (insp->xdp_index == 0)
+        return log_errno_rf("error getting index for %s", veth_sink);
 
-    if (run_cmd(buf, flags, "ip link set %s up", tap)) return -1;
-    if (run_cmd(buf, flags, "ip link set %s up", peer)) return -1;
+    // bring veth device up
+    if (run_cmd(buf, flags, "ip link set %s up", veth_tap)) 
+        return log_errno_rf("error setting up for %s", veth_tap);
+    if (run_cmd(buf, flags, "ip link set %s up", veth_sink)) 
+        return log_errno_rf("error setting up for %s", veth_sink);
 
-    // clear old tc rules - ignore errors
-    run_cmd(buf, flags, "tc qdisc del dev %s ingress", real);
-    run_cmd(buf, flags, "tc qdisc del dev %s root", real);
+    // clear old clsact rules - ignore errors
+    run_cmd(buf, flags, "tc qdisc del dev %s clsact", insp->dev_name);
 
-    // add ingress mirror
-    if (run_cmd(buf, flags, "tc qdisc add dev %s handle ffff: ingress", real)) return -1;
-    if (run_cmd(buf, flags, "tc filter add dev %s parent ffff: matchall action mirred egress mirror dev %s", real, peer)) return -1;
+    // add clsact qdisc
+    if (run_cmd(buf, flags, "tc qdisc add dev %s clsact", insp->dev_name))
+        return log_errno_rf("error adding clsact to %s", insp->dev_name);
 
-    // add egress mirror
-    if (run_cmd(buf, flags, "tc qdisc add dev %s root handle 1: prio", real)) return -1;
-    if (run_cmd(buf, flags, "tc filter add dev %s parent 1: matchall action mirred egress mirror dev %s", real, peer)) return -1;
+    // mirror ingress traffic to tap end
+    if (run_cmd(buf, flags, 
+            "tc filter add dev %s ingress matchall"
+            " action mirred egress mirror dev %s", 
+            insp->dev_name, veth_tap))
+        return log_errno_rf("error adding ingress mirror for %s", insp->dev_name);
 
+    // mirror egress traffic to tap end
+    if (run_cmd(buf, flags,
+            "tc filter add dev %s egress matchall"
+            " action mirred egress mirror dev %s", 
+            insp->dev_name, veth_tap))
+        return log_errno_rf("error adding egress mirror for %s", insp->dev_name);
+
+    // init ok
     return 0;
 }
 
@@ -617,13 +637,10 @@ static void xdp_mirror_deinit(struct dns_insp *insp)
     char tmp[256];
     struct sbuf sbuf;
     struct sbuf *buf = sbuf_init(&sbuf, tmp, sizeof(tmp));
+    int flags = RUN_CAPS | RUN_NULL;
 
-    const char *real = insp->dev_name;
-    const char *tap = INSP_TAP;
-
-    run_cmd(buf, 1, "ip link del %s", tap);
-    run_cmd(buf, 1, "tc qdisc del dev %s ingress", real);
-    run_cmd(buf, 1, "tc qdisc del dev %s root", real);
+    run_cmd(buf, flags, "tc qdisc del dev %s clsact", insp->dev_name);
+    run_cmd(buf, flags, "ip link del %s", veth_tap);
 }
 
 static int xsk_map_create(int maxq)
@@ -836,7 +853,7 @@ static int setup_xdp(struct dns_insp *insp)
     log_debug("Setting up %s", insp->dev_name);
 
     int rc = xdp_mirror_init(insp);
-    if (rc) return log_error_rf("init tap %s failed", INSP_TAP);
+    if (rc) return rc;
 
     // allocate UMEM buffer to store packets
     size_t ring_len = PKT_NUMSLOT * PKT_MAXSIZE;
@@ -918,14 +935,15 @@ static int setup_xdp(struct dns_insp *insp)
         return -1;
     }
 
-    // attach bpf prog to device
-    rc = bpf_attach_dev(insp->bpf_fd, insp->tap_index);
-    if (rc < 0) return log_errno_rf("attach eBPF to %s failed", INSP_TAP);
+    // attach BPF program to device
+    rc = bpf_attach_dev(insp->bpf_fd, insp->xdp_index);
+    if (rc < 0) 
+        return log_errno_rf("attach eBPF to %s", veth_sink);
 
     // bind xsd to device
     struct sockaddr_xdp sxdp = {
         .sxdp_family   = AF_XDP,
-        .sxdp_ifindex  = insp->tap_index,
+        .sxdp_ifindex  = insp->xdp_index,
         .sxdp_queue_id = 0,
         .sxdp_flags    = XDP_COPY
     };
@@ -1151,7 +1169,7 @@ static int insp_init(struct dns_insp *insp)
 static void insp_free(struct dns_insp *insp)
 {
     if (insp->bpf_fd != -1) {
-        bpf_attach_dev(-1, insp->tap_index);
+        bpf_attach_dev(-1, insp->xdp_index);
         close(insp->bpf_fd);
     }
     if (insp->map_fd != -1) close(insp->map_fd);
