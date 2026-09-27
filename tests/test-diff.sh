@@ -23,7 +23,7 @@ for pcap_file in $PCAP_DIR/*.pcap $PCAP_DIR/*.pcapng; do
     [ -e $expect_file ] || continue
     test_name=$base_file
     TOTAL_TESTS=$((TOTAL_TESTS + 1))
-    ./dns-inspect $what --file $pcap_file > $output_file 2>/dev/null
+    ./dns-insp $what --file $pcap_file > $output_file 2>/dev/null
     diff -u $expect_file $output_file >/dev/null 2>&1
     if [ $? -eq 0 ]; then
         RESULT="PASS"
@@ -43,7 +43,7 @@ for pcap_file in $PCAP_DIR/*.pcap $PCAP_DIR/*.pcapng; do
     [ -e $expect_file ] || continue
     test_name=$base_file
     TOTAL_TESTS=$((TOTAL_TESTS + 1))
-    ./dns-inspect $what --file $pcap_file > $output_file 2>/dev/null
+    ./dns-insp $what --file $pcap_file > $output_file 2>/dev/null
     diff -u $expect_file $output_file >/dev/null 2>&1
     if [ $? -eq 0 ]; then
         RESULT="PASS"

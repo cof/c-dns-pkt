@@ -14,7 +14,7 @@ Code is organised as follows:
 
 There are two parts to this project:
 
-- `dns-inspect` capture, inspect, decode, validate DNS packets
+- `dns-insp` capture, inspect, decode, validate DNS packets
 - `dns-gen`     generate, send and fuzz DNS messages
 
 ## Prerequisites
@@ -30,7 +30,7 @@ There are two parts to this project:
 
 ## Building the Project
 
-- **make all** (Default): Compiles dns-inspect and dns-gen
+- **make all** (Default): Compiles dns-insp and dns-gen
 - **make test** : Run tests
 - **make install** : install to /usr/local/bin (default) (caps enabled)
 - **make clean**: Removes all compiled binaries, object files
@@ -38,7 +38,7 @@ There are two parts to this project:
 - **make gen-bpf**: Regenerate the internal BPF filter (Developers only)
 
 
-## 1. dns-inspect
+## 1. dns-insp
 
 A DNS packet sniffer and inspector that can capture DNS messages from a network interface or read them from a PCAP/PCAPNG file.
 
@@ -46,8 +46,8 @@ Tool supports both legacy and state-of-the-art packet capture modes, including A
 
 **Usage**
 
-    $ dns-inspect 
-    Usage: dns-inspect [MODE] [OPTIONS]
+    $ dns-insp
+    Usage: dns-insp [MODE] [OPTIONS]
 
     Modes:
      
@@ -73,13 +73,13 @@ Tool supports both legacy and state-of-the-art packet capture modes, including A
 
     Examples:
      
-      dns-inspect capture --interface eth0
-      dns-inspect capture --interface eth0 --type mmap
-      dns-inspect capture --interface eth0 --type xdp
-      dns-inspect capture --interface eth0 --file dns.pcap
-      dns-inspect capture --interface eth0 --file dns.pcapng --pcapng
-      dns-inspect readpcap --file dns.pcap
-      dns-inspect tracepcap --file dns.pcap
+      dns-insp capture --interface eth0
+      dns-insp capture --interface eth0 --type mmap
+      dns-insp capture --interface eth0 --type xdp
+      dns-insp capture --interface eth0 --file dns.pcap
+      dns-insp capture --interface eth0 --file dns.pcapng --pcapng
+      dns-insp readpcap --file dns.pcap
+      dns-insp tracepcap --file dns.pcap
 
 
 ### 1.1 **Capture mode**
@@ -104,10 +104,10 @@ Captures, decodes, and prints DNS traffic from a network interface in real time.
 
     $ make
     $ sudo make install 
-    install -D -m 755 dns-inspect /usr/local/bin/dns-inspect
+    install -D -m 755 dns-insp /usr/local/bin/dns-insp
     install -D -m 755 dns-gen /usr/local/bin/dns-gen
-    sudo setcap 'cap_net_raw,cap_net_admin,cap_bpf=eip' /usr/local/bin/dns-inspect || true
-    $ (sleep 1; dig @8.8.8.8 example.com A example.com AAAA +short >/dev/null) & dns-inspect capture --interface wlp2s0 --file dns.pcap  
+    sudo setcap 'cap_net_raw,cap_net_admin,cap_bpf=eip' /usr/local/bin/dns-insp || true
+    $ (sleep 1; dig @8.8.8.8 example.com A example.com AAAA +short >/dev/null) & dns-insp capture --interface wlp2s0 --file dns.pcap  
     [1] 97975
     [+] DNS active on wlp2s0
     [QUERY] ID 0x57b4 QR:0 OPCODE:QUERY RD:1 AD:1
@@ -146,7 +146,7 @@ Reads DNS messages from packet capture flle, decodes and prints them to stdout.
 
 **Example usage**
 
-    $ dns-inspect readpcap --file tests/pcaps/dns.pcap
+    $ dns-insp readpcap --file tests/pcaps/dns.pcap
     [QUERY] ID 0x57b4 QR:0 OPCODE:QUERY RD:1 AD:1
       Question: example.com IN A
       Additional: <Root> OPT UDP-size:1232 Ext-RCODE:0 EDNS0:0 DNSEC-OK:0
@@ -174,14 +174,14 @@ Reads records/blocks from a packet capture flle, and prints their metadata to st
 
 **Example usage**
 
-    $ dns-inspect tracepcap --file tests/pcaps/dns.pcap
+    $ dns-insp tracepcap --file tests/pcaps/dns.pcap
     [PCAP-HDR] magic=0xa1b2c3d4 major=2 minor=4 resv1=0 resv2=0 snap_len=65535 link_type=1
     [PCAP-REC] rec=1 ts_sec=1774957781 ts_usec=340673 inc_len=94 orig_len=94
     [PCAP-REC] rec=2 ts_sec=1774957781 ts_usec=367179 inc_len=114 orig_len=114
     [PCAP-REC] rec=3 ts_sec=1774957781 ts_usec=367537 inc_len=94 orig_len=94
     [PCAP-REC] rec=4 ts_sec=1774957781 ts_usec=396184 inc_len=138 orig_len=138
 
-    $ dns-inspect tracepcap --file tests/pcaps/dns.pcapng 
+    $ dns-insp tracepcap --file tests/pcaps/dns.pcapng 
     [PCAPNG] blk=1 name=SHB type=0x0a0d0d0a tot_len=28 magic=0x1a2b3c4d ver_major=1 ver_minor=0 sec_len=-1
     [PCAPNG] blk=2 name=IDB type=0x00000001 tot_len=20 link_type=1 rsvd=0 snap_len=65535
     [PCAPNG] blk=3 name=EPB type=0x00000006 tot_len=128 if_id=0 ts_high=413264 ts_low=3195997049 inc_len=94 orig_len=94
@@ -286,7 +286,7 @@ Generates DNS response messages and save them to packet capture file.
     $ dns-gen resp --id 0x1234 --name test.local --answer 192.168.1.1 --answer 172.168.0.10 --authority example.com --output f.pcapng --pcapng
     Wrote 79 bytes to f.pcapng
 
-    $ dns-inspect readpcap --file f.pcapng 
+    $ dns-insp readpcap --file f.pcapng 
     [RESPONSE] ID 0x1234 QR:1 OPCODE:QUERY RCODE:NoError
       Answer: test.local 0 IN A 192.168.1.1
       Answer: test.local 0 IN A 172.168.0.10
@@ -309,7 +309,7 @@ Generates invalid DNS query messages for sending to a server or pcap file.
     $ dns-gen fuzz --type qd-badjmp --id 0x1234 --output a.pcap
     Wrote 18 bytes to a.pcap
 
-    $ dns-inspect readpcap --file a.pcap
+    $ dns-insp readpcap --file a.pcap
     [QUERY] ID 0x1234 QR:0 OPCODE:QUERY 
     [ERROR] ID 0x1234 / Question Name Invalid compression pointer (outside range)
 

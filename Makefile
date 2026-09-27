@@ -2,16 +2,16 @@
 #
 # targets
 # -------
-# all     : build cmds (dns-inpsect,dns-gen)
+# all     : build cmds (dns-insp, dns-gen)
 # test    : run tests
-# install : install dns-inspect
+# install : install dns-insp
 # gen-bpf : generate BPF filter
 
 # #######################
 #     Config
 # #######################
 
-DNS_INSP := dns-inspect
+DNS_INSP := dns-insp
 DNS_GEN  := dns-gen
 
 # dirs
@@ -154,15 +154,13 @@ install:
 	$(INSTALL) -D -m 755 $(DNS_GEN) $(INSTALL_DIR)/$(DNS_GEN)
 	$(SETCAP_CMD) $(INSTALL_DIR)/$(DNS_INSP) || true
 
-
-
 # status
 # ------
 .PHONY: status
 status:
-	ip link show | grep -E "dns-insp" | echo "no XDP mirror"
-	bpftool prog show name dns_insp | echo "no XDP prog"
-	ip -s link show dev dns-insp-sink 2>/dev/null | echo "No XDP sink"
+	ip link show | grep -E "dns-insp" || echo "no XDP mirror"
+	bpftool prog show name dns_insp || echo "no XDP prog"
+	ip -s link show dev dns-insp-sink 2>/dev/null || echo "No XDP sink"
 
 # clean
 # ----

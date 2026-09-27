@@ -1,13 +1,13 @@
 /* SPDX-License-Identifier: MIT | (c) 2026 [cof] */
 
 /*
- * dns-gen  :  DNS packet generator
- * Usage:   : ./dns-gen --help
- * Example  : ./dns-gen query --name example.com --type A --server 8.8.8.8
+ * dns-gen  : DNS packet generator
+ * Usage:   : dns-gen --help
+ * Example  : dns-gen query --name example.com --type A --server 8.8.8.8
  *
  * Overview
  * --------
- * Basically a DNS packet generator for testing DNS servers or dns-inspect.
+ * Basically a DNS packet generator for testing DNS servers or dns-insp.
  *
  * Notes
  * -----

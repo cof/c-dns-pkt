@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: MIT | (c) 2026 [cof] */
 
 /*
- * dns-inspect : DNS packet sniffer and inspector
- * Usage:      : ./dns-inspect --help
- * Example     : ./dns-inspect capture --interface eth0
+ * dns-insp : DNS packet sniffer and inspector
+ * Usage:   : dns-insp --help
+ * Example  : dns-insp capture --interface eth0
  *
  * Overview
  * --------

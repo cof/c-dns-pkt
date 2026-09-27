@@ -25,7 +25,7 @@ check() {
     ./dns-gen $gen_mode "$@" --output $TEST_PCAP >>$TEST_LOG 2>&1
     exit_code=$?
     if [ $exit_code -eq 0 ]; then
-        ./dns-inspect readpcap --file $TEST_PCAP >>$TEST_LOG 2>&1
+        ./dns-insp readpcap --file $TEST_PCAP >>$TEST_LOG 2>&1
         exit_code=$?
     fi
     
