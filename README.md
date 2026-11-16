@@ -132,7 +132,7 @@ Captures, decodes, and prints DNS traffic from a network interface in real time.
 
 
 ### 1.2 **Readpcap mode**
-Reads DNS messages from packet capture flle, decodes and prints them to stdout.
+Reads DNS messages from packet capture file, decodes and prints them to stdout.
 
 **Features**
 
@@ -164,8 +164,8 @@ Reads DNS messages from packet capture flle, decodes and prints them to stdout.
       Answer: example.com 286 IN AAAA 2606:4700::6812:1a78
       Additional: <Root> OPT UDP-size:512 Ext-RCODE:0 EDNS0:0 DNSEC-OK:0
 
-### 1.2 **Tracepcap mode**
-Reads records/blocks from a packet capture flle, and prints their metadata to stdout.
+### 1.3 **Tracepcap mode**
+Reads records/blocks from a packet capture file, and prints their metadata to stdout.
 
 **Features**
 
