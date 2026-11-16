@@ -11,6 +11,6 @@
   Additional: <Root> OPT UDP-size:1232 Ext-RCODE:0 EDNS0:0 DNSEC-OK:0
 [RESPONSE] ID 0x7770 QR:1 OPCODE:QUERY RD:1 RA:1 RCODE:NoError
   Question: example.com IN AAAA
-  Answer: example.com 300 IN AAAA 38.6.71.0
-  Answer: example.com 300 IN AAAA 38.6.71.0
+  Answer: example.com 300 IN AAAA 2606:4700::6812:1a78
+  Answer: example.com 300 IN AAAA 2606:4700::6812:1b78
   Additional: <Root> OPT UDP-size:512 Ext-RCODE:0 EDNS0:0 DNSEC-OK:0
