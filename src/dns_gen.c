@@ -895,7 +895,6 @@ static int gen_parse_argv(struct dns_gen *gen, int argc, char *argv[])
     case MODE_QUERY:
         if (!*gen->dns_name) return log_cmd_err(mode, "--name <dns-name>", "is required");
         if (!gen->server)   return log_cmd_err(mode, "--server <ip-addr>", "is required");
-        if (!gen->dns_name) return log_cmd_err(mode, "--name <NAME>", "is required");
         if (!gen->dns_type) return log_cmd_err(mode, "--type <TYPE>", "is required");
         break;
     case MODE_RESP:
